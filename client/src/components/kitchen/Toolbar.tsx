@@ -24,11 +24,10 @@ import {
   AppWindow,
   Zap,
   Droplets,
-  LayoutGrid,
 } from "lucide-react";
 import type { DrawingState } from "@/lib/kitchen-engine";
 
-export type CustomTool = "island_base" | "electrical" | "plumbing" | null;
+export type CustomTool = "electrical" | "plumbing" | null;
 
 export interface ElementDef {
   id: number;
@@ -183,27 +182,6 @@ export function Toolbar({
           );
         })}
 
-        {/* Island Base — only in design stage */}
-        {!isMeasurement && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                data-testid="tool-island_base"
-                onClick={() => handleCustomTool("island_base")}
-                className={`relative flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${
-                  activeCustomTool === "island_base"
-                    ? "bg-amber-500 text-white"
-                    : "text-sidebar-foreground/80 hover:bg-accent"
-                }`}
-              >
-                <LayoutGrid className="w-4 h-4 shrink-0" />
-                <span>Island Base</span>
-                <span className="ml-auto text-[10px] text-muted-foreground">I</span>
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs">Island Base Cabinet (I)</TooltipContent>
-          </Tooltip>
-        )}
       </div>
 
       {/* ── Electrical & Plumbing — site_measurement stage only ── */}

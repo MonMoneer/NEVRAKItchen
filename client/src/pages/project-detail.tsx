@@ -984,15 +984,6 @@ export default function ProjectDetail({ id }: { id: number }) {
 							: null
 					}
 					activeCustomTool={activeCustomTool}
-					islandBases={canvasStore.islandBases}
-					onAddIslandBase={(base) => {
-						canvasStore.addIslandBase(base);
-						scheduleCanvasSave();
-					}}
-					onDeleteIslandBase={(id) => {
-						canvasStore.deleteIslandBase(id);
-						scheduleCanvasSave();
-					}}
 					wallPoints={canvasStore.wallPoints}
 					onAddWallPoint={(point) => {
 						canvasStore.addWallPoint(point);
