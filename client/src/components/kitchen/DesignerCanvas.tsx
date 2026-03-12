@@ -331,37 +331,55 @@ interface WallPlacementState {
 	lengthPreviewEnd?: Point;
 	lockedDirection?: 1 | -1 | null;
 	startPointOnWall?: Point;
+	depthDirection?: 1 | -1;
 }
 
 function FixedDimensionPanel({
 	wallPlacement,
 	unit,
 	onOffsetConfirm,
+	onDepthConfirm,
 	onLengthConfirm,
 	onCancel,
 }: {
 	wallPlacement: WallPlacementState;
 	unit: 'cm' | 'm';
 	onOffsetConfirm: (valueCm: number) => void;
+	onDepthConfirm: (valueCm: number) => void;
 	onLengthConfirm: (valueCm: number) => void;
 	onCancel: () => void;
 }) {
 	const [offsetValue, setOffsetValue] = useState('');
+	const [depthValue, setDepthValue] = useState('');
 	const [lengthValue, setLengthValue] = useState('');
 	const offsetRef = useRef<HTMLInputElement>(null);
+	const depthRef = useRef<HTMLInputElement>(null);
 	const lengthRef = useRef<HTMLInputElement>(null);
 
 	const currentOffsetCm = Math.round(
 		pixelsToCm(wallPlacement.currentOffsetPx)
 	);
-	const currentLengthCm =
-		wallPlacement.phase === 'settingLength' &&
-		wallPlacement.offsetPosition &&
-		wallPlacement.lengthPreviewEnd
+	const currentDepthCm =
+		wallPlacement.phase === 'settingDepth' && wallPlacement.offsetPosition
 			? Math.round(
 					pixelsToCm(
 						distanceBetween(
 							wallPlacement.offsetPosition,
+							wallPlacement.currentPosition
+						)
+					)
+				)
+			: 0;
+	const currentLengthCm =
+		wallPlacement.phase === 'settingLength' &&
+		wallPlacement.lengthPreviewEnd
+			? Math.round(
+					pixelsToCm(
+						distanceBetween(
+							(wallPlacement.tool === 'island_base' &&
+								wallPlacement.depthPosition)
+								? wallPlacement.depthPosition
+								: wallPlacement.offsetPosition!,
 							wallPlacement.lengthPreviewEnd
 						)
 					)
@@ -372,6 +390,10 @@ function FixedDimensionPanel({
 		if (wallPlacement.phase === 'settingOffset') {
 			setOffsetValue('');
 			const timer = setTimeout(() => offsetRef.current?.focus(), 50);
+			return () => clearTimeout(timer);
+		} else if (wallPlacement.phase === 'settingDepth') {
+			setDepthValue('');
+			const timer = setTimeout(() => depthRef.current?.focus(), 50);
 			return () => clearTimeout(timer);
 		} else if (wallPlacement.phase === 'settingLength') {
 			setLengthValue('');
@@ -387,14 +409,20 @@ function FixedDimensionPanel({
 				? 'Base Cabinet'
 				: wallPlacement.tool === 'wall_cabinet'
 					? 'Wall Cabinet'
-					: wallPlacement.tool === 'door'
-						? 'Door'
-						: 'Window';
+					: wallPlacement.tool === 'island_base'
+						? 'Island Base'
+						: wallPlacement.tool === 'door'
+							? 'Door'
+							: 'Window';
 
 	const displayedOffsetCm =
 		unit === 'm'
 			? (currentOffsetCm / 100).toFixed(2)
 			: `${currentOffsetCm}`;
+	const displayedDepthCm =
+		unit === 'm'
+			? (currentDepthCm / 100).toFixed(2)
+			: `${currentDepthCm}`;
 	const displayedLengthCm =
 		unit === 'm'
 			? (currentLengthCm / 100).toFixed(2)
@@ -408,6 +436,20 @@ function FixedDimensionPanel({
 				const cm = unit === 'm' ? num * 100 : num;
 				onOffsetConfirm(cm);
 			}
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			onCancel();
+		} else if (e.key === 'Tab') {
+			e.preventDefault();
+		}
+	};
+
+	const handleDepthKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			const num = parseFloat(depthValue);
+			if (!isNaN(num) && num > 0)
+				onDepthConfirm(unit === 'm' ? num * 100 : num);
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
 			onCancel();
@@ -472,6 +514,34 @@ function FixedDimensionPanel({
 						</span>
 					</div>
 				</div>
+				{wallPlacement.tool === 'island_base' && (
+					<div className="flex items-center gap-1.5">
+						<label className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+							Depth
+						</label>
+						<div className="flex items-center bg-muted/50 border border-border rounded-md overflow-hidden">
+							<input
+								ref={depthRef}
+								type="number"
+								value={
+									wallPlacement.phase === 'settingDepth'
+										? depthValue
+										: displayedDepthCm
+								}
+								onChange={(e) => setDepthValue(e.target.value)}
+								onKeyDown={handleDepthKeyDown}
+								placeholder={displayedDepthCm}
+								disabled={wallPlacement.phase !== 'settingDepth'}
+								className="w-16 h-7 px-2 text-sm font-mono bg-transparent text-foreground outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+								step="any"
+								min="0"
+							/>
+							<span className="text-[10px] text-muted-foreground font-medium pr-2 select-none">
+								{unit}
+							</span>
+						</div>
+					</div>
+				)}
 				<div className="flex items-center gap-1.5">
 					<label className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
 						Length
@@ -1158,6 +1228,8 @@ export function DesignerCanvas({
 					);
 					setShowDimensionInput(true);
 				} else if (wallPlacement.phase === 'settingDepth') {
+					const confirmedDepthDir = (wallPlacement.lockedDirection ??
+						1) as 1 | -1;
 					setWallPlacement((prev) =>
 						prev
 							? {
@@ -1171,6 +1243,7 @@ export function DesignerCanvas({
 										wallPlacement.currentPosition,
 									currentOffsetPx: 0,
 									lockedDirection: null,
+									depthDirection: confirmedDepthDir,
 								}
 							: null
 					);
@@ -1185,12 +1258,17 @@ export function DesignerCanvas({
 					const dist = distanceBetween(startPt, endPt);
 					if (dist >= MIN_DRAW_DISTANCE) {
 						if (wallPlacement.tool === 'island_base') {
+							// When drawing left (lockedDir=-1), swap start/end so the
+							// island anchor is always the left-most point.
+							const islandDir = wallPlacement.lockedDirection ?? 1;
+							const islandStart = islandDir < 0 ? endPt : startPt;
+							const islandEnd   = islandDir < 0 ? startPt : endPt;
 							onAddIslandBase?.({
 								id: generateId(),
-								start: startPt,
-								end: endPt,
+								start: islandStart,
+								end: islandEnd,
 								depthFlipped: false,
-								pointC: startPt,
+								pointC: islandStart,
 								wallAngle: wallPlacement.wallAngle || 0,
 							});
 						} else {
@@ -1476,9 +1554,43 @@ export function DesignerCanvas({
 								}
 							: null
 					);
+				} else if (wallPlacement.phase === 'settingDepth') {
+					// Live perpendicular preview during depth entry
+					const wallDxD =
+						wallPlacement.wall.end.x - wallPlacement.wall.start.x;
+					const wallDyD =
+						wallPlacement.wall.end.y - wallPlacement.wall.start.y;
+					const wallLenD = Math.sqrt(wallDxD * wallDxD + wallDyD * wallDyD);
+					const wallUnitXD = wallLenD > 0 ? wallDxD / wallLenD : 1;
+					const wallUnitYD = wallLenD > 0 ? wallDyD / wallLenD : 0;
+					const perpX = -wallUnitYD;
+					const perpY = wallUnitXD;
+					const offsetPtD = wallPlacement.offsetPosition!;
+					const perpDot =
+						(pos.x - offsetPtD.x) * perpX +
+						(pos.y - offsetPtD.y) * perpY;
+					const perpSign = perpDot >= 0 ? 1 : -1;
+					const liveDepthPx = Math.abs(perpDot);
+					const liveDepthPos = {
+						x: offsetPtD.x + perpX * perpSign * liveDepthPx,
+						y: offsetPtD.y + perpY * perpSign * liveDepthPx,
+					};
+					setWallPlacement((prev) =>
+						prev && prev.phase === 'settingDepth'
+							? {
+									...prev,
+									currentPosition: liveDepthPos,
+									lockedDirection: perpSign as 1 | -1,
+								}
+							: prev
+					);
 				} else if (wallPlacement.phase === 'settingLength') {
 					const offsetPt = wallPlacement.offsetPosition!;
-					const startPt = offsetPt;
+					const startPt =
+						wallPlacement.tool === 'island_base' &&
+						wallPlacement.depthPosition
+							? wallPlacement.depthPosition
+							: offsetPt;
 
 					const wallDx =
 						wallPlacement.wall.end.x - wallPlacement.wall.start.x;
@@ -1636,8 +1748,14 @@ export function DesignerCanvas({
 				!showWallPointForm
 			) {
 				if (!wallPointPlacement) {
-					// Phase 0: highlight nearest corner as mouse moves
-					const corner = findNearestCorner(pos, walls, 60);
+					// Phase 0: highlight nearest corner as mouse moves.
+					// Restrict to the currently-hovered wall so a shared corner vertex
+					// is always attributed to the wall the user is hovering, not an
+					// adjacent wall that happens to iterate first.
+					const candidateWalls = hoveredWallId
+						? walls.filter((w) => w.id === hoveredWallId)
+						: walls;
+					const corner = findNearestCorner(pos, candidateWalls, 60);
 					setHoveredCorner(corner);
 				} else if (wallPointPlacement.phase === 'cornerLocked') {
 					// Phase 1: update live position along the wall
@@ -1867,6 +1985,7 @@ export function DesignerCanvas({
 									lengthPreviewEnd: depthPos,
 									currentOffsetPx: 0,
 									lockedDirection: null,
+									depthDirection: dirScale as 1 | -1,
 								}
 							: null
 					);
@@ -1877,20 +1996,23 @@ export function DesignerCanvas({
 						wallPlacement.offsetPosition!;
 					const lockedDir = wallPlacement.lockedDirection;
 					let drawDir = { dx: dir.dx, dy: dir.dy };
+					const wallDx =
+						wallPlacement.wall.end.x - wallPlacement.wall.start.x;
+					const wallDy =
+						wallPlacement.wall.end.y - wallPlacement.wall.start.y;
+					const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
 					if (lockedDir !== null && lockedDir !== undefined) {
-						const wallDx =
-							wallPlacement.wall.end.x -
-							wallPlacement.wall.start.x;
-						const wallDy =
-							wallPlacement.wall.end.y -
-							wallPlacement.wall.start.y;
-						const wallLength = Math.sqrt(
-							wallDx * wallDx + wallDy * wallDy
-						);
 						if (wallLength > 0) {
 							drawDir = {
 								dx: (wallDx / wallLength) * lockedDir,
 								dy: (wallDy / wallLength) * lockedDir,
+							};
+						}
+					} else {
+						if (wallLength > 0) {
+							drawDir = {
+								dx: wallDx / wallLength,
+								dy: wallDy / wallLength,
 							};
 						}
 					}
@@ -1899,12 +2021,16 @@ export function DesignerCanvas({
 						y: startPt.y + drawDir.dy * lengthPx,
 					};
 					if (wallPlacement.tool === 'island_base') {
+						// When drawing left (lockedDir=-1), swap start/end so the
+						// island anchor is always the left-most point.
+						const islandStart = (lockedDir ?? 1) < 0 ? endPt : startPt;
+						const islandEnd   = (lockedDir ?? 1) < 0 ? startPt : endPt;
 						onAddIslandBase?.({
 							id: generateId(),
-							start: startPt,
-							end: endPt,
+							start: islandStart,
+							end: islandEnd,
 							depthFlipped: false,
-							pointC: startPt,
+							pointC: islandStart,
 							wallAngle: wallPlacement.wallAngle || 0,
 						});
 					} else {
@@ -2083,6 +2209,8 @@ export function DesignerCanvas({
 			currentOffsetPx,
 			offsetPosition,
 			lengthPreviewEnd,
+			depthPosition,
+			lockedDirection: rulerLockedDir,
 		} = wallPlacement;
 		const wallLen = distanceBetween(wall.start, wall.end);
 		const wallAngle = angleBetween(wall.start, wall.end);
@@ -2276,6 +2404,103 @@ export function DesignerCanvas({
 			);
 		}
 
+		// Island Base: live ghost during depth phase
+		if (phase === 'settingDepth' && wpTool === 'island_base' && offsetPosition) {
+			const wallDxG = wall.end.x - wall.start.x;
+			const wallDyG = wall.end.y - wall.start.y;
+			const wallLenG = Math.sqrt(wallDxG * wallDxG + wallDyG * wallDyG);
+			const wallUnitXG = wallLenG > 0 ? wallDxG / wallLenG : 1;
+			const wallUnitYG = wallLenG > 0 ? wallDyG / wallLenG : 0;
+			const perpXG = -wallUnitYG;
+			const perpYG = wallUnitXG;
+			const perpDotG =
+				(currentPosition.x - offsetPosition.x) * perpXG +
+				(currentPosition.y - offsetPosition.y) * perpYG;
+			const signG = perpDotG >= 0 ? 1 : -1;
+			const depthPxG = distanceBetween(offsetPosition, currentPosition);
+			const wallAngleG = angleBetween(wall.start, wall.end);
+			const degG = (wallAngleG * 180) / Math.PI;
+			elements.push(
+				<Line
+					key="island-depth-line"
+					points={[
+						offsetPosition.x,
+						offsetPosition.y,
+						currentPosition.x,
+						currentPosition.y,
+					]}
+					stroke="#EA580C"
+					strokeWidth={2 / scale}
+					dash={[6, 3]}
+					opacity={0.7}
+					listening={false}
+				/>
+			);
+			if (depthPxG > 2) {
+				elements.push(
+					<Group
+						key="island-depth-ghost"
+						x={currentPosition.x}
+						y={currentPosition.y}
+						rotation={degG}
+						listening={false}
+					>
+						<Rect
+							x={-20}
+							y={signG > 0 ? 0 : -ISLAND_DEPTH_PX}
+							width={40}
+							height={ISLAND_DEPTH_PX}
+							fill="#FFF7ED"
+							opacity={0.3}
+							stroke="#EA580C"
+							strokeWidth={1.5 / scale}
+							dash={[6, 3]}
+						/>
+					</Group>
+				);
+				const depthCmG = Math.round(pixelsToCm(depthPxG));
+				const midDepthG = {
+					x: (offsetPosition.x + currentPosition.x) / 2,
+					y: (offsetPosition.y + currentPosition.y) / 2,
+				};
+				elements.push(
+					<Group key="depth-label" listening={false}>
+						<Rect
+							x={midDepthG.x - 20 / scale}
+							y={midDepthG.y - 8 / scale}
+							width={40 / scale}
+							height={16 / scale}
+							fill="#EA580C"
+							cornerRadius={3 / scale}
+							opacity={0.9}
+						/>
+						<Text
+							x={midDepthG.x}
+							y={midDepthG.y}
+							text={`${depthCmG} cm`}
+							fontSize={10 / scale}
+							fill="white"
+							align="center"
+							offsetX={20 / scale}
+							offsetY={8 / scale}
+						/>
+					</Group>
+				);
+				elements.push(
+					<Circle
+						key="depth-cursor"
+						x={currentPosition.x}
+						y={currentPosition.y}
+						radius={5 / scale}
+						fill="#EA580C"
+						stroke="white"
+						strokeWidth={2 / scale}
+						listening={false}
+					/>
+				);
+			}
+		}
+
 		if (phase === 'settingLength' && offsetPosition && lengthPreviewEnd) {
 			elements.push(
 				<Circle
@@ -2342,6 +2567,72 @@ export function DesignerCanvas({
 							/>
 						</Group>
 					);
+				} else if (wpTool === 'island_base') {
+					// Dynamic anchor: start from depthPosition (Point C), grow along wall
+					const islandStartPt = depthPosition || offsetPosition;
+					// Use wallAngle directly — do NOT use angleBetween (diagonal)
+					const islandWallAngle = wallPlacement.wallAngle;
+					const islandDeg = (islandWallAngle * 180) / Math.PI;
+					const wallUnitXI = Math.cos(islandWallAngle);
+					const wallUnitYI = Math.sin(islandWallAngle);
+					// Project lengthPreviewEnd onto wall axis from Point C
+					const rawDist =
+						(lengthPreviewEnd!.x - islandStartPt.x) * wallUnitXI +
+						(lengthPreviewEnd!.y - islandStartPt.y) * wallUnitYI;
+					const islandLenPx = Math.abs(rawDist);
+					// DYNAMIC ANCHOR: rawDist > 0 → Right → anchor Left (x=0); rawDist < 0 → Left → anchor Right (x=-len)
+					const xOff = rawDist < 0 ? -islandLenPx : 0;
+					// Derive perpendicular direction for Top/Bottom anchor
+					const wallDxI2 = wall.end.x - wall.start.x;
+					const wallDyI2 = wall.end.y - wall.start.y;
+					const wallLenI2 = Math.sqrt(
+						wallDxI2 * wallDxI2 + wallDyI2 * wallDyI2
+					);
+					const perpXI = -(wallLenI2 > 0 ? wallDyI2 / wallLenI2 : 0);
+					const perpYI = wallLenI2 > 0 ? wallDxI2 / wallLenI2 : 1;
+					const depthDot = depthPosition
+						? (depthPosition.x - offsetPosition!.x) * perpXI +
+						  (depthPosition.y - offsetPosition!.y) * perpYI
+						: (rulerLockedDir ?? 1);
+					const perpSignI = depthDot >= 0 ? 1 : -1;
+					const yOffI = perpSignI > 0 ? 0 : -ISLAND_DEPTH_PX;
+					if (islandLenPx > 2) {
+						elements.push(
+							<Group
+								key="island-length-ghost"
+								x={islandStartPt.x}
+								y={islandStartPt.y}
+								rotation={islandDeg}
+								listening={false}
+							>
+								<Rect
+									x={xOff}
+									y={yOffI}
+									width={islandLenPx}
+									height={ISLAND_DEPTH_PX}
+									fill="#FFF7ED"
+									opacity={0.35}
+									stroke="#EA580C"
+									strokeWidth={1.5 / scale}
+									dash={[6, 3]}
+								/>
+								<Text
+									x={xOff + islandLenPx / 2}
+									y={yOffI + ISLAND_DEPTH_PX / 2}
+									text="IB"
+									fontSize={Math.min(11, ISLAND_DEPTH_PX * 0.35)}
+									fill="#EA580C"
+									fontStyle="bold"
+									fontFamily="sans-serif"
+									align="center"
+									offsetX={islandLenPx / 2}
+									offsetY={6 / scale}
+									opacity={0.7}
+									listening={false}
+								/>
+							</Group>
+						);
+					}
 				} else {
 					const oStyle = OPENING_STYLES[wpTool as OpeningType];
 					const wallThickPx = WALL_THICKNESS;
@@ -2379,7 +2670,11 @@ export function DesignerCanvas({
 					);
 				}
 
-				const lengthMid = getMidpoint(offsetPosition, lengthPreviewEnd);
+				const lengthLabelStartPt =
+					wpTool === 'island_base' && depthPosition
+						? depthPosition
+						: offsetPosition;
+				const lengthMid = getMidpoint(lengthLabelStartPt, lengthPreviewEnd);
 				const lengthCm = Math.round(pixelsToCm(lengthPx));
 				elements.push(
 					<Group key="length-label" listening={false}>
@@ -3603,75 +3898,15 @@ export function DesignerCanvas({
 				<FixedDimensionPanel
 					wallPlacement={wallPlacement}
 					unit={drawingState.unit}
-					onOffsetConfirm={(valueCm) => {
-						const lengthPx = cmToPixels(valueCm);
-
-						const wallDx =
-							wallPlacement.wall.end.x -
-							wallPlacement.wall.start.x;
-						const wallDy =
-							wallPlacement.wall.end.y -
-							wallPlacement.wall.start.y;
-						const wallLen = Math.sqrt(
-							wallDx * wallDx + wallDy * wallDy
-						);
-						const wallUnitX = wallLen > 0 ? wallDx / wallLen : 0;
-						const wallUnitY = wallLen > 0 ? wallDy / wallLen : 0;
-
-						const refDistFromStart = distanceBetween(
-							wallPlacement.wall.start,
-							wallPlacement.referenceEndpoint
-						);
-
-						const mouseDx =
-							wallPlacement.currentPosition.x -
-							wallPlacement.referenceEndpoint.x;
-						const mouseDy =
-							wallPlacement.currentPosition.y -
-							wallPlacement.referenceEndpoint.y;
-						const dot = mouseDx * wallUnitX + mouseDy * wallUnitY;
-
-						let sign = 1;
-						if (Math.abs(dot) > 1) {
-							sign = dot < 0 ? -1 : 1;
-						} else {
-							sign = refDistFromStart > wallLen / 2 ? -1 : 1;
-						}
-
-						const newAbsoluteDist =
-							refDistFromStart + lengthPx * sign;
-						const clampedDist = Math.max(
-							0,
-							Math.min(newAbsoluteDist, wallLen)
-						);
-
-						const offsetPos = {
-							x:
-								wallPlacement.wall.start.x +
-								wallUnitX * clampedDist,
-							y:
-								wallPlacement.wall.start.y +
-								wallUnitY * clampedDist,
-						};
-
-						setWallPlacement((prev) =>
-							prev
-								? {
-										...prev,
-										phase: 'settingLength',
-										offsetPosition: offsetPos,
-										currentPosition: offsetPos,
-										lengthPreviewEnd: offsetPos,
-										currentOffsetPx: 0,
-										lockedDirection: null,
-										startPointOnWall: offsetPos,
-									}
-								: null
-						);
-					}}
-					onLengthConfirm={(valueCm) => {
-						handleDimensionConfirm(valueCm);
-					}}
+					onOffsetConfirm={(valueCm) =>
+						handleDimensionConfirm(valueCm)
+					}
+					onDepthConfirm={(valueCm) =>
+						handleDimensionConfirm(valueCm)
+					}
+					onLengthConfirm={(valueCm) =>
+						handleDimensionConfirm(valueCm)
+					}
 					onCancel={handleDimensionCancel}
 				/>
 			)}
