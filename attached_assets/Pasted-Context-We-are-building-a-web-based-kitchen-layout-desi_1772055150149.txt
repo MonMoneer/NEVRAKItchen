@@ -1,0 +1,73 @@
+Context:
+We are building a web-based kitchen layout designer. Placing a Tall Cabinet must follow a precise, CAD-like workflow along a wall with ruler feedback and magnetic snapping.
+
+Task:
+Implement a two-step placement workflow for Tall Cabinets along walls with distance input and visual ruler guidance.
+
+Required Interaction Flow:
+
+Select Wall & Start Point
+
+When the Tall Cabinet tool is active and the user clicks on a wall, this click defines the start reference point on that wall (wall edge endpoint).
+
+The system highlights the selected wall and shows a ruler/measurement guide aligned along the wall direction.
+
+Distance from Start Point (Offset Input)
+
+The user can choose one of two methods to define how far from the start point the Tall Cabinet should be placed:
+
+Keyboard input: type the distance directly (e.g., 200 cm or 2.0 m).
+
+Mouse movement: move the mouse along the wall while a live ruler displays the current offset distance from the start point.
+
+Magnetic snapping must apply to wall endpoints and cabinet endpoints while moving along the wall.
+
+The ruler must be constrained to the wall axis (no free movement off the wall).
+
+Confirm Offset (Enter)
+
+Pressing Enter confirms the offset position along the wall.
+
+The system places a temporary Tall Cabinet preview anchor at that offset point.
+
+Define Tall Cabinet Length
+
+After confirming the offset, show a floating length input for the Tall Cabinet’s own length.
+
+The user types the Tall Cabinet length (or drags to preview length) and presses Enter to confirm.
+
+Final Placement with Snap
+
+The Tall Cabinet is placed aligned to the wall with:
+
+Magnetic snapping to wall edges/corners
+
+Correct orientation (depth toward room interior)
+
+No overlap with Base or Wall Cabinets (they will be cut by the Tall Cabinet per existing logic)
+
+Visual Feedback Requirements:
+
+Show a ruler line along the wall with tick marks while defining offset.
+
+Show a ghost preview of the Tall Cabinet while defining length.
+
+Highlight snap targets (edges/corners) when snapping occurs.
+
+Display the numeric distance next to the ruler in real time.
+
+Constraints:
+
+Offset movement must be constrained strictly to the selected wall direction.
+
+Snapping must be edge/corner-based only (no midpoint snapping by default).
+
+Pressing Esc cancels the placement at any step.
+
+Deliverables:
+
+Implement the full two-step Tall Cabinet placement flow.
+
+Ensure the behavior feels CAD/Rayon-like: click → measure offset → Enter → set length → Enter → place.
+
+Ensure placement respects existing snapping and cutting rules (Tall cuts Base & Wall Cabinets, no overlap).

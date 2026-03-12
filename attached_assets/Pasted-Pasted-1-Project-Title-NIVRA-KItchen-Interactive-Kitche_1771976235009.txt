@@ -1,0 +1,207 @@
+Pasted--1-Project-Title-NIVRA-KItchen-Interactive-Kitchen-Layo_1771975655656.txt
+
+# 📌 1) Project Title (NIVRA KItchen )
+
+**Interactive Kitchen Layout Designer — CAD/Laser-like Precision UI with Magnetic Snapping**
+
+---
+
+# 📌 2) Project Overview (in one paragraph)
+
+هذا المشروع عبارة عن **أداة تخطيط تصميم مطابخ تفاعلية تعمل على الويب**، تسمح للمستخدمين برسم جدران، وحدات مطبخ (Base / Wall / Tall Cabinets) بدقة هندسية عالية، باستخدام **نظام Drawing تفاعلي يشبه برامج الـ CAD والـ Planner الاحترافية**، مع دعم **Magnetic Snapping فقط من Edge/Corners**، إدخال المقاسات بشكل مباشر من أول ضغطة على الشاشة، نظام أسعار حي (Live Pricing) مع **4 خيارات تشطيب (Finishing Options)**، وميزة **تقسيم وحدات Base تلقائيًا عند إضافة Tall Cabinets**، وتصدير رسم Top View احترافي مع تقدير تكاليف المشروع.
+
+---
+
+# 📌 3) High-Level Features List
+
+| Category   | Feature                                      |
+| ---------- | -------------------------------------------- |
+| Drawing    | Unified Linear Drawing Tool                  |
+| Snapping   | Edge/Corners-only Magnetic Snap              |
+| Dimension  | Floating Instant Input                       |
+| Geometry   | Real Depth Cabinets                          |
+| Auto Logic | Auto Split Base when Tall is Placed          |
+| Pricing    | Live Pricing per meter + 4 finishing options |
+| Admin      | Pricing Management, Branding                 |
+| Export     | Top View PDF/SVG/Printed Estimation          |
+| UX         | CAD/Planner-like interactions                |
+| Testing    | Detailed Test Scenarios                      |
+
+---
+
+# 📌 4) UX / Interaction Design (Step-by-Step)
+
+## 🏁 A) Starting Interaction
+
+**Screen structure:**
+
+```
++--------------------------------------+
+| ToolBar (left) | Canvas (center)     |
+|                |                     |
+| Units / Snap   | Visualization pane  |
+| Price Panel    |                     |
++--------------------------------------+
+```
+
+### 🖱 Drawing Flow (Walls & Cabinets)
+
+**1) User selects tool:**
+
+* Wall
+* Base Cabinet
+* Wall Cabinet
+* Tall Cabinet
+
+**2) User clicks on canvas** →
+→ **Start point set**
+→ Immediately shows **Floating Dimension Input**
+
+**3) Dimension Input Behavior**
+
+* Cursor is on start point
+* Floating UI: `[___ cm / m]`
+* User types number immediately
+* Press Enter → finalizes shape (length)
+* During typing, canvas shows **preview rectangle** with depth depending on type
+
+**4) Preview + Snap Indicators**
+
+* While moving mouse after first click:
+
+  * If cursor near snap target (Corner/Endpoint):
+    → Show **highlighted dot**
+    → Show **guideline helper**
+  * If not near snap target:
+    → No snap highlight
+
+**5) Press Enter** → finalize unit
+**6) Press Esc** → cancel drawing
+
+---
+
+## 🧭 B) Cabinet Depth Handling
+
+When drawing a cabinet:
+
+| Cabinet Type | Depth (cm) |
+| ------------ | ---------- |
+| Base         | 60         |
+| Tall         | 60         |
+| Wall         | 35         |
+
+Behavior:
+
+* The preview rectangle must have exact depth
+* Depth direction auto chooses interior room side
+* Optional flip direction if user holds key (Shift/Alt)
+
+---
+
+## 🧲 C) Magnetic Snapping Rules
+
+### 🔹 Snap Targets
+
+Only these:
+
+1. **Wall Corners (vertices)**
+2. **Wall Endpoints (edges)**
+3. **Cabinet Endpoints**
+
+**No Snap to midpoint by default**
+
+### 🔹 Priority Order
+
+1. Corner
+2. Endpoint
+3. (Optional if toggled) Midpoint
+4. Grid (only if enabled)
+
+### 🔹 Snap Radius
+
+* Default: ~8–16 px (adjust based on zoom)
+* If cursor inside radius → snap activates
+* Show visual feedback
+
+---
+
+## 🔀 D) Edge/Corners-Only Snap Behavior
+
+When dragging or drawing:
+
+```
+if distanceToEdge < snapRadius:
+   snapPoint = edge
+   showEdgeHighlight()
+else:
+   noSnap
+```
+
+**Important:**
+
+* No snapping to grid or arbitrary points unless toggle is ON
+* Snapping only from edges/corners increases design consistency
+
+---
+
+## 🧱 E) Wall Connection & Corner Creation
+
+When drawing a new wall near an existing wall:
+
+1. If the end point is within snap radius of a wall endpoint → snap
+2. The new wall endpoint merges with existing wall’s vertex
+3. A **shared corner vertex** is created
+4. If angle is approximately 90°, auto normalize
+5. If angle > tolerance → show angle helper
+
+**Rule:**
+
+```
+if distance( newWallEnd, existingWallEnd ) <= snapRadius:
+   newWallEnd = existingWallEnd
+   unifyVertex()
+```
+
+---
+
+# 📌 5) Cabinet Auto Split Logic
+
+### Example:
+
+* Base Cabinet: 3.5m
+* Tall Cabinet placed at 2m
+  System does:
+* Split base into: 2m + 1.5m
+* Tall is placed exactly in middle
+
+Algorithm:
+
+```
+remainingLength = base.length - tallOffset
+Base1 = tallOffset
+Base2 = remainingLength
+```
+
+Refactor geometric endpoints accordingly
+
+---
+
+# 📌 6) Live Pricing
+
+Pricing panel shows instantly:
+
+```
+Total Price = Sum of (unitLength × unitPrice × finishingMultiplier)
+```
+
+Finishing Options (4):
+
+| Option | Label             | Price/m |
+| ------ | ----------------- | ------- |
+| 1      | e.g., Standard    | X AED   |
+| 2      | e.g., Premium     | Y AED   |
+| 3      | e.g., High Gloss  | Z AED   |
+| 4      | e.g., Luxury Wood | W AED   |
+
+**Example:**
+...

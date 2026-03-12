@@ -1,0 +1,73 @@
+🔷 REPLIT PROMPT — Corner Behavior + Interior Drawing + Anchor Control + Door Edge Drawing Fix
+
+Context:
+In the kitchen layout editor, users draw cabinets along walls starting from corners. There are multiple UX and logic issues related to wall selection at corners, cabinet orientation, anchor point behavior, and door clearance constraints.
+
+Task:
+Implement robust interaction rules for corner drawing, interior-oriented cabinet placement, anchor control, and refined door edge placement.
+
+✅ 1) Correct Wall Selection at Corners (Disambiguation)
+
+When the user clicks near a corner shared by two perpendicular walls, the system must:
+
+Determine the intended wall segment based on cursor proximity and initial movement direction.
+
+Select the closest wall segment and lock the drawing constraint to that wall only.
+
+Never switch to the perpendicular wall once the direction is determined.
+
+✅ 2) Corner-Only Anchor Points for Cabinets
+
+For Base, Wall, and Tall Cabinets:
+
+Start anchor points must snap to wall endpoints (corners) or to explicit edge endpoints created by doors/windows/tall cabinets.
+
+Do not allow starting anchors at arbitrary mid-wall positions for cabinet tools.
+
+✅ 3) Interior-Oriented Drawing (Default)
+
+All cabinets must be offset toward the interior side of the room by default.
+
+Compute interior direction using wall normals derived from room polygon orientation.
+
+Cabinets must never render outside the room boundary in normal operation.
+
+✅ 4) Optional Anchor / Side Flip Control
+
+Provide a Flip control (hotkey F or UI toggle) to invert cabinet offset side for the active segment.
+
+Default remains interior-only; Flip is an advanced override.
+
+✅ 5) Door Edge Placement (Refined Clearance Logic)
+
+Cabinets must be allowed to be drawn up to the exact edge of a door opening along the wall.
+
+Blocking must occur only when cabinet geometry overlaps the door opening span or the projected clearance zone in front of the door.
+
+Touching the door edge (flush termination) must be permitted.
+
+This rule applies to Base, Wall, and Tall Cabinets.
+
+🔧 Implementation Notes
+
+Prioritize vertex snapping over segment snapping near corners.
+
+Use cursor-to-segment distance + initial movement vector to resolve wall selection at corners.
+
+Cache the chosen wall segment and constrain all subsequent movement to it.
+
+Interior normals should be computed per wall from room winding.
+
+Door clearance should be modeled as an interval on the wall + a clearance polygon projected inward.
+
+🎯 Deliverables
+
+Reliable drawing direction at corners.
+
+Cabinets draw inside the room by default.
+
+Anchor points snap to corners/explicit edges (not mid-wall).
+
+Optional Flip available.
+
+Cabinets can terminate at door edges but cannot overlap door openings or clearance zones.

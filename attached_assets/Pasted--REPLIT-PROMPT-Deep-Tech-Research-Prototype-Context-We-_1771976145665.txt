@@ -1,0 +1,71 @@
+🔷 REPLIT PROMPT (Deep Tech Research + Prototype)
+
+Context:
+We are building a web-based interactive kitchen layout designer with CAD-like drawing behavior (walls + base/wall/tall cabinets), magnetic snapping to edges/corners only, instant numeric dimension input on first click, auto-corner creation when connecting walls, cabinet depth rendering (60cm for base/tall, 35cm for wall), auto-splitting base cabinets when placing tall cabinets, and live pricing with finishing options.
+
+Task for you (Replit AI / Dev Team):
+
+Do a deep technical research and evaluate the best drawing + snapping libraries/APIs for implementing:
+
+Interactive canvas drawing (click to set start point, drag to preview, type length, Enter to confirm)
+
+Magnetic snapping to edges/corners only (no midpoint snapping by default)
+
+Real-time visual feedback for snapping (highlight on corner/edge)
+
+Auto-creation of corners when connecting two walls (shared vertex)
+
+Rectangular cabinet drawing with real depths (60cm base/tall, 35cm wall)
+
+Automatic splitting of base cabinets when a tall cabinet is placed on the same wall
+
+Export of top-view SVG/PDF
+
+Compare and justify the choice between:
+
+Konva.js (or React-Konva)
+
+Fabric.js
+
+Any other suitable canvas/geometry library you recommend
+Include pros/cons for snapping precision, performance, geometry operations, ease of integration, export (SVG/PDF), and long-term maintainability.
+
+Select the best library stack and implement a working prototype that demonstrates:
+
+Drawing a wall with click → floating dimension input → Enter to confirm
+
+Snapping start/end points to edges/corners only
+
+Auto-corner creation when two walls connect
+
+Drawing a base cabinet as a rectangle with 60cm depth aligned to a wall
+
+Snapping cabinet endpoints to wall corners
+
+(Optional bonus) Split a base cabinet when a tall cabinet is placed on it
+
+If needed, integrate any geometry helper libraries (e.g., for intersection/splitting) and justify why they’re used.
+
+Deliverables:
+
+A small Replit-hosted demo (live preview) showing the snapping and drawing behavior.
+
+A short technical note explaining:
+
+Which library/API you chose and why
+
+How snapping to edges/corners was implemented
+
+How corner auto-creation works
+
+How cabinet depth is rendered
+
+Any limitations or next steps
+
+Success Criteria:
+
+Snapping works only on edges/corners by default.
+
+The drawing flow matches CAD/Rayon-like behavior: click start → type dimension → Enter.
+
+The prototype feels responsive and precise enough for professional use in a kitchen design workflow.

@@ -1,0 +1,91 @@
+Context:
+We are building a web-based kitchen layout designer. Doors and windows must be placed on walls using the same precise, CAD-like workflow used for Tall Cabinets (offset + length), but with additional clearance constraints and no pricing.
+
+Task:
+Implement Door and Window tools with a two-step placement workflow identical to Tall Cabinets, plus placement restrictions.
+
+Required Interaction Flow (Same as Tall Cabinet):
+
+Select Wall & Start Point
+
+When Door or Window tool is active, clicking on a wall defines the start reference point on that wall.
+
+Highlight the selected wall and show a ruler/measurement guide aligned to the wall.
+
+Offset from Start Point (Distance Input):
+
+The user defines the offset along the wall using:
+
+Keyboard input (type distance), or
+
+Mouse movement with live ruler display.
+
+Movement must be constrained to the wall axis.
+
+Magnetic snapping to wall edges/corners must apply.
+
+Confirm Offset (Enter):
+
+Pressing Enter to confirm the placement anchor point.
+
+Define Door/Window Length:
+
+Show a floating length input for the door/window width.
+
+User types the length (or drags to preview) and presses Enter to confirm.
+
+Final Placement with Snap:
+
+Door/Window is placed aligned to the wall with magnetic snapping and correct orientation.
+
+No overlap with walls or other doors/windows is allowed.
+
+Clearance & Placement Rules (Important):
+
+In front of a Door:
+
+No cabinets of any type (Base, Wall, Tall) are allowed to be placed in the door clearance zone.
+
+In front of a Window:
+
+Wall Cabinets are not allowed in front of windows.
+
+Base Cabinets may be allowed (configurable), but Wall Cabinets must be blocked.
+
+The clearance zone must be visually indicated (e.g., shaded area) while placing cabinets.
+
+Attempting to place a cabinet in a blocked clearance zone should show a warning and prevent placement.
+
+Pricing Rules:
+
+Doors and windows do not contribute to pricing.
+
+They must be excluded from any cost calculation or price tables.
+
+Visual Feedback:
+
+Show a ghost preview of the door/window while setting offset and length.
+
+Display a ruler with live numeric distance along the wall.
+
+Highlight snap targets when snapping occurs.
+
+Show a shaded “no placement zone” in front of doors/windows.
+
+Constraints:
+
+Doors and windows can only be placed on walls (not free-floating).
+
+Snapping must be edge/corner-based only by default.
+
+Pressing Esc cancels placement at any step.
+
+Deliverables:
+
+Door and Window tools behave exactly like Tall Cabinet placement (offset + length).
+
+Clearance rules prevent invalid cabinet placement in front of doors/windows.
+
+Doors/windows are excluded from pricing.
+
+UX feels consistent and professional across Tall, Door, and Window tools.

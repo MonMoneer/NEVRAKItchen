@@ -1,0 +1,48 @@
+
+Context:
+We use a branded company letterhead PDF (NIVRA Kitchens Trading L.L.C) as the background template for all exported PDFs. The export must place all content on top of this letterhead without overlapping the header (logo area) or footer (company contact details).
+
+Task:
+Implement PDF export using the uploaded NIVRA letterhead as a fixed background and generate a professional branded quotation document for kitchen layout and cost estimation.
+
+Layout Requirements:
+	1.	Safe Margins (Header & Footer):
+	•	Leave sufficient top margin below the header (logo area).
+	•	Leave sufficient bottom margin above the footer (address/website/contact info).
+	•	Do not place any content over the header or footer.
+	2.	Client & Quote Information (Top Section, below header):
+Display clearly:
+	•	Project Name
+	•	Quote Number (auto-generated)
+	•	Client Name
+	•	Client Phone Number
+	•	Date
+	•	Selected Finishing Option (one of the four finishing options)
+Example format:
+Project: Kitchen – Villa 12
+Quote No: NIVRA-2026-00123
+Client: Ahmed Ali – 050xxxxxxx
+Date: 26 Feb 2026
+Finishing: Premium (Option 2)
+	3.	Project Drawing Section (Middle of Page):
+	•	Insert the project top-view drawing (SVG/PNG rendered from canvas).
+	•	Center it horizontally.
+	•	Scale proportionally to fit within page margins.
+	•	Maintain white space around the drawing for clarity.
+	4.	Pricing Table Section (Below Drawing):
+	•	Insert a pricing table with columns:
+	•	Item Type (Base / Wall / Tall)
+	•	Length
+	•	Unit Price
+	•	Subtotal
+	•	Add a visually emphasized Total Estimated Price row at the bottom.
+	5.	General Export Rules:
+	•	Export format: PDF
+	•	The letterhead must be used as a fixed background layer.
+	•	All content must be placed on top of the letterhead.
+	•	Typography and spacing must look professional (official quotation style).
+	•	The export should be ready to send to clients as a formal quotation/proposal.
+
+Deliverable:
+A branded PDF showing:
+Header (NIVRA letterhead) → Project & Quote Info + Client Info + Selected Finishing → Project Drawing → Pricing Table + Total → Footer
