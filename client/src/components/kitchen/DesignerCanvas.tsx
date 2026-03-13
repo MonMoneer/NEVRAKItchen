@@ -1338,21 +1338,7 @@ export function DesignerCanvas({
 					}
 					const allAnchors = [...wallEndpoints, ...edgeEndpoints];
 
-					if (isCabinetTool) {
-						let bestDist = Infinity;
-						for (const sp of allAnchors) {
-							const d = distanceBetween(constrained.position, sp);
-							if (d < bestDist) {
-								bestDist = d;
-								snappedPos = sp;
-								snappedOffset = distanceBetween(
-									wallPlacement.referenceEndpoint,
-									sp
-								);
-							}
-						}
-						setSnapResult({ point: snappedPos, type: 'endpoint' });
-					} else if (snapEnabled) {
+					if (isCabinetTool || snapEnabled) {
 						let bestDist = SNAP_RADIUS;
 						for (const sp of allAnchors) {
 							const d = distanceBetween(constrained.position, sp);
@@ -1366,12 +1352,11 @@ export function DesignerCanvas({
 							}
 						}
 						if (bestDist < SNAP_RADIUS) {
-							setSnapResult({
-								point: snappedPos,
-								type: 'endpoint',
-							});
+							setSnapResult({ point: snappedPos, type: 'endpoint' });
 						} else {
 							setSnapResult(null);
+							snappedPos = constrained.position;
+							snappedOffset = constrained.offset;
 						}
 					}
 
