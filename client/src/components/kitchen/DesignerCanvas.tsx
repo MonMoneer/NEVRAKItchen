@@ -1093,21 +1093,6 @@ export function DesignerCanvas({
 						return;
 					}
 
-					setWallPlacement((prev) =>
-						prev
-							? {
-									...prev,
-									phase: 'settingLength',
-									offsetPosition: offsetPos,
-									currentPosition: offsetPos,
-									lengthPreviewEnd: offsetPos,
-									currentOffsetPx: 0,
-									lockedDirection: null,
-									startPointOnWall: offsetPos,
-								}
-							: null
-					);
-					setShowDimensionInput(true);
 				} else if (wallPlacement.phase === 'settingLength') {
 					const startPt = wallPlacement.offsetPosition!;
 					const endPt =
