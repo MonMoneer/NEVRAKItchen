@@ -2068,30 +2068,25 @@ export function DesignerCanvas({
 			const ip = islandPlacement;
 
 			if (ip.phase === 'settingReferenceDist') {
-				// Snap pointB to the confirmed distance along the wall
-				const confirmedPointB: Point = {
-					x: ip.referenceEndpoint.x + ip.wallUnitX * px,
-					y: ip.referenceEndpoint.y + ip.wallUnitY * px,
-				};
+				// Use live pointB position (constrainToWall in mouse move keeps it correct)
+				// Recomputing via referenceEndpoint+wallUnit*px breaks when referenceEndpoint=wall.end
+				const confirmedPointB = ip.pointB;
 				setIslandPlacement({
 					...ip,
 					phase: 'settingStartDist',
-					referenceDist: px,
+					referenceDist: distanceBetween(ip.referenceEndpoint, confirmedPointB),
 					pointB: confirmedPointB,
 					confirmedPointB,
 					startDist: 0,
 					pointC: confirmedPointB,
 				});
 			} else if (ip.phase === 'settingStartDist') {
-				const clampedPx = Math.max(0, px);
-				const confirmedPointC: Point = {
-					x: ip.confirmedPointB!.x + ip.perpUnitX * clampedPx,
-					y: ip.confirmedPointB!.y + ip.perpUnitY * clampedPx,
-				};
+				// Use live pointC position (mouse move keeps it correctly along perpUnit)
+				const confirmedPointC = ip.pointC;
 				setIslandPlacement({
 					...ip,
 					phase: 'settingIslandDepth',
-					startDist: clampedPx,
+					startDist: ip.startDist,
 					pointC: confirmedPointC,
 					confirmedPointC,
 				});
@@ -2307,19 +2302,26 @@ export function DesignerCanvas({
 			elements.push(<Circle key="point-c-cursor" x={ip.pointC.x} y={ip.pointC.y} radius={5 / scale} fill="#F59E0B" stroke="white" strokeWidth={2 / scale} listening={false} />);
 		}
 
-		// Phase 3: depth ghost (growing rectangle perpendicular to wall)
+		// Phase 3: depth ghost (growing perpendicular to wall, world-space polygon)
 		if (ip.phase === 'settingIslandDepth') {
 			const C3 = ip.confirmedPointC!;
 			elements.push(<Circle key="point-c-locked" x={C3.x} y={C3.y} radius={6 / scale} fill="#F59E0B" opacity={0.9} listening={false} />);
 			if (ip.depthPx > 2) {
 				const depthCm3 = Math.round(pixelsToCm(ip.depthPx));
-				elements.push(
-					<Group key="depth-ghost" x={C3.x} y={C3.y} rotation={cabDeg} listening={false}>
-						<Rect x={-20 / scale} y={0} width={40 / scale} height={ip.depthPx}
-							fill="rgba(245,158,11,0.15)" stroke="#F59E0B" strokeWidth={1.5 / scale} dash={[6, 3]} />
-					</Group>
-				);
+				// Build a thin rect in world space using wallUnit (width) and perpUnit (depth direction)
+				// This avoids Konva rotation which flips direction on bottom/left walls
+				const halfW = 15 / scale;
 				const depthEndPt3: Point = { x: C3.x + ip.perpUnitX * ip.depthPx, y: C3.y + ip.perpUnitY * ip.depthPx };
+				const d3pts = [
+					C3.x - ip.wallUnitX * halfW, C3.y - ip.wallUnitY * halfW,
+					C3.x + ip.wallUnitX * halfW, C3.y + ip.wallUnitY * halfW,
+					depthEndPt3.x + ip.wallUnitX * halfW, depthEndPt3.y + ip.wallUnitY * halfW,
+					depthEndPt3.x - ip.wallUnitX * halfW, depthEndPt3.y - ip.wallUnitY * halfW,
+				];
+				elements.push(
+					<Line key="depth-ghost" points={d3pts} closed
+						fill="rgba(245,158,11,0.15)" stroke="#F59E0B" strokeWidth={1.5 / scale} dash={[6, 3]} listening={false} />
+				);
 				const mid3 = getMidpoint(C3, depthEndPt3);
 				elements.push(
 					<Group key="depth-label" listening={false}>
@@ -2344,33 +2346,49 @@ export function DesignerCanvas({
 			elements.push(<Circle key="island-origin" x={C4.x} y={C4.y} radius={5 / scale} fill="#F59E0B" stroke="white" strokeWidth={2 / scale} listening={false} />);
 
 			if (cabLenPx > 2) {
+				// Build island rect in world space using wallUnit (length) + perpUnit (depth)
+				// Avoids Konva Group rotation which inverts depth direction on bottom/left walls
+				const wUX = ip.wallUnitX;
+				const wUY = ip.wallUnitY;
+				const pUX = ip.perpUnitX;
+				const pUY = ip.perpUnitY;
+				const originX = C4.x + wUX * xOff;
+				const originY = C4.y + wUY * xOff;
+				// 4 corners: origin, length-end, length-end+depth, origin+depth
+				const gc1x = originX,               gc1y = originY;
+				const gc2x = originX + wUX * cabLenPx, gc2y = originY + wUY * cabLenPx;
+				const gc3x = gc2x + pUX * depthPx4, gc3y = gc2y + pUY * depthPx4;
+				const gc4x = gc1x + pUX * depthPx4, gc4y = gc1y + pUY * depthPx4;
+				const ghostPts = [gc1x, gc1y, gc2x, gc2y, gc3x, gc3y, gc4x, gc4y];
+				const labelX = (gc1x + gc3x) / 2;
+				const labelY = (gc1y + gc3y) / 2;
 				elements.push(
-					<Group key="island-ghost" x={C4.x} y={C4.y} rotation={cabDeg} listening={false}>
-						<Rect x={xOff} y={0} width={cabLenPx} height={depthPx4}
-							fill="rgba(168,85,247,0.2)" stroke="#A855F7" strokeWidth={1.5 / scale} dash={[6, 3]} cornerRadius={3} />
-						<Text x={xOff + cabLenPx / 2} y={depthPx4 / 2}
-							text="IC" fontSize={12 / scale} fill="#7C3AED"
-							align="center" offsetX={8 / scale} offsetY={6 / scale} opacity={0.7} listening={false} />
-					</Group>
+					<Line key="island-ghost" points={ghostPts} closed
+						fill="rgba(168,85,247,0.2)" stroke="#A855F7" strokeWidth={1.5 / scale} dash={[6, 3]} listening={false} />
+				);
+				elements.push(
+					<Text key="island-label" x={labelX} y={labelY}
+						text="IC" fontSize={12 / scale} fill="#7C3AED"
+						align="center" offsetX={8 / scale} offsetY={6 / scale} opacity={0.7} listening={false} />
 				);
 			}
 
-			// Length label — always visible from first mouse move
+			// Length label — live, anchored to midpoint of length edge
 			const lengthMid = getMidpoint(C4, lengthEndPt);
 			const lengthCm4 = Math.round(pixelsToCm(cabLenPx));
 			elements.push(
 				<Group key="island-length-label" listening={false}>
-					<Rect x={lengthMid.x + Math.cos(perpAngle) * (15 / scale) - 20 / scale}
-						y={lengthMid.y + Math.sin(perpAngle) * (15 / scale) - 8 / scale}
+					<Rect x={lengthMid.x + ip.perpUnitX * (15 / scale) - 20 / scale}
+						y={lengthMid.y + ip.perpUnitY * (15 / scale) - 8 / scale}
 						width={40 / scale} height={16 / scale} fill="#7C3AED" cornerRadius={3 / scale} opacity={0.9} />
-					<Text x={lengthMid.x + Math.cos(perpAngle) * (15 / scale)}
-						y={lengthMid.y + Math.sin(perpAngle) * (15 / scale)}
+					<Text x={lengthMid.x + ip.perpUnitX * (15 / scale)}
+						y={lengthMid.y + ip.perpUnitY * (15 / scale)}
 						text={`${lengthCm4} cm`} fontSize={10 / scale} fill="white"
 						align="center" offsetX={20 / scale} offsetY={8 / scale} listening={false} />
 				</Group>
 			);
 
-			// Depth reminder label
+			// Depth reminder label — perpendicular offset from C4
 			const depthCm4 = Math.round(pixelsToCm(depthPx4));
 			const depthEndPt4: Point = { x: C4.x + ip.perpUnitX * depthPx4, y: C4.y + ip.perpUnitY * depthPx4 };
 			const depthMid4 = getMidpoint(C4, depthEndPt4);
