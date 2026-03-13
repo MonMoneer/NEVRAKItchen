@@ -1093,6 +1093,10 @@ export function DesignerCanvas({
 						return;
 					}
 
+				} else if (wallPlacement.phase === 'settingOffset') {
+					// Click confirms current offset — same as pressing Enter
+					handleDimensionConfirm(pixelsToCm(wallPlacement.currentOffsetPx));
+					return;
 				} else if (wallPlacement.phase === 'settingLength') {
 					const startPt = wallPlacement.offsetPosition!;
 					const endPt =
@@ -2134,11 +2138,26 @@ export function DesignerCanvas({
 				/>
 			);
 
-			const lengthPx = distanceBetween(offsetPosition, lengthPreviewEnd);
-			if (lengthPx > 2) {
-				const cabAngle = angleBetween(offsetPosition, lengthPreviewEnd);
-				const cabDeg = (cabAngle * 180) / Math.PI;
+			// Use wall angle (not angleBetween) to keep ghost aligned to wall even when
+			// lengthPreviewEnd is slightly off-wall due to mouse movement.
+			const wallAngle = wallPlacement.wallAngle;
+			const cabDeg = (wallAngle * 180) / Math.PI;
+			const wallUnitX = Math.cos(wallAngle);
+			const wallUnitY = Math.sin(wallAngle);
+			// Signed distance along wall: negative = user dragging left/up
+			const rawDist =
+				(lengthPreviewEnd!.x - offsetPosition.x) * wallUnitX +
+				(lengthPreviewEnd!.y - offsetPosition.y) * wallUnitY;
+			const cabLenPx = Math.abs(rawDist);
+			// Dynamic anchor: shift rect left when dragging in negative direction
+			const xOff = rawDist < 0 ? rawDist : 0;
+			// Wall-projected endpoint for accurate label midpoint
+			const lengthEndPt = {
+				x: offsetPosition.x + wallUnitX * rawDist,
+				y: offsetPosition.y + wallUnitY * rawDist,
+			};
 
+			if (cabLenPx > 2) {
 				if (
 					wpTool === 'tall' ||
 					wpTool === 'base' ||
@@ -2162,9 +2181,9 @@ export function DesignerCanvas({
 							listening={false}
 						>
 							<Rect
-								x={0}
+								x={xOff}
 								y={0}
-								width={lengthPx}
+								width={cabLenPx}
 								height={depthPx}
 								fill={style.fill}
 								opacity={0.3}
@@ -2174,7 +2193,7 @@ export function DesignerCanvas({
 								cornerRadius={3}
 							/>
 							<Text
-								x={lengthPx / 2}
+								x={xOff + cabLenPx / 2}
 								y={depthPx / 2}
 								text={label}
 								fontSize={12 / scale}
@@ -2198,9 +2217,9 @@ export function DesignerCanvas({
 							listening={false}
 						>
 							<Rect
-								x={0}
+								x={xOff}
 								y={-wallThickPx / 2}
-								width={lengthPx}
+								width={cabLenPx}
 								height={wallThickPx}
 								fill={oStyle.fill}
 								opacity={0.35}
@@ -2209,7 +2228,7 @@ export function DesignerCanvas({
 								dash={[6, 3]}
 							/>
 							<Text
-								x={lengthPx / 2}
+								x={xOff + cabLenPx / 2}
 								y={0}
 								text={oStyle.label}
 								fontSize={10 / scale}
@@ -2223,9 +2242,8 @@ export function DesignerCanvas({
 					);
 				}
 
-				const lengthLabelStartPt = offsetPosition;
-				const lengthMid = getMidpoint(lengthLabelStartPt, lengthPreviewEnd);
-				const lengthCm = Math.round(pixelsToCm(lengthPx));
+				const lengthMid = getMidpoint(offsetPosition, lengthEndPt);
+				const lengthCm = Math.round(pixelsToCm(cabLenPx));
 				elements.push(
 					<Group key="length-label" listening={false}>
 						<Rect
