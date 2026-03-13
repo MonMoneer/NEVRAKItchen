@@ -320,7 +320,7 @@ interface WallPlacementState {
 	currentPosition: Point;
 	offsetPosition?: Point;
 	lengthPreviewEnd?: Point;
-	drawDirection?: 1 | -1 | null;
+	lockedDirection?: 1 | -1 | null;
 	startPointOnWall?: Point;
 }
 
@@ -1410,7 +1410,7 @@ export function DesignerCanvas({
 						(projected.x - startPt.x) * wallUnitX +
 						(projected.y - startPt.y) * wallUnitY;
 
-					let currentLockedDir = wallPlacement.drawDirection;
+					let currentLockedDir = wallPlacement.lockedDirection;
 					if (
 						currentLockedDir === null ||
 						currentLockedDir === undefined
@@ -1517,7 +1517,7 @@ export function DesignerCanvas({
 									...prev,
 									lengthPreviewEnd: snappedPos,
 									currentPosition: snappedPos,
-									drawDirection: currentLockedDir,
+									lockedDirection: currentLockedDir,
 								}
 							: null
 					);
@@ -1722,7 +1722,7 @@ export function DesignerCanvas({
 									currentPosition: offsetPos,
 									lengthPreviewEnd: offsetPos,
 									currentOffsetPx: 0,
-									drawDirection: null,
+									lockedDirection: null,
 									startPointOnWall: offsetPos,
 								}
 							: null
@@ -1730,7 +1730,7 @@ export function DesignerCanvas({
 					setShowDimensionInput(true);
 				} else if (wallPlacement.phase === 'settingLength') {
 					const startPt = wallPlacement.offsetPosition!;
-					const lockedDir = wallPlacement.drawDirection;
+					const lockedDir = wallPlacement.lockedDirection;
 					let drawDir = { dx: dir.dx, dy: dir.dy };
 					const wallDx =
 						wallPlacement.wall.end.x - wallPlacement.wall.start.x;
@@ -2157,43 +2157,6 @@ export function DesignerCanvas({
 				y: offsetPosition.y + wallUnitY * rawDist,
 			};
 
-			// Live length label — always visible from first mouse movement
-			{
-				const lengthMid = getMidpoint(offsetPosition, lengthEndPt);
-				const lengthCm = Math.round(pixelsToCm(cabLenPx));
-				elements.push(
-					<Group key="length-label" listening={false}>
-						<Rect
-							x={
-								lengthMid.x +
-								Math.cos(perpAngle) * (15 / scale) -
-								20 / scale
-							}
-							y={
-								lengthMid.y +
-								Math.sin(perpAngle) * (15 / scale) -
-								8 / scale
-							}
-							width={40 / scale}
-							height={16 / scale}
-							fill="#7C3AED"
-							cornerRadius={3 / scale}
-							opacity={0.9}
-						/>
-						<Text
-							x={lengthMid.x + Math.cos(perpAngle) * (15 / scale)}
-							y={lengthMid.y + Math.sin(perpAngle) * (15 / scale)}
-							text={`${lengthCm} cm`}
-							fontSize={10 / scale}
-							fill="white"
-							align="center"
-							offsetX={20 / scale}
-							offsetY={8 / scale}
-						/>
-					</Group>
-				);
-			}
-
 			if (cabLenPx > 2) {
 				if (
 					wpTool === 'tall' ||
@@ -2209,15 +2172,6 @@ export function DesignerCanvas({
 							: wpTool === 'base'
 								? 'BC'
 								: 'WC';
-					// Dynamically determine interior depth direction using the same
-					// logic as calculateDepthDirection — works for any polygon room.
-					const interiorFlipped = calculateDepthDirection(
-						offsetPosition,
-						lengthEndPt,
-						drawingState.walls
-					);
-					const ghostYTop = interiorFlipped ? -depthPx : 0;
-					const ghostYMid = interiorFlipped ? -depthPx / 2 : depthPx / 2;
 					elements.push(
 						<Group
 							key="cabinet-ghost"
@@ -2228,7 +2182,7 @@ export function DesignerCanvas({
 						>
 							<Rect
 								x={xOff}
-								y={ghostYTop}
+								y={0}
 								width={cabLenPx}
 								height={depthPx}
 								fill={style.fill}
@@ -2240,7 +2194,7 @@ export function DesignerCanvas({
 							/>
 							<Text
 								x={xOff + cabLenPx / 2}
-								y={ghostYMid}
+								y={depthPx / 2}
 								text={label}
 								fontSize={12 / scale}
 								fill={style.textColor}
@@ -2287,6 +2241,40 @@ export function DesignerCanvas({
 						</Group>
 					);
 				}
+
+				const lengthMid = getMidpoint(offsetPosition, lengthEndPt);
+				const lengthCm = Math.round(pixelsToCm(cabLenPx));
+				elements.push(
+					<Group key="length-label" listening={false}>
+						<Rect
+							x={
+								lengthMid.x +
+								Math.cos(perpAngle) * (15 / scale) -
+								20 / scale
+							}
+							y={
+								lengthMid.y +
+								Math.sin(perpAngle) * (15 / scale) -
+								8 / scale
+							}
+							width={40 / scale}
+							height={16 / scale}
+							fill="#7C3AED"
+							cornerRadius={3 / scale}
+							opacity={0.9}
+						/>
+						<Text
+							x={lengthMid.x + Math.cos(perpAngle) * (15 / scale)}
+							y={lengthMid.y + Math.sin(perpAngle) * (15 / scale)}
+							text={`${lengthCm} cm`}
+							fontSize={10 / scale}
+							fill="white"
+							align="center"
+							offsetX={20 / scale}
+							offsetY={8 / scale}
+						/>
+					</Group>
+				);
 			}
 		}
 
