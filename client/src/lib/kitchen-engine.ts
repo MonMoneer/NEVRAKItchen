@@ -10,7 +10,7 @@ export interface Wall {
   thickness: number;
 }
 
-export type CabinetType = "base" | "wall_cabinet" | "tall";
+export type CabinetType = "base" | "wall_cabinet" | "tall" | "island";
 export type OpeningType = "door" | "window";
 
 export interface Cabinet {
@@ -64,6 +64,7 @@ export const CABINET_DEPTHS: Record<CabinetType, number> = {
   base: 60,
   wall_cabinet: 35,
   tall: 60,
+  island: 60,
 };
 
 export const WALL_THICKNESS = 15;
@@ -100,12 +101,20 @@ export const CABINET_STYLES: Record<CabinetType, CabinetStyle> = {
     textColor: "#7C3AED",
     label: "TC",
   },
+  island: {
+    fill: "#FEF3C7",
+    stroke: "#F59E0B",
+    fillOpacity: 0.7,
+    textColor: "#D97706",
+    label: "IC",
+  },
 };
 
 export const CABINET_COLORS: Record<CabinetType, string> = {
   base: "#3B82F6",
   wall_cabinet: "#22C55E",
   tall: "#A855F7",
+  island: "#F59E0B",
 };
 
 export interface OpeningStyle {

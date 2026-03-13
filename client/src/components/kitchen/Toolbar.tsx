@@ -24,10 +24,11 @@ import {
   AppWindow,
   Zap,
   Droplets,
+  LayoutPanelTop,
 } from "lucide-react";
 import type { DrawingState } from "@/lib/kitchen-engine";
 
-export type CustomTool = "electrical" | "plumbing" | null;
+export type CustomTool = "electrical" | "plumbing" | "island" | null;
 
 export interface ElementDef {
   id: number;
@@ -183,6 +184,36 @@ export function Toolbar({
         })}
 
       </div>
+
+      {/* ── Island Cabinet — estimated_budget stage only ── */}
+      {!isMeasurement && (
+        <>
+          <Separator className="mx-2" />
+          <div className="p-2 flex flex-col gap-1 shrink-0">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2 mb-1">Island</p>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  data-testid="tool-island"
+                  onClick={() => handleCustomTool("island")}
+                  className={`flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${
+                    activeCustomTool === "island"
+                      ? "bg-amber-500 text-white"
+                      : "text-sidebar-foreground/80 hover:bg-accent"
+                  }`}
+                >
+                  <LayoutPanelTop className="w-4 h-4 shrink-0 text-amber-500" />
+                  <span>Island Cabinet</span>
+                  <span className={`ml-auto text-[10px] ${activeCustomTool === "island" ? "text-white/70" : "text-muted-foreground"}`}>I</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs">
+                Click wall → set distances → draw island (I)
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </>
+      )}
 
       {/* ── Electrical & Plumbing — site_measurement stage only ── */}
       {isMeasurement && (
