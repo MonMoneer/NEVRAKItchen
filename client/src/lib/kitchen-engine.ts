@@ -22,6 +22,13 @@ export interface Cabinet {
   length: number;
   wallId?: string;
   depthFlipped?: boolean;
+  rotation?: number; // degrees, used for island free-drop rotation
+}
+
+export interface Guideline {
+  id: string;
+  start: Point;
+  end: Point;
 }
 
 export interface Opening {

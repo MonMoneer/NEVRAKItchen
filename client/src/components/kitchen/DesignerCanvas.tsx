@@ -21,6 +21,7 @@ import {
 	type SnapResult,
 	type CabinetType,
 	type DragHandle,
+	type Guideline,
 	findNearestSnapTarget,
 	findHitTarget,
 	findOverlappingCabinets,
@@ -229,7 +230,10 @@ interface DesignerCanvasProps {
 	referenceImage?: string | null;
 	stage?: 'estimated_budget' | 'site_measurement' | 'final';
 	activeCustomTool?: CustomTool;
-	// Element system
+	// Guidelines (measure tape nodes)
+	guidelines?: Guideline[];
+	onAddGuideline?: (g: Guideline) => void;
+	onClearGuidelines?: () => void;
 	// Wall points (electrical / plumbing)
 	wallPoints?: WallPointItem[];
 	onAddWallPoint?: (point: Omit<WallPointItem, 'id'>) => void;
@@ -322,137 +326,6 @@ interface WallPlacementState {
 	lengthPreviewEnd?: Point;
 	drawDirection?: 1 | -1 | null;
 	startPointOnWall?: Point;
-}
-
-// ─── Island Placement ────────────────────────────────────────────────────────
-type IslandPhase =
-	| 'settingReferenceDist'
-	| 'settingStartDist'
-	| 'settingIslandDepth'
-	| 'settingIslandLength';
-
-interface IslandPlacementState {
-	phase: IslandPhase;
-	wall: Wall;
-	referenceEndpoint: Point;
-	wallAngle: number;
-	wallUnitX: number;
-	wallUnitY: number;
-	perpUnitX: number;
-	perpUnitY: number;
-	// Phase 1
-	referenceDist: number;
-	pointB: Point;
-	// Phase 2
-	confirmedPointB?: Point;
-	startDist: number;
-	pointC: Point;
-	// Phase 3
-	confirmedPointC?: Point;
-	depthPx: number;
-	// Phase 4
-	confirmedDepthPx?: number;
-	lengthRawDist: number;
-	drawDirection: 1 | -1 | null;
-}
-
-function FixedIslandPanel({
-	island,
-	unit,
-	onConfirm,
-	onCancel,
-}: {
-	island: IslandPlacementState;
-	unit: 'cm' | 'm';
-	onConfirm: (valueCm: number) => void;
-	onCancel: () => void;
-}) {
-	const [inputValue, setInputValue] = useState('');
-	const inputRef = useRef<HTMLInputElement>(null);
-
-	useEffect(() => {
-		setInputValue('');
-		const t = setTimeout(() => inputRef.current?.focus(), 50);
-		return () => clearTimeout(t);
-	}, [island.phase]);
-
-	const phaseLabel =
-		island.phase === 'settingReferenceDist' ? 'Distance to B' :
-		island.phase === 'settingStartDist' ? 'Into room' :
-		island.phase === 'settingIslandDepth' ? 'Island Depth' :
-		'Island Length';
-
-	const getLiveCm = () => {
-		const fmt = (px: number) => unit === 'm' ? (pixelsToCm(px) / 100).toFixed(2) : `${Math.round(pixelsToCm(px))}`;
-		switch (island.phase) {
-			case 'settingReferenceDist': return fmt(island.referenceDist);
-			case 'settingStartDist': return fmt(island.startDist);
-			case 'settingIslandDepth': return fmt(island.depthPx);
-			case 'settingIslandLength': return fmt(Math.abs(island.lengthRawDist));
-		}
-	};
-
-	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter') {
-			e.preventDefault();
-			const num = parseFloat(inputValue);
-			const cm = !isNaN(num) && num >= 0
-				? (unit === 'm' ? num * 100 : num)
-				: parseFloat(getLiveCm()) * (unit === 'm' ? 100 : 1);
-			onConfirm(cm);
-		} else if (e.key === 'Escape') {
-			e.preventDefault();
-			onCancel();
-		}
-	};
-
-	const fields: { label: string; phase: IslandPhase }[] = [
-		{ label: 'Ref Dist', phase: 'settingReferenceDist' },
-		{ label: 'Start Dist', phase: 'settingStartDist' },
-		{ label: 'Depth', phase: 'settingIslandDepth' },
-		{ label: 'Length', phase: 'settingIslandLength' },
-	];
-
-	const phaseIndex = fields.findIndex(f => f.phase === island.phase);
-
-	return (
-		<div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
-			<div className="bg-card border border-border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 backdrop-blur-sm">
-				<div className="text-xs font-semibold text-amber-500 whitespace-nowrap">Island Cabinet</div>
-				<div className="w-px h-8 bg-border" />
-				{fields.map((f, idx) => {
-					const isActive = f.phase === island.phase;
-					const isPast = idx < phaseIndex;
-					return (
-						<div key={f.phase} className="flex items-center gap-1.5">
-							<label className={`text-[11px] font-medium whitespace-nowrap ${isActive ? 'text-amber-500' : 'text-muted-foreground'}`}>
-								{f.label}
-							</label>
-							<div className={`flex items-center border rounded-md overflow-hidden ${isActive ? 'bg-amber-50 border-amber-300' : 'bg-muted/50 border-border'}`}>
-								<input
-									ref={isActive ? inputRef : undefined}
-									type="number"
-									value={isActive ? inputValue : (isPast ? '✓' : '')}
-									onChange={e => setInputValue(e.target.value)}
-									onKeyDown={handleKeyDown}
-									placeholder={isActive ? getLiveCm() : '—'}
-									disabled={!isActive}
-									className="w-14 h-7 px-2 text-sm font-mono bg-transparent text-foreground outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-40"
-									step="any"
-									min="0"
-								/>
-								{isActive && (
-									<span className="text-[10px] text-muted-foreground font-medium pr-2 select-none">{unit}</span>
-								)}
-							</div>
-						</div>
-					);
-				})}
-				<div className="w-px h-8 bg-border" />
-				<div className="text-[10px] text-muted-foreground whitespace-nowrap">Enter · Esc</div>
-			</div>
-		</div>
-	);
 }
 
 function FixedDimensionPanel({
@@ -745,6 +618,9 @@ export function DesignerCanvas({
 	referenceImage,
 	stage,
 	activeCustomTool,
+	guidelines = [],
+	onAddGuideline,
+	onClearGuidelines,
 	wallPoints = [],
 	onAddWallPoint,
 	onUpdateWallPoint,
@@ -767,10 +643,9 @@ export function DesignerCanvas({
 	const [dragState, setDragState] = useState<DragState | null>(null);
 	const [wallPlacement, setWallPlacement] =
 		useState<WallPlacementState | null>(null);
-	const [islandPlacement, setIslandPlacement] =
-		useState<IslandPlacementState | null>(null);
-	// Ref to avoid forward-declaration error when mouseDown calls confirm
-	const handleIslandConfirmRef = useRef<(valueCm: number) => void>(() => {});
+	// Measure tape state
+	const [measureTape, setMeasureTape] = useState<{ startPoint: Point } | null>(null);
+	const shiftHeldRef = useRef(false);
 	const [hoveredWallId, setHoveredWallId] = useState<string | null>(null);
 	const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
 	const [wallPointPlacement, setWallPointPlacement] =
@@ -846,14 +721,26 @@ export function DesignerCanvas({
 		setWallPointPlacement(null);
 		setHoveredCorner(null);
 		setWpDistanceInput('');
-		if (activeCustomTool !== 'island') {
-			setIslandPlacement(null);
-		}
 		if (!activeCustomTool || (activeCustomTool !== 'electrical' && activeCustomTool !== 'plumbing')) {
 			setShowWallPointForm(false);
 			setEditingWallPoint(null);
 		}
+		if (activeCustomTool !== 'measure_tape') {
+			setMeasureTape(null);
+		}
 	}, [activeCustomTool]);
+
+	// Track Shift key for ortho-lock in measure tape
+	useEffect(() => {
+		const onKeyDown = (e: KeyboardEvent) => { shiftHeldRef.current = e.shiftKey; };
+		const onKeyUp = (e: KeyboardEvent) => { shiftHeldRef.current = e.shiftKey; };
+		window.addEventListener('keydown', onKeyDown);
+		window.addEventListener('keyup', onKeyUp);
+		return () => {
+			window.removeEventListener('keydown', onKeyDown);
+			window.removeEventListener('keyup', onKeyUp);
+		};
+	}, []);
 
 	const getPointerPos = useCallback(
 		(e: KonvaEventObject<MouseEvent | TouchEvent>) => {
@@ -999,53 +886,38 @@ export function DesignerCanvas({
 				snapEnabled,
 			} = drawingState;
 
-			// ── Island Cabinet placement ──────────────────────────────────────
-			if (activeCustomTool === 'island') {
-				if (!islandPlacement) {
-					// Phase 0 → Phase 1: lock onto nearest wall
-					const wallResult = findNearestWall(pos, walls, 30);
-					if (!wallResult) return;
-					const { wall, referenceEndpoint, wallAngle } = wallResult;
-					const wallDx = wall.end.x - wall.start.x;
-					const wallDy = wall.end.y - wall.start.y;
-					const wallLen = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
-					const wallUnitX = wallLen > 0 ? wallDx / wallLen : 1;
-					const wallUnitY = wallLen > 0 ? wallDy / wallLen : 0;
-					// Interior normal: perpendicular that points INTO the room
-					const rawPerpX = -wallUnitY;
-					const rawPerpY = wallUnitX;
-					const interiorFlipped = calculateDepthDirection(
-						wall.start, wall.end, walls
-					);
-					const perpUnitX = interiorFlipped ? -rawPerpX : rawPerpX;
-					const perpUnitY = interiorFlipped ? -rawPerpY : rawPerpY;
-					const constrained = constrainToWall(pos, wall, referenceEndpoint);
-					setIslandPlacement({
-						phase: 'settingReferenceDist',
-						wall,
-						referenceEndpoint,
-						wallAngle,
-						wallUnitX,
-						wallUnitY,
-						perpUnitX,
-						perpUnitY,
-						referenceDist: constrained.offset,
-						pointB: constrained.position,
-						startDist: 0,
-						pointC: constrained.position,
-						depthPx: cmToPixels(60),
-						lengthRawDist: 0,
-						drawDirection: null,
-					});
+			// ── Measure Tape placement ──────────────────────────────────────
+			if (activeCustomTool === 'measure_tape') {
+				const snappedPos = snapResult?.point ?? pos;
+				const finalPos = measureTape
+					? constrainToAxis(measureTape.startPoint, snappedPos)
+					: snappedPos;
+				if (!measureTape) {
+					// First click: save Point A as a guideline node and start chain
+					onAddGuideline?.({ id: generateId(), start: finalPos, end: finalPos });
+					setMeasureTape({ startPoint: finalPos });
 				} else {
-					// Phase transitions on click — read live px value and convert to cm
-					const livePx =
-						islandPlacement.phase === 'settingReferenceDist' ? islandPlacement.referenceDist :
-						islandPlacement.phase === 'settingStartDist' ? islandPlacement.startDist :
-						islandPlacement.phase === 'settingIslandDepth' ? islandPlacement.depthPx :
-						Math.abs(islandPlacement.lengthRawDist);
-					handleIslandConfirmRef.current(pixelsToCm(livePx));
+					// Subsequent click: confirm end, save guideline segment, chain continues
+					onAddGuideline?.({ id: generateId(), start: measureTape.startPoint, end: finalPos });
+					setMeasureTape({ startPoint: finalPos });
 				}
+				return;
+			}
+
+			// ── Free-Drop Island ─────────────────────────────────────────────
+			if (activeCustomTool === 'island') {
+				const snapPos = snapResult?.point ?? pos;
+				const halfLen = cmToPixels(60); // half of 120cm default length
+				const cabinet: Cabinet = {
+					id: generateId(),
+					type: 'island',
+					start: { x: snapPos.x - halfLen, y: snapPos.y },
+					end:   { x: snapPos.x + halfLen, y: snapPos.y },
+					depth: 90,
+					length: 120,
+					depthFlipped: false,
+				};
+				onAddCabinet(cabinet);
 				return;
 			}
 
@@ -1377,7 +1249,10 @@ export function DesignerCanvas({
 			onAddElement,
 			wallPointPlacement,
 			wallPoints,
-		islandPlacement,
+			measureTape,
+			onAddGuideline,
+			guidelines,
+			constrainToAxis,
 		]
 	);
 
@@ -1712,66 +1587,6 @@ export function DesignerCanvas({
 				return;
 			}
 
-			// ── Island placement mouse move ────────────────────────────────────
-			if (activeCustomTool === 'island' && islandPlacement) {
-				const ip = islandPlacement;
-				if (ip.phase === 'settingReferenceDist') {
-					// Free movement along wall with SNAP_RADIUS snapping
-					const constrained = constrainToWall(pos, ip.wall, ip.referenceEndpoint);
-					let snappedPos = constrained.position;
-					let snappedDist = constrained.offset;
-					const anchors: Point[] = [ip.wall.start, ip.wall.end];
-					let bestDist = SNAP_RADIUS;
-					for (const sp of anchors) {
-						const d = distanceBetween(constrained.position, sp);
-						if (d < bestDist) {
-							bestDist = d;
-							snappedPos = sp;
-							snappedDist = distanceBetween(ip.referenceEndpoint, sp);
-						}
-					}
-					setIslandPlacement(prev => prev ? {
-						...prev,
-						referenceDist: snappedDist,
-						pointB: snappedPos,
-					} : null);
-				} else if (ip.phase === 'settingStartDist') {
-					const base = ip.confirmedPointB!;
-					const along = (pos.x - base.x) * ip.perpUnitX + (pos.y - base.y) * ip.perpUnitY;
-					const clampedAlong = Math.max(0, along);
-					const pointC: Point = {
-						x: base.x + ip.perpUnitX * clampedAlong,
-						y: base.y + ip.perpUnitY * clampedAlong,
-					};
-					setIslandPlacement(prev => prev ? {
-						...prev,
-						startDist: clampedAlong,
-						pointC,
-					} : null);
-				} else if (ip.phase === 'settingIslandDepth') {
-					const base = ip.confirmedPointC!;
-					const depthAlong = (pos.x - base.x) * ip.perpUnitX + (pos.y - base.y) * ip.perpUnitY;
-					const depthPx = Math.max(cmToPixels(20), depthAlong);
-					setIslandPlacement(prev => prev ? { ...prev, depthPx } : null);
-				} else if (ip.phase === 'settingIslandLength') {
-					const base = ip.confirmedPointC!;
-					const rawDist = (pos.x - base.x) * ip.wallUnitX + (pos.y - base.y) * ip.wallUnitY;
-					let dir = ip.drawDirection;
-					if (!dir && Math.abs(rawDist) > 5) {
-						dir = rawDist > 0 ? 1 : -1;
-					}
-					const lengthRawDist = dir !== null
-						? (dir > 0 ? Math.max(0, rawDist) : Math.min(0, rawDist))
-						: rawDist;
-					setIslandPlacement(prev => prev ? {
-						...prev,
-						lengthRawDist,
-						drawDirection: dir,
-					} : null);
-				}
-				return;
-			}
-
 			// Electrical/plumbing hover: update hovered corner and live distance
 			if (
 				(activeCustomTool === 'electrical' || activeCustomTool === 'plumbing') &&
@@ -1816,6 +1631,17 @@ export function DesignerCanvas({
 					drawingState.openings
 				);
 			}
+			// Snap to guideline endpoints
+			let bestSnapDist = currentSnap ? distanceBetween(pos, currentSnap.point) : SNAP_RADIUS;
+			for (const g of guidelines) {
+				for (const gpt of [g.start, g.end]) {
+					const d = distanceBetween(pos, gpt);
+					if (d < bestSnapDist) {
+						bestSnapDist = d;
+						currentSnap = { point: gpt, type: 'endpoint' };
+					}
+				}
+			}
 			setSnapResult(currentSnap);
 
 			if (isDrawing && startPoint) {
@@ -1843,7 +1669,7 @@ export function DesignerCanvas({
 			showWallPointForm,
 			setHoveredCorner,
 			setWallPointPlacement,
-		islandPlacement,
+			guidelines,
 		]
 	);
 
@@ -2060,78 +1886,6 @@ export function DesignerCanvas({
 		}));
 	}, [onDrawingStateChange, wallPlacement]);
 
-	// ── Island confirm / cancel ──────────────────────────────────────────────
-	const handleIslandConfirm = useCallback(
-		(valueCm: number) => {
-			if (!islandPlacement) return;
-			const px = cmToPixels(valueCm);
-			const ip = islandPlacement;
-
-			if (ip.phase === 'settingReferenceDist') {
-				// Use live pointB position (constrainToWall in mouse move keeps it correct)
-				// Recomputing via referenceEndpoint+wallUnit*px breaks when referenceEndpoint=wall.end
-				const confirmedPointB = ip.pointB;
-				setIslandPlacement({
-					...ip,
-					phase: 'settingStartDist',
-					referenceDist: distanceBetween(ip.referenceEndpoint, confirmedPointB),
-					pointB: confirmedPointB,
-					confirmedPointB,
-					startDist: 0,
-					pointC: confirmedPointB,
-				});
-			} else if (ip.phase === 'settingStartDist') {
-				// Use live pointC position (mouse move keeps it correctly along perpUnit)
-				const confirmedPointC = ip.pointC;
-				setIslandPlacement({
-					...ip,
-					phase: 'settingIslandDepth',
-					startDist: ip.startDist,
-					pointC: confirmedPointC,
-					confirmedPointC,
-				});
-			} else if (ip.phase === 'settingIslandDepth') {
-				const confirmedDepthPx = Math.max(cmToPixels(20), px);
-				setIslandPlacement({
-					...ip,
-					phase: 'settingIslandLength',
-					depthPx: confirmedDepthPx,
-					confirmedDepthPx,
-					lengthRawDist: 0,
-					drawDirection: null,
-				});
-			} else if (ip.phase === 'settingIslandLength') {
-				// Finalize: place the island cabinet
-				const origin = ip.confirmedPointC!;
-				const lengthPx = Math.max(cmToPixels(10), Math.abs(ip.lengthRawDist > 0 ? cmToPixels(valueCm) : -cmToPixels(valueCm)));
-				const signedLen = ip.drawDirection !== null && ip.drawDirection < 0 ? -lengthPx : lengthPx;
-				const startPt: Point = signedLen < 0
-					? { x: origin.x + ip.wallUnitX * signedLen, y: origin.y + ip.wallUnitY * signedLen }
-					: { ...origin };
-				const endPt: Point = signedLen < 0
-					? { ...origin }
-					: { x: origin.x + ip.wallUnitX * lengthPx, y: origin.y + ip.wallUnitY * lengthPx };
-				const cabinet: Cabinet = {
-					id: generateId(),
-					type: 'island',
-					start: startPt,
-					end: endPt,
-					depth: pixelsToCm(ip.confirmedDepthPx!),
-					length: pixelsToCm(lengthPx),
-					depthFlipped: false,
-				};
-				onAddCabinet(cabinet);
-				setIslandPlacement(null);
-			}
-		},
-		[islandPlacement, onAddCabinet]
-	);
-
-	const handleIslandCancel = useCallback(() => {
-		setIslandPlacement(null);
-	}, []);
-	handleIslandConfirmRef.current = handleIslandConfirm;
-
 	const handleFlipDepth = useCallback(() => {
 		const { selectedId, cabinets } = drawingState;
 		if (!selectedId) {
@@ -2154,8 +1908,8 @@ export function DesignerCanvas({
 				return;
 			}
 			if (e.key === 'Escape') {
-				if (islandPlacement) {
-					handleIslandCancel();
+				if (measureTape) {
+					setMeasureTape(null);
 					return;
 				}
 				if (wallPlacement) {
@@ -2187,8 +1941,7 @@ export function DesignerCanvas({
 		handleDimensionCancel,
 		handleFlipDepth,
 		wallPlacement,
-		islandPlacement,
-		handleIslandCancel,
+		measureTape,
 	]);
 
 	const renderGrid = () => {
@@ -2227,183 +1980,6 @@ export function DesignerCanvas({
 			);
 		}
 		return <>{lines}</>;
-	};
-
-	const renderIslandPlacementRuler = () => {
-		if (!islandPlacement) return null;
-		const ip = islandPlacement;
-		const cabDeg = (ip.wallAngle * 180) / Math.PI;
-		const perpAngle = ip.wallAngle + Math.PI / 2;
-		const elements: JSX.Element[] = [];
-
-		// Phase 1: wall highlight + dashed line from corner A to live Point B
-		if (ip.phase === 'settingReferenceDist') {
-			elements.push(
-				<Line key="island-wall-highlight"
-					points={[ip.wall.start.x, ip.wall.start.y, ip.wall.end.x, ip.wall.end.y]}
-					stroke="#F59E0B" strokeWidth={(WALL_THICKNESS + 6) / scale} opacity={0.2}
-					lineCap="round" listening={false}
-				/>
-			);
-			elements.push(
-				<Circle key="corner-a" x={ip.referenceEndpoint.x} y={ip.referenceEndpoint.y}
-					radius={6 / scale} fill="#F59E0B" opacity={0.9} listening={false}
-				/>
-			);
-			if (ip.referenceDist > 2) {
-				elements.push(
-					<Line key="ref-line"
-						points={[ip.referenceEndpoint.x, ip.referenceEndpoint.y, ip.pointB.x, ip.pointB.y]}
-						stroke="#F59E0B" strokeWidth={2 / scale} dash={[6 / scale, 4 / scale]} opacity={0.8} listening={false}
-					/>
-				);
-				const mid1 = getMidpoint(ip.referenceEndpoint, ip.pointB);
-				const distCm1 = Math.round(pixelsToCm(ip.referenceDist));
-				elements.push(
-					<Group key="ref-label" listening={false}>
-						<Rect x={mid1.x - 20 / scale} y={mid1.y - 22 / scale}
-							width={40 / scale} height={16 / scale} fill="#F59E0B" cornerRadius={3 / scale} opacity={0.9} />
-						<Text x={mid1.x} y={mid1.y - 14 / scale}
-							text={`${distCm1} cm`} fontSize={10 / scale} fill="white"
-							align="center" offsetX={20 / scale} offsetY={8 / scale} listening={false} />
-					</Group>
-				);
-			}
-			elements.push(
-				<Circle key="point-b-cursor" x={ip.pointB.x} y={ip.pointB.y}
-					radius={5 / scale} fill="#F59E0B" stroke="white" strokeWidth={2 / scale} listening={false}
-				/>
-			);
-		}
-
-		// Phase 2: locked Point B + dashed perp line to live Point C
-		if (ip.phase === 'settingStartDist') {
-			const B = ip.confirmedPointB!;
-			elements.push(<Circle key="point-b-locked" x={B.x} y={B.y} radius={6 / scale} fill="#F59E0B" opacity={0.9} listening={false} />);
-			if (ip.startDist > 2) {
-				elements.push(
-					<Line key="start-line"
-						points={[B.x, B.y, ip.pointC.x, ip.pointC.y]}
-						stroke="#F59E0B" strokeWidth={2 / scale} dash={[6 / scale, 4 / scale]} opacity={0.8} listening={false}
-					/>
-				);
-				const mid2 = getMidpoint(B, ip.pointC);
-				const distCm2 = Math.round(pixelsToCm(ip.startDist));
-				elements.push(
-					<Group key="start-label" listening={false}>
-						<Rect x={mid2.x - 20 / scale} y={mid2.y - 22 / scale}
-							width={40 / scale} height={16 / scale} fill="#F59E0B" cornerRadius={3 / scale} opacity={0.9} />
-						<Text x={mid2.x} y={mid2.y - 14 / scale}
-							text={`${distCm2} cm`} fontSize={10 / scale} fill="white"
-							align="center" offsetX={20 / scale} offsetY={8 / scale} listening={false} />
-					</Group>
-				);
-			}
-			elements.push(<Circle key="point-c-cursor" x={ip.pointC.x} y={ip.pointC.y} radius={5 / scale} fill="#F59E0B" stroke="white" strokeWidth={2 / scale} listening={false} />);
-		}
-
-		// Phase 3: depth ghost (growing perpendicular to wall, world-space polygon)
-		if (ip.phase === 'settingIslandDepth') {
-			const C3 = ip.confirmedPointC!;
-			elements.push(<Circle key="point-c-locked" x={C3.x} y={C3.y} radius={6 / scale} fill="#F59E0B" opacity={0.9} listening={false} />);
-			if (ip.depthPx > 2) {
-				const depthCm3 = Math.round(pixelsToCm(ip.depthPx));
-				// Build a thin rect in world space using wallUnit (width) and perpUnit (depth direction)
-				// This avoids Konva rotation which flips direction on bottom/left walls
-				const halfW = 15 / scale;
-				const depthEndPt3: Point = { x: C3.x + ip.perpUnitX * ip.depthPx, y: C3.y + ip.perpUnitY * ip.depthPx };
-				const d3pts = [
-					C3.x - ip.wallUnitX * halfW, C3.y - ip.wallUnitY * halfW,
-					C3.x + ip.wallUnitX * halfW, C3.y + ip.wallUnitY * halfW,
-					depthEndPt3.x + ip.wallUnitX * halfW, depthEndPt3.y + ip.wallUnitY * halfW,
-					depthEndPt3.x - ip.wallUnitX * halfW, depthEndPt3.y - ip.wallUnitY * halfW,
-				];
-				elements.push(
-					<Line key="depth-ghost" points={d3pts} closed
-						fill="rgba(245,158,11,0.15)" stroke="#F59E0B" strokeWidth={1.5 / scale} dash={[6, 3]} listening={false} />
-				);
-				const mid3 = getMidpoint(C3, depthEndPt3);
-				elements.push(
-					<Group key="depth-label" listening={false}>
-						<Rect x={mid3.x - 20 / scale} y={mid3.y - 8 / scale} width={40 / scale} height={16 / scale} fill="#D97706" cornerRadius={3 / scale} opacity={0.9} />
-						<Text x={mid3.x} y={mid3.y} text={`${depthCm3} cm`} fontSize={10 / scale} fill="white" align="center" offsetX={20 / scale} offsetY={8 / scale} listening={false} />
-					</Group>
-				);
-			}
-		}
-
-		// Phase 4: full island ghost with smart anchor + live labels
-		if (ip.phase === 'settingIslandLength' && ip.confirmedPointC && ip.confirmedDepthPx) {
-			const C4 = ip.confirmedPointC;
-			const depthPx4 = ip.confirmedDepthPx;
-			const cabLenPx = Math.abs(ip.lengthRawDist);
-			const xOff = ip.lengthRawDist < 0 ? ip.lengthRawDist : 0;
-			const lengthEndPt: Point = {
-				x: C4.x + ip.wallUnitX * ip.lengthRawDist,
-				y: C4.y + ip.wallUnitY * ip.lengthRawDist,
-			};
-
-			elements.push(<Circle key="island-origin" x={C4.x} y={C4.y} radius={5 / scale} fill="#F59E0B" stroke="white" strokeWidth={2 / scale} listening={false} />);
-
-			if (cabLenPx > 2) {
-				// Build island rect in world space using wallUnit (length) + perpUnit (depth)
-				// Avoids Konva Group rotation which inverts depth direction on bottom/left walls
-				const wUX = ip.wallUnitX;
-				const wUY = ip.wallUnitY;
-				const pUX = ip.perpUnitX;
-				const pUY = ip.perpUnitY;
-				const originX = C4.x + wUX * xOff;
-				const originY = C4.y + wUY * xOff;
-				// 4 corners: origin, length-end, length-end+depth, origin+depth
-				const gc1x = originX,               gc1y = originY;
-				const gc2x = originX + wUX * cabLenPx, gc2y = originY + wUY * cabLenPx;
-				const gc3x = gc2x + pUX * depthPx4, gc3y = gc2y + pUY * depthPx4;
-				const gc4x = gc1x + pUX * depthPx4, gc4y = gc1y + pUY * depthPx4;
-				const ghostPts = [gc1x, gc1y, gc2x, gc2y, gc3x, gc3y, gc4x, gc4y];
-				const labelX = (gc1x + gc3x) / 2;
-				const labelY = (gc1y + gc3y) / 2;
-				elements.push(
-					<Line key="island-ghost" points={ghostPts} closed
-						fill="rgba(168,85,247,0.2)" stroke="#A855F7" strokeWidth={1.5 / scale} dash={[6, 3]} listening={false} />
-				);
-				elements.push(
-					<Text key="island-label" x={labelX} y={labelY}
-						text="IC" fontSize={12 / scale} fill="#7C3AED"
-						align="center" offsetX={8 / scale} offsetY={6 / scale} opacity={0.7} listening={false} />
-				);
-			}
-
-			// Length label — live, anchored to midpoint of length edge
-			const lengthMid = getMidpoint(C4, lengthEndPt);
-			const lengthCm4 = Math.round(pixelsToCm(cabLenPx));
-			elements.push(
-				<Group key="island-length-label" listening={false}>
-					<Rect x={lengthMid.x + ip.perpUnitX * (15 / scale) - 20 / scale}
-						y={lengthMid.y + ip.perpUnitY * (15 / scale) - 8 / scale}
-						width={40 / scale} height={16 / scale} fill="#7C3AED" cornerRadius={3 / scale} opacity={0.9} />
-					<Text x={lengthMid.x + ip.perpUnitX * (15 / scale)}
-						y={lengthMid.y + ip.perpUnitY * (15 / scale)}
-						text={`${lengthCm4} cm`} fontSize={10 / scale} fill="white"
-						align="center" offsetX={20 / scale} offsetY={8 / scale} listening={false} />
-				</Group>
-			);
-
-			// Depth reminder label — perpendicular offset from C4
-			const depthCm4 = Math.round(pixelsToCm(depthPx4));
-			const depthEndPt4: Point = { x: C4.x + ip.perpUnitX * depthPx4, y: C4.y + ip.perpUnitY * depthPx4 };
-			const depthMid4 = getMidpoint(C4, depthEndPt4);
-			elements.push(
-				<Group key="island-depth-label" listening={false}>
-					<Rect x={depthMid4.x - 20 / scale} y={depthMid4.y - 8 / scale}
-						width={40 / scale} height={16 / scale} fill="#D97706" cornerRadius={3 / scale} opacity={0.75} />
-					<Text x={depthMid4.x} y={depthMid4.y}
-						text={`${depthCm4} cm`} fontSize={10 / scale} fill="white"
-						align="center" offsetX={20 / scale} offsetY={8 / scale} listening={false} />
-				</Group>
-			);
-		}
-
-		return <Group listening={false}>{elements}</Group>;
 	};
 
 	const renderWallPlacementRuler = () => {
@@ -2857,6 +2433,115 @@ export function DesignerCanvas({
 		});
 	};
 
+
+	// ── Measure Tape rendering ───────────────────────────────────────────────
+	const renderMeasureTape = () => {
+		const elements: JSX.Element[] = [];
+
+		// Draw all saved guideline segments
+		for (const g of guidelines) {
+			if (g.start.x === g.end.x && g.start.y === g.end.y) {
+				// Single node (first click)
+				elements.push(
+					<Circle key={`gnode-${g.id}`}
+						x={g.start.x} y={g.start.y}
+						radius={5 / scale} fill="#A855F7" opacity={0.8} listening={false}
+					/>
+				);
+			} else {
+				const mid = { x: (g.start.x + g.end.x) / 2, y: (g.start.y + g.end.y) / 2 };
+				const lenCm = Math.round(pixelsToCm(distanceBetween(g.start, g.end)));
+				elements.push(
+					<Line key={`gseg-${g.id}`}
+						points={[g.start.x, g.start.y, g.end.x, g.end.y]}
+						stroke="#A855F7" strokeWidth={1.5 / scale}
+						dash={[6 / scale, 3 / scale]} opacity={0.7} listening={false}
+					/>
+				);
+				elements.push(
+					<Circle key={`gstart-${g.id}`} x={g.start.x} y={g.start.y}
+						radius={4 / scale} fill="#A855F7" opacity={0.8} listening={false} />
+				);
+				elements.push(
+					<Circle key={`gend-${g.id}`} x={g.end.x} y={g.end.y}
+						radius={4 / scale} fill="#A855F7" opacity={0.8} listening={false} />
+				);
+				elements.push(
+					<Group key={`glabel-${g.id}`} listening={false}>
+						<Rect x={mid.x - 18 / scale} y={mid.y - 8 / scale}
+							width={36 / scale} height={16 / scale}
+							fill="#7C3AED" cornerRadius={3 / scale} opacity={0.85} />
+						<Text x={mid.x} y={mid.y}
+							text={`${lenCm}cm`} fontSize={9 / scale} fill="white"
+							align="center" offsetX={18 / scale} offsetY={8 / scale} listening={false} />
+					</Group>
+				);
+			}
+		}
+
+		// Live chain line (from last confirmed point to current mouse position)
+		if (activeCustomTool === 'measure_tape' && measureTape && mousePos) {
+			const liveEnd = shiftHeldRef.current
+				? constrainToAxis(measureTape.startPoint, mousePos)
+				: mousePos;
+			const liveLenCm = Math.round(pixelsToCm(distanceBetween(measureTape.startPoint, liveEnd)));
+			const liveMid = { x: (measureTape.startPoint.x + liveEnd.x) / 2, y: (measureTape.startPoint.y + liveEnd.y) / 2 };
+			elements.push(
+				<Line key="tape-live"
+					points={[measureTape.startPoint.x, measureTape.startPoint.y, liveEnd.x, liveEnd.y]}
+					stroke="#A855F7" strokeWidth={1.5 / scale}
+					dash={[6 / scale, 3 / scale]} opacity={0.9} listening={false}
+				/>
+			);
+			if (liveLenCm > 0) {
+				elements.push(
+					<Group key="tape-live-label" listening={false}>
+						<Rect x={liveMid.x - 18 / scale} y={liveMid.y - 8 / scale}
+							width={36 / scale} height={16 / scale}
+							fill="#7C3AED" cornerRadius={3 / scale} opacity={0.9} />
+						<Text x={liveMid.x} y={liveMid.y}
+							text={`${liveLenCm}cm`} fontSize={9 / scale} fill="white"
+							align="center" offsetX={18 / scale} offsetY={8 / scale} listening={false} />
+					</Group>
+				);
+			}
+		}
+
+		// Island hover ghost preview
+		if (activeCustomTool === 'island' && mousePos) {
+			const halfLen = cmToPixels(60);
+			const depthPx = cmToPixels(90);
+			elements.push(
+				<Group key="island-ghost-preview" listening={false}>
+					<Rect
+						x={mousePos.x - halfLen}
+						y={mousePos.y}
+						width={halfLen * 2}
+						height={depthPx}
+						fill="rgba(168,85,247,0.15)"
+						stroke="#A855F7"
+						strokeWidth={1.5 / scale}
+						dash={[6, 3]}
+					/>
+					<Text
+						x={mousePos.x}
+						y={mousePos.y + depthPx / 2}
+						text="IC"
+						fontSize={12 / scale}
+						fill="#7C3AED"
+						align="center"
+						offsetX={8 / scale}
+						offsetY={6 / scale}
+						opacity={0.7}
+						listening={false}
+					/>
+				</Group>
+			);
+		}
+
+		if (elements.length === 0) return null;
+		return <Group listening={false}>{elements}</Group>;
+	};
 
 	const renderWallPointRuler = () => {
 		if (!wallPointPlacement && !hoveredCorner) return null;
@@ -3846,7 +3531,7 @@ export function DesignerCanvas({
 					{renderCabinets()}
 					{renderWallPoints()}
 					{renderWallPointRuler()}
-					{renderIslandPlacementRuler()}
+					{renderMeasureTape()}
 					{renderWallPlacementRuler()}
 					{renderPreview()}
 					{renderSplitPreview()}
@@ -3888,15 +3573,6 @@ export function DesignerCanvas({
 						setWallPointPlacement(null);
 						setWpDistanceInput('');
 					}}
-				/>
-			)}
-
-			{islandPlacement && (
-				<FixedIslandPanel
-					island={islandPlacement}
-					unit={drawingState.unit}
-					onConfirm={(valueCm) => handleIslandConfirm(valueCm)}
-					onCancel={handleIslandCancel}
 				/>
 			)}
 

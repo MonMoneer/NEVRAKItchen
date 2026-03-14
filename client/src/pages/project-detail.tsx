@@ -774,6 +774,14 @@ export default function ProjectDetail({ id }: { id: number }) {
 					canvasStore.setTool('delete');
 					setActiveCustomTool(null);
 					break;
+				case 'm':
+					canvasStore.setTool('select');
+					setActiveCustomTool('measure_tape');
+					break;
+				case 'i':
+					canvasStore.setTool('select');
+					setActiveCustomTool('island');
+					break;
 			}
 		};
 		window.addEventListener('keydown', handleKeyDown);
@@ -984,6 +992,15 @@ export default function ProjectDetail({ id }: { id: number }) {
 							: null
 					}
 					activeCustomTool={activeCustomTool}
+						guidelines={canvasStore.guidelines}
+						onAddGuideline={(g) => {
+							canvasStore.addGuideline(g);
+							scheduleCanvasSave();
+						}}
+						onClearGuidelines={() => {
+							canvasStore.clearGuidelines();
+							scheduleCanvasSave();
+						}}
 					wallPoints={canvasStore.wallPoints}
 					onAddWallPoint={(point) => {
 						canvasStore.addWallPoint(point);

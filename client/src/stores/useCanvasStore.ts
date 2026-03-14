@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Wall, Cabinet, Opening, DrawingState } from "@/lib/kitchen-engine";
+import type { Wall, Cabinet, Opening, DrawingState, Guideline } from "@/lib/kitchen-engine";
 import { createInitialDrawingState } from "@/lib/kitchen-engine";
 import {
   type HistoryState,
@@ -40,12 +40,14 @@ interface DesignData {
   openings: Opening[];
   elements: CanvasElement[];
   wallPoints: WallPointItem[];
+  guidelines: Guideline[];
 }
 
 interface CanvasState {
   drawingState: DrawingState;
   elements: CanvasElement[];
   wallPoints: WallPointItem[];
+  guidelines: Guideline[];
   history: HistoryState<DesignData>;
   selectedFinishing: string;
   showReferenceOverlay: boolean;
@@ -70,6 +72,8 @@ interface CanvasState {
   addWallPoint: (point: Omit<WallPointItem, "id">) => void;
   updateWallPoint: (id: number, updates: Partial<Omit<WallPointItem, "id">>) => void;
   deleteWallPoint: (id: number) => void;
+  addGuideline: (guideline: Guideline) => void;
+  clearGuidelines: () => void;
   undo: () => void;
   redo: () => void;
   clear: () => void;
@@ -88,6 +92,7 @@ function pushDesignState(
 ) {
   const currentElements = elements ?? get().elements;
   const currentWallPoints = get().wallPoints;
+  const currentGuidelines = get().guidelines;
   set((state) => ({
     drawingState,
     history: pushState(state.history, {
@@ -96,6 +101,7 @@ function pushDesignState(
       openings: drawingState.openings,
       elements: currentElements,
       wallPoints: currentWallPoints,
+      guidelines: currentGuidelines,
     }),
   }));
 }
@@ -104,7 +110,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   drawingState: createInitialDrawingState(),
   elements: [],
   wallPoints: [],
-  history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [] }),
+  guidelines: [],
+  history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [] }),
   selectedFinishing: "1",
   showReferenceOverlay: false,
 
@@ -201,6 +208,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         openings: newDrawingState.openings,
         elements: s.elements,
         wallPoints: s.wallPoints,
+        guidelines: s.guidelines,
       }),
       drawingState: newDrawingState,
     }));
@@ -222,6 +230,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         openings: s.drawingState.openings,
         elements: newElements,
         wallPoints: s.wallPoints,
+        guidelines: s.guidelines,
       }),
     }));
   },
@@ -255,6 +264,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       wallPoints: state.wallPoints.filter((wp) => wp.id !== id),
     })),
 
+  addGuideline: (guideline) =>
+    set((state) => ({
+      guidelines: [...state.guidelines, guideline],
+    })),
+
+  clearGuidelines: () =>
+    set({ guidelines: [] }),
+
   undo: () =>
     set((state) => {
       const newHistory = historyUndo(state.history);
@@ -262,6 +279,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         history: newHistory,
         elements: newHistory.present.elements,
         wallPoints: newHistory.present.wallPoints ?? [],
+        guidelines: newHistory.present.guidelines ?? [],
         drawingState: {
           ...state.drawingState,
           walls: newHistory.present.walls,
@@ -279,6 +297,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         history: newHistory,
         elements: newHistory.present.elements,
         wallPoints: newHistory.present.wallPoints ?? [],
+        guidelines: newHistory.present.guidelines ?? [],
         drawingState: {
           ...state.drawingState,
           walls: newHistory.present.walls,
@@ -290,10 +309,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
 
   clear: () => {
-    const emptyData: DesignData = { walls: [], cabinets: [], openings: [], elements: [], wallPoints: [] };
+    const emptyData: DesignData = { walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [] };
     set((state) => ({
       elements: [],
       wallPoints: [],
+      guidelines: [],
       history: pushState(state.history, emptyData),
       drawingState: {
         ...state.drawingState,
@@ -317,6 +337,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         openings: state.drawingState.openings,
         elements: state.elements,
         wallPoints: state.wallPoints,
+        guidelines: state.guidelines,
       }),
     }));
   },
@@ -332,11 +353,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const openings = data.openings ?? [];
     const elements = data.elements ?? [];
     const wallPoints = data.wallPoints ?? [];
+    const guidelines = data.guidelines ?? [];
     set((state) => ({
       elements,
       wallPoints,
+      guidelines,
       selectedFinishing: data.selectedFinishing ?? "1",
-      history: createHistory({ walls, cabinets, openings, elements, wallPoints }),
+      history: createHistory({ walls, cabinets, openings, elements, wallPoints, guidelines }),
       drawingState: {
         ...state.drawingState,
         walls,
@@ -358,6 +381,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       openings: state.drawingState.openings,
       elements: state.elements,
       wallPoints: state.wallPoints,
+      guidelines: state.guidelines,
       selectedFinishing: state.selectedFinishing,
     };
   },
