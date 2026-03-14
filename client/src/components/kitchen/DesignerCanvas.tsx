@@ -328,6 +328,100 @@ interface WallPlacementState {
 	startPointOnWall?: Point;
 }
 
+// ── Island Cabinet 2-Phase State ─────────────────────────────────────────────
+interface IslandPlacementState {
+	phase: 'settingLength' | 'settingDepth';
+	start: Point;
+	depth: number;
+	isFlipped: boolean;
+	end?: Point;
+	angle?: number;
+	length?: number; // pixels
+}
+
+// ── Island Cabinet 2-Phase Dimension Panel ───────────────────────────────────
+function IslandDimensionPanel({
+	phase,
+	liveLengthCm,
+	liveDepthCm,
+	unit,
+	onLengthConfirm,
+	onDepthConfirm,
+	onCancel,
+}: {
+	phase: 'settingLength' | 'settingDepth';
+	liveLengthCm: number;
+	liveDepthCm: number;
+	unit: 'cm' | 'm';
+	onLengthConfirm: (cm: number) => void;
+	onDepthConfirm: (cm: number) => void;
+	onCancel: () => void;
+}) {
+	const [value, setValue] = useState('');
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		setValue('');
+		const t = setTimeout(() => inputRef.current?.focus(), 50);
+		return () => clearTimeout(t);
+	}, [phase]);
+
+	const liveCm = phase === 'settingLength' ? liveLengthCm : liveDepthCm;
+	const placeholder =
+		unit === 'm' ? (liveCm / 100).toFixed(2) : `${Math.round(liveCm)}`;
+
+	const handleKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			const num = parseFloat(value);
+			const cm =
+				!isNaN(num) && num > 0
+					? unit === 'm'
+						? num * 100
+						: num
+					: liveCm;
+			if (phase === 'settingLength') onLengthConfirm(cm);
+			else onDepthConfirm(cm);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			onCancel();
+		}
+	};
+
+	return (
+		<div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
+			<div className="bg-card border border-border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 backdrop-blur-sm">
+				<div className="text-xs font-semibold text-amber-500 whitespace-nowrap">
+					Island Cabinet
+				</div>
+				<div className="w-px h-8 bg-border" />
+				<label className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+					{phase === 'settingLength' ? 'Length' : 'Depth'}
+				</label>
+				<div className="flex items-center bg-amber-50 border border-amber-300 rounded-md overflow-hidden">
+					<input
+						ref={inputRef}
+						type="number"
+						value={value}
+						onChange={(e) => setValue(e.target.value)}
+						onKeyDown={handleKeyDown}
+						placeholder={placeholder}
+						className="w-16 h-7 px-2 text-sm font-mono bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+						step="any"
+						min="0"
+					/>
+					<span className="text-[10px] text-muted-foreground font-medium pr-2 select-none">
+						{unit}
+					</span>
+				</div>
+				<div className="text-[10px] text-muted-foreground whitespace-nowrap">
+					{phase === 'settingDepth' ? 'F to flip · Enter · Esc' : 'Enter · Esc'}
+				</div>
+			</div>
+		</div>
+	);
+}
+
 function FixedDimensionPanel({
 	wallPlacement,
 	unit,
@@ -646,6 +740,7 @@ export function DesignerCanvas({
 	// Measure tape state
 	const [measureTape, setMeasureTape] = useState<{ startPoint: Point } | null>(null);
 	const shiftHeldRef = useRef(false);
+	const [islandPlacement, setIslandPlacement] = useState<IslandPlacementState | null>(null);
 	const [hoveredWallId, setHoveredWallId] = useState<string | null>(null);
 	const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
 	const [wallPointPlacement, setWallPointPlacement] =
@@ -727,6 +822,9 @@ export function DesignerCanvas({
 		}
 		if (activeCustomTool !== 'measure_tape') {
 			setMeasureTape(null);
+		}
+		if (activeCustomTool !== 'island') {
+			setIslandPlacement(null);
 		}
 	}, [activeCustomTool]);
 
@@ -904,20 +1002,22 @@ export function DesignerCanvas({
 				return;
 			}
 
-			// ── Free-Drop Island ─────────────────────────────────────────────
+			// ── Island Cabinet: Edge-Based Extrusion ─────────────────────────
 			if (activeCustomTool === 'island') {
 				const snapPos = snapResult?.point ?? pos;
-				const halfLen = cmToPixels(60); // half of 120cm default length
-				const cabinet: Cabinet = {
-					id: generateId(),
-					type: 'island',
-					start: { x: snapPos.x - halfLen, y: snapPos.y },
-					end:   { x: snapPos.x + halfLen, y: snapPos.y },
-					depth: 90,
-					length: 120,
-					depthFlipped: false,
-				};
-				onAddCabinet(cabinet);
+				if (!islandPlacement) {
+					// Phase 0 → Phase 1: first click locks Point A
+					setIslandPlacement({ phase: 'settingLength', start: snapPos, depth: 90, isFlipped: false });
+				} else if (islandPlacement.phase === 'settingLength') {
+					// Phase 1 → Phase 2: second click confirms axis end
+					const liveEnd = shiftHeldRef.current ? constrainToAxis(islandPlacement.start, snapPos) : snapPos;
+					const length = distanceBetween(islandPlacement.start, liveEnd);
+					if (length < 5) { setIslandPlacement(null); return; }
+					const angle = angleBetween(islandPlacement.start, liveEnd);
+					setIslandPlacement({ ...islandPlacement, phase: 'settingDepth', end: liveEnd, angle, length });
+				} else if (islandPlacement.phase === 'settingDepth') {
+					placeIsland(islandPlacement);
+				}
 				return;
 			}
 
@@ -1899,6 +1999,21 @@ export function DesignerCanvas({
 		onMoveComplete();
 	}, [drawingState, onUpdateCabinet, onMoveComplete]);
 
+	const placeIsland = useCallback((ip: IslandPlacementState) => {
+		if (!ip.end || ip.angle === undefined || ip.length === undefined) return;
+		const cabinet: Cabinet = {
+			id: generateId(),
+			type: 'island',
+			start: ip.start,
+			end: ip.end,
+			depth: ip.depth,
+			length: pixelsToCm(ip.length),
+			depthFlipped: ip.isFlipped,
+		};
+		onAddCabinet(cabinet);
+		setIslandPlacement(null);
+	}, [onAddCabinet]);
+
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (
@@ -1908,6 +2023,10 @@ export function DesignerCanvas({
 				return;
 			}
 			if (e.key === 'Escape') {
+				if (islandPlacement) {
+					setIslandPlacement(null);
+					return;
+				}
 				if (measureTape) {
 					setMeasureTape(null);
 					return;
@@ -1921,6 +2040,10 @@ export function DesignerCanvas({
 				}
 			}
 			if (e.key === 'f' || e.key === 'F') {
+				if (islandPlacement?.phase === 'settingDepth') {
+					setIslandPlacement(prev => prev ? { ...prev, isFlipped: !prev.isFlipped } : null);
+					return;
+				}
 				if (drawingState.tool === 'select' && drawingState.selectedId) {
 					const cab = drawingState.cabinets.find(
 						(c) => c.id === drawingState.selectedId
@@ -1942,6 +2065,8 @@ export function DesignerCanvas({
 		handleFlipDepth,
 		wallPlacement,
 		measureTape,
+		islandPlacement,
+		placeIsland,
 	]);
 
 	const renderGrid = () => {
@@ -2507,33 +2632,105 @@ export function DesignerCanvas({
 			}
 		}
 
-		// Island hover ghost preview
-		if (activeCustomTool === 'island' && mousePos) {
-			const halfLen = cmToPixels(60);
-			const depthPx = cmToPixels(90);
+
+		if (elements.length === 0) return null;
+		return <Group listening={false}>{elements}</Group>;
+	};
+
+
+	// ── Island Cabinet rendering ────────────────────────────────────────────
+	const renderIslandPlacement = () => {
+		if (!islandPlacement || !mousePos) return null;
+		const ip = islandPlacement;
+		const elements: JSX.Element[] = [];
+
+		if (ip.phase === 'settingLength') {
+			// Live axis line from start to mouse (ortho-locked if Shift)
+			const liveEnd = shiftHeldRef.current ? constrainToAxis(ip.start, mousePos) : mousePos;
+			const lenPx = distanceBetween(ip.start, liveEnd);
+			const lenCm = Math.round(pixelsToCm(lenPx));
+			const mid = { x: (ip.start.x + liveEnd.x) / 2, y: (ip.start.y + liveEnd.y) / 2 };
 			elements.push(
-				<Group key="island-ghost-preview" listening={false}>
+				<Group key="island-phase1" listening={false}>
+					<Line
+						points={[ip.start.x, ip.start.y, liveEnd.x, liveEnd.y]}
+						stroke="#F59E0B"
+						strokeWidth={2 / scale}
+						dash={[6, 4]}
+						listening={false}
+					/>
+					<Circle x={ip.start.x} y={ip.start.y} radius={5 / scale}
+						fill="#F59E0B" listening={false} />
+					<Circle x={liveEnd.x} y={liveEnd.y} radius={4 / scale}
+						stroke="#F59E0B" strokeWidth={1.5 / scale} fill="white" listening={false} />
+					{lenPx > 10 && (
+						<>
+							<Rect
+								x={mid.x - 18 / scale} y={mid.y - 9 / scale}
+								width={36 / scale} height={16 / scale}
+								fill="#F59E0B" cornerRadius={3 / scale} opacity={0.9}
+							/>
+							<Text x={mid.x} y={mid.y}
+								text={`${lenCm}cm`} fontSize={9 / scale} fill="white"
+								align="center" offsetX={18 / scale} offsetY={8 / scale} listening={false} />
+						</>
+					)}
+				</Group>
+			);
+		} else if (ip.phase === 'settingDepth' && ip.end && ip.angle !== undefined && ip.length !== undefined) {
+			const depthPx = cmToPixels(ip.depth);
+			const angleDeg = (ip.angle * 180) / Math.PI;
+			const perpSign = ip.isFlipped ? 1 : -1;
+			const perpAngle = ip.angle + perpSign * Math.PI / 2;
+			const depthMidX = (ip.start.x + ip.end.x) / 2 + Math.cos(perpAngle) * depthPx / 2;
+			const depthMidY = (ip.start.y + ip.end.y) / 2 + Math.sin(perpAngle) * depthPx / 2;
+			const depthCm = Math.round(ip.depth);
+			const lenCm = Math.round(pixelsToCm(ip.length));
+			elements.push(
+				<Group key="island-phase2" listening={false}>
+					{/* Base edge */}
+					<Line
+						points={[ip.start.x, ip.start.y, ip.end.x, ip.end.y]}
+						stroke="#F59E0B" strokeWidth={2 / scale} listening={false}
+					/>
+					<Circle x={ip.start.x} y={ip.start.y} radius={5 / scale} fill="#F59E0B" listening={false} />
+					<Circle x={ip.end.x} y={ip.end.y} radius={5 / scale} fill="#F59E0B" listening={false} />
+					{/* Extruded rectangle */}
+					<Group x={ip.start.x} y={ip.start.y} rotation={angleDeg} listening={false}>
+						<Rect
+							x={0} y={ip.isFlipped ? 0 : -depthPx}
+							width={ip.length} height={depthPx}
+							fill="rgba(168,85,247,0.2)" stroke="#A855F7"
+							strokeWidth={1.5 / scale} dash={[6, 3]}
+						/>
+						<Text
+							x={ip.length / 2} y={ip.isFlipped ? depthPx / 2 : -depthPx / 2}
+							text="IC" fontSize={12 / scale} fill="#7C3AED"
+							align="center" offsetX={8 / scale} offsetY={6 / scale} listening={false}
+						/>
+					</Group>
+					{/* Length label */}
 					<Rect
-						x={mousePos.x - halfLen}
-						y={mousePos.y}
-						width={halfLen * 2}
-						height={depthPx}
-						fill="rgba(168,85,247,0.15)"
-						stroke="#A855F7"
-						strokeWidth={1.5 / scale}
-						dash={[6, 3]}
+						x={(ip.start.x + ip.end.x) / 2 - 18 / scale}
+						y={(ip.start.y + ip.end.y) / 2 - 9 / scale}
+						width={36 / scale} height={16 / scale}
+						fill="#F59E0B" cornerRadius={3 / scale} opacity={0.9}
 					/>
 					<Text
-						x={mousePos.x}
-						y={mousePos.y + depthPx / 2}
-						text="IC"
-						fontSize={12 / scale}
-						fill="#7C3AED"
-						align="center"
-						offsetX={8 / scale}
-						offsetY={6 / scale}
-						opacity={0.7}
-						listening={false}
+						x={(ip.start.x + ip.end.x) / 2} y={(ip.start.y + ip.end.y) / 2}
+						text={`${lenCm}cm`} fontSize={9 / scale} fill="white"
+						align="center" offsetX={18 / scale} offsetY={8 / scale} listening={false}
+					/>
+					{/* Depth label */}
+					<Rect
+						x={depthMidX - 18 / scale} y={depthMidY - 9 / scale}
+						width={36 / scale} height={16 / scale}
+						fill="#A855F7" cornerRadius={3 / scale} opacity={0.9}
+					/>
+					<Text
+						x={depthMidX} y={depthMidY}
+						text={`${depthCm}cm`} fontSize={9 / scale} fill="white"
+						align="center" offsetX={18 / scale} offsetY={8 / scale} listening={false}
 					/>
 				</Group>
 			);
@@ -2542,7 +2739,6 @@ export function DesignerCanvas({
 		if (elements.length === 0) return null;
 		return <Group listening={false}>{elements}</Group>;
 	};
-
 	const renderWallPointRuler = () => {
 		if (!wallPointPlacement && !hoveredCorner) return null;
 		const elements: JSX.Element[] = [];
@@ -3532,6 +3728,7 @@ export function DesignerCanvas({
 					{renderWallPoints()}
 					{renderWallPointRuler()}
 					{renderMeasureTape()}
+					{renderIslandPlacement()}
 					{renderWallPlacementRuler()}
 					{renderPreview()}
 					{renderSplitPreview()}
@@ -3576,7 +3773,30 @@ export function DesignerCanvas({
 				/>
 			)}
 
-			{showDimensionInput && wallPlacement && (
+			{islandPlacement && (
+				<IslandDimensionPanel
+					phase={islandPlacement.phase}
+					liveLengthCm={mousePos ? pixelsToCm(distanceBetween(islandPlacement.start,
+						shiftHeldRef.current ? constrainToAxis(islandPlacement.start, mousePos) : mousePos)) : 0}
+					liveDepthCm={islandPlacement.depth}
+					unit={drawingState.unit}
+					onLengthConfirm={(cm) => {
+						if (!islandPlacement || !mousePos) return;
+						const liveEnd = shiftHeldRef.current ? constrainToAxis(islandPlacement.start, mousePos) : mousePos;
+						const angle = angleBetween(islandPlacement.start, liveEnd);
+						const lengthPx = cmToPixels(cm);
+						const end: Point = {
+							x: islandPlacement.start.x + Math.cos(angle) * lengthPx,
+							y: islandPlacement.start.y + Math.sin(angle) * lengthPx,
+						};
+						setIslandPlacement({ ...islandPlacement, phase: 'settingDepth', end, angle, length: lengthPx });
+					}}
+					onDepthConfirm={(cm) => placeIsland({ ...islandPlacement, depth: cm })}
+					onCancel={() => setIslandPlacement(null)}
+				/>
+			)}
+
+						{showDimensionInput && wallPlacement && (
 				<FixedDimensionPanel
 					wallPlacement={wallPlacement}
 					unit={drawingState.unit}
