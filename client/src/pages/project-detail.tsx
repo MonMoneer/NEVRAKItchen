@@ -396,6 +396,23 @@ export default function ProjectDetail({ id }: { id: number }) {
 				return;
 			}
 
+			// Block same-type overlap (base on base, wall_cabinet on wall_cabinet)
+			if (cabinet.type === 'base' || cabinet.type === 'wall_cabinet') {
+				const sameTypeOverlap = findOverlappingCabinets(
+					cabinet.start,
+					cabinet.end,
+					drawingState.cabinets,
+					[cabinet.type]
+				);
+				if (sameTypeOverlap.length > 0) {
+					toast({
+						title: `Cannot overlap existing ${cabinet.type === 'base' ? 'base' : 'wall'} cabinet`,
+						variant: 'destructive',
+					});
+					return;
+				}
+			}
+
 			let newCabinets = [...drawingState.cabinets];
 			if (cabinet.type === 'tall') {
 				const overlapping = findOverlappingCabinets(
@@ -967,6 +984,13 @@ export default function ProjectDetail({ id }: { id: number }) {
 					/>
 				</div>
 
+				{/* Site measurement banner */}
+				{stage === 'site_measurement' && (
+					<div className="bg-amber-100 text-amber-800 text-center text-sm py-1 px-3 shrink-0 font-medium">
+						Site Measurement Mode — design is locked
+					</div>
+				)}
+
 				{/* Canvas */}
 				<DesignerCanvas
 					drawingState={drawingState}
@@ -986,7 +1010,6 @@ export default function ProjectDetail({ id }: { id: number }) {
 					}}
 					stage={stage}
 					referenceImage={
-						canvasStore.showReferenceOverlay &&
 						stage === 'site_measurement'
 							? referenceImage
 							: null

@@ -150,8 +150,8 @@ export const OPENING_STYLES: Record<OpeningType, OpeningStyle> = {
 };
 
 export const CLEARANCE_DEPTHS: Record<OpeningType, number> = {
-  door: 5,
-  window: 5,
+  door: 0,
+  window: 0,
 };
 
 export function distanceBetween(a: Point, b: Point): number {
@@ -914,6 +914,74 @@ export function projectOntoWall(
   const nearest = nearestPointOnSegment(point, wall.start, wall.end);
   const offset = distanceBetween(wall.start, nearest);
   return { position: nearest, offset };
+}
+
+export interface AnchorPoint {
+  point: Point;
+  type: 'wall_corner' | 'door_edge' | 'window_edge' | 'cabinet_edge';
+  sourceId?: string;
+}
+
+export function getWallAnchorPoints(
+  wall: Wall,
+  cabinets: Cabinet[],
+  openings: Opening[],
+): AnchorPoint[] {
+  const anchors: AnchorPoint[] = [];
+
+  // Wall endpoints
+  anchors.push({ point: wall.start, type: 'wall_corner' });
+  anchors.push({ point: wall.end, type: 'wall_corner' });
+
+  // Cabinet edges projected onto wall
+  for (const c of cabinets) {
+    const projS = nearestPointOnSegment(c.start, wall.start, wall.end);
+    if (distanceBetween(c.start, projS) < 15) {
+      anchors.push({ point: projS, type: 'cabinet_edge', sourceId: c.id });
+    }
+    const projE = nearestPointOnSegment(c.end, wall.start, wall.end);
+    if (distanceBetween(c.end, projE) < 15) {
+      anchors.push({ point: projE, type: 'cabinet_edge', sourceId: c.id });
+    }
+  }
+
+  // Opening edges projected onto wall
+  for (const o of openings) {
+    const projS = nearestPointOnSegment(o.start, wall.start, wall.end);
+    if (distanceBetween(o.start, projS) < 15) {
+      anchors.push({ point: projS, type: o.type === 'door' ? 'door_edge' : 'window_edge', sourceId: o.id });
+    }
+    const projE = nearestPointOnSegment(o.end, wall.start, wall.end);
+    if (distanceBetween(o.end, projE) < 15) {
+      anchors.push({ point: projE, type: o.type === 'door' ? 'door_edge' : 'window_edge', sourceId: o.id });
+    }
+  }
+
+  return anchors;
+}
+
+export function calculateRemainingWallSpace(
+  wall: Wall,
+  cabinets: Cabinet[],
+  openings: Opening[],
+): number {
+  const totalPx = distanceBetween(wall.start, wall.end);
+  let usedPx = 0;
+  for (const c of cabinets) {
+    const projS = nearestPointOnSegment(c.start, wall.start, wall.end);
+    const projE = nearestPointOnSegment(c.end, wall.start, wall.end);
+    if (distanceBetween(c.start, projS) < 15 && distanceBetween(c.end, projE) < 15) {
+      usedPx += distanceBetween(projS, projE);
+    }
+  }
+  for (const o of openings) {
+    const projS = nearestPointOnSegment(o.start, wall.start, wall.end);
+    const projE = nearestPointOnSegment(o.end, wall.start, wall.end);
+    if (distanceBetween(o.start, projS) < 15 && distanceBetween(o.end, projE) < 15) {
+      usedPx += distanceBetween(projS, projE);
+    }
+  }
+  return Math.max(0, pixelsToCm(totalPx) - pixelsToCm(usedPx));
 }
 
 export function constrainToWall(

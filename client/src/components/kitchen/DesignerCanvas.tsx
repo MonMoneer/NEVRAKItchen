@@ -45,6 +45,11 @@ import {
 	constrainToWall,
 	pointAlongWall,
 	getWallDirectionFromRef,
+	computeInteriorNormal,
+	getWallAnchorPoints,
+	checkClearanceViolation,
+	calculateRemainingWallSpace,
+	type AnchorPoint,
 	CABINET_DEPTHS,
 	WALL_THICKNESS,
 	CABINET_STYLES,
@@ -324,7 +329,6 @@ interface WallPlacementState {
 	currentPosition: Point;
 	offsetPosition?: Point;
 	lengthPreviewEnd?: Point;
-	drawDirection?: 1 | -1 | null;
 	startPointOnWall?: Point;
 }
 
@@ -742,6 +746,7 @@ export function DesignerCanvas({
 	const shiftHeldRef = useRef(false);
 	const [islandPlacement, setIslandPlacement] = useState<IslandPlacementState | null>(null);
 	const [hoveredWallId, setHoveredWallId] = useState<string | null>(null);
+	const [wallAnchorPoints, setWallAnchorPoints] = useState<AnchorPoint[]>([]);
 	const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
 	const [wallPointPlacement, setWallPointPlacement] =
 		useState<WallPointPlacementState | null>(null);
@@ -876,7 +881,19 @@ export function DesignerCanvas({
 			parentWallId?: string
 		) => {
 			const connection = connectWalls(endPoint, walls);
-			const finalEnd = connection.point;
+			let finalEnd = connection.point;
+
+			// Offset non-wall elements to inner wall face
+			let adjustedStart = { ...startPoint };
+			if (tool !== 'wall' && parentWallId) {
+				const parentWall = walls.find(w => w.id === parentWallId);
+				if (parentWall) {
+					const normal = computeInteriorNormal(parentWall.start, parentWall.end, walls);
+					const offset = WALL_THICKNESS / 2;
+					adjustedStart = { x: startPoint.x + normal.nx * offset, y: startPoint.y + normal.ny * offset };
+					finalEnd = { x: finalEnd.x + normal.nx * offset, y: finalEnd.y + normal.ny * offset };
+				}
+			}
 
 			if (tool === 'wall') {
 				const wall: Wall = {
@@ -890,9 +907,9 @@ export function DesignerCanvas({
 				const opening: Opening = {
 					id: generateId(),
 					type: tool as OpeningType,
-					start: { ...startPoint },
+					start: adjustedStart,
 					end: finalEnd,
-					length: distanceBetween(startPoint, finalEnd),
+					length: distanceBetween(adjustedStart, finalEnd),
 					wallId: parentWallId,
 				};
 				onAddOpening(opening);
@@ -902,17 +919,17 @@ export function DesignerCanvas({
 				tool === 'tall'
 			) {
 				const flipped = calculateDepthDirection(
-					startPoint,
+					adjustedStart,
 					finalEnd,
 					walls
 				);
 				const cabinet: Cabinet = {
 					id: generateId(),
 					type: tool as CabinetType,
-					start: { ...startPoint },
+					start: adjustedStart,
 					end: finalEnd,
 					depth: CABINET_DEPTHS[tool as CabinetType],
-					length: distanceBetween(startPoint, finalEnd),
+					length: distanceBetween(adjustedStart, finalEnd),
 					depthFlipped: flipped,
 				};
 				onAddCabinet(cabinet);
@@ -968,6 +985,13 @@ export function DesignerCanvas({
 			if (drawingState.tool === 'pan') {
 				setIsPanning(true);
 				return;
+			}
+
+			// Site measurement: only allow electrical/plumbing wall-point tools
+			if (stage === 'site_measurement') {
+				if (activeCustomTool !== 'electrical' && activeCustomTool !== 'plumbing') {
+					return;
+				}
 			}
 
 			const pos = getPointerPos(e);
@@ -1153,7 +1177,20 @@ export function DesignerCanvas({
 
 					setHoveredWallId(null);
 
-					const { wall, referenceEndpoint, wallAngle } = wallResult;
+					const { wall, wallAngle } = wallResult;
+					let { referenceEndpoint } = wallResult;
+
+					// Auto-detect nearest anchor point as reference
+					const anchors = getWallAnchorPoints(wall, cabinets, drawingState.openings);
+					let bestAnchorDist = SNAP_RADIUS * 2;
+					for (const a of anchors) {
+						const d = distanceBetween(pos, a.point);
+						if (d < bestAnchorDist) {
+							bestAnchorDist = d;
+							referenceEndpoint = a.point;
+						}
+					}
+
 					const constrained = constrainToWall(
 						pos,
 						wall,
@@ -1168,52 +1205,15 @@ export function DesignerCanvas({
 					let initOffset = constrained.offset;
 
 					if (isCabTool) {
-						const anchors = [wall.start, wall.end];
-						for (const c of cabinets) {
-							const projS = nearestPointOnSegment(
-								c.start,
-								wall.start,
-								wall.end
-							);
-							if (distanceBetween(c.start, projS) < 15) {
-								anchors.push(projS);
-							}
-							const projE = nearestPointOnSegment(
-								c.end,
-								wall.start,
-								wall.end
-							);
-							if (distanceBetween(c.end, projE) < 15) {
-								anchors.push(projE);
-							}
-						}
-						for (const o of drawingState.openings) {
-							const projS = nearestPointOnSegment(
-								o.start,
-								wall.start,
-								wall.end
-							);
-							if (distanceBetween(o.start, projS) < 15) {
-								anchors.push(projS);
-							}
-							const projE = nearestPointOnSegment(
-								o.end,
-								wall.start,
-								wall.end
-							);
-							if (distanceBetween(o.end, projE) < 15) {
-								anchors.push(projE);
-							}
-						}
 						let bestDist = Infinity;
-						for (const sp of anchors) {
-							const d = distanceBetween(constrained.position, sp);
+						for (const a of anchors) {
+							const d = distanceBetween(constrained.position, a.point);
 							if (d < bestDist) {
 								bestDist = d;
-								initPos = sp;
+								initPos = a.point;
 								initOffset = distanceBetween(
 									referenceEndpoint,
-									sp
+									a.point
 								);
 							}
 						}
@@ -1435,9 +1435,15 @@ export function DesignerCanvas({
 			) {
 				const wallResult = findNearestWall(pos, walls, 30);
 				setHoveredWallId(wallResult ? wallResult.wall.id : null);
+				if (wallResult) {
+					setWallAnchorPoints(getWallAnchorPoints(wallResult.wall, cabinets, drawingState.openings));
+				} else {
+					setWallAnchorPoints([]);
+				}
 			} else if (!isWallPlacementTool(activeCustomTool || tool)) {
 				if (hoveredWallId) {
 					setHoveredWallId(null);
+					setWallAnchorPoints([]);
 				}
 			}
 
@@ -1559,30 +1565,7 @@ export function DesignerCanvas({
 						(projected.x - startPt.x) * wallUnitX +
 						(projected.y - startPt.y) * wallUnitY;
 
-					let currentLockedDir = wallPlacement.drawDirection;
-					if (
-						currentLockedDir === null ||
-						currentLockedDir === undefined
-					) {
-						if (Math.abs(unclampedDist) > 5) {
-							currentLockedDir = unclampedDist > 0 ? 1 : -1;
-						}
-					}
-
 					let snappedPos = projected;
-					if (
-						currentLockedDir !== null &&
-						currentLockedDir !== undefined
-					) {
-						const clampedDist =
-							currentLockedDir > 0
-								? Math.max(0, projectedDist)
-								: Math.min(0, projectedDist);
-						snappedPos = {
-							x: startPt.x + wallUnitX * clampedDist,
-							y: startPt.y + wallUnitY * clampedDist,
-						};
-					}
 
 					if (snapEnabled) {
 						const wallEndpoints = [
@@ -1629,21 +1612,6 @@ export function DesignerCanvas({
 						const allSnaps = [...wallEndpoints, ...cabEndpoints];
 						let bestDist = SNAP_RADIUS;
 						for (const sp of allSnaps) {
-							if (
-								currentLockedDir !== null &&
-								currentLockedDir !== undefined
-							) {
-								const snapDirDist =
-									(sp.x - startPt.x) * wallUnitX +
-									(sp.y - startPt.y) * wallUnitY;
-								if (
-									(currentLockedDir > 0 &&
-										snapDirDist < -1) ||
-									(currentLockedDir < 0 && snapDirDist > 1)
-								) {
-									continue;
-								}
-							}
 							const d = distanceBetween(snappedPos, sp);
 							if (d < bestDist) {
 								bestDist = d;
@@ -1666,7 +1634,6 @@ export function DesignerCanvas({
 									...prev,
 									lengthPreviewEnd: snappedPos,
 									currentPosition: snappedPos,
-									drawDirection: currentLockedDir,
 								}
 							: null
 					);
@@ -1883,7 +1850,6 @@ export function DesignerCanvas({
 									currentPosition: offsetPos,
 									lengthPreviewEnd: offsetPos,
 									currentOffsetPx: 0,
-									drawDirection: null,
 									startPointOnWall: offsetPos,
 								}
 							: null
@@ -1891,26 +1857,17 @@ export function DesignerCanvas({
 					setShowDimensionInput(true);
 				} else if (wallPlacement.phase === 'settingLength') {
 					const startPt = wallPlacement.offsetPosition!;
-					const lockedDir = wallPlacement.drawDirection;
-					let drawDir = { dx: dir.dx, dy: dir.dy };
 					const wallDx =
 						wallPlacement.wall.end.x - wallPlacement.wall.start.x;
 					const wallDy =
 						wallPlacement.wall.end.y - wallPlacement.wall.start.y;
 					const wallLength = Math.sqrt(wallDx * wallDx + wallDy * wallDy);
-					if (lockedDir !== null && lockedDir !== undefined) {
-						if (wallLength > 0) {
-							drawDir = {
-								dx: (wallDx / wallLength) * lockedDir,
-								dy: (wallDy / wallLength) * lockedDir,
-							};
-						}
-					} else {
-						if (wallLength > 0) {
-							drawDir = {
-								dx: wallDx / wallLength,
-								dy: wallDy / wallLength,
-							};
+					let drawDir = { dx: wallDx / wallLength, dy: wallDy / wallLength };
+					if (wallPlacement.lengthPreviewEnd && wallLength > 0) {
+						const prevDist = (wallPlacement.lengthPreviewEnd.x - startPt.x) * (wallDx / wallLength)
+							+ (wallPlacement.lengthPreviewEnd.y - startPt.y) * (wallDy / wallLength);
+						if (prevDist < 0) {
+							drawDir = { dx: -wallDx / wallLength, dy: -wallDy / wallLength };
 						}
 					}
 					const endPt: Point = {
@@ -2150,6 +2107,28 @@ export function DesignerCanvas({
 			x: wall.end.x + rulerOffsetX,
 			y: wall.end.y + rulerOffsetY,
 		};
+
+		// Remaining wall space indicator
+		const remainingCm = Math.round(calculateRemainingWallSpace(wall, drawingState.cabinets, drawingState.openings));
+		const wallMidX = (wall.start.x + wall.end.x) / 2;
+		const wallMidY = (wall.start.y + wall.end.y) / 2;
+		elements.push(
+			<Group key="remaining-space" listening={false}>
+				<Rect
+					x={wallMidX - rulerOffsetX * 2 - 36 / scale}
+					y={wallMidY - rulerOffsetY * 2 - 8 / scale}
+					width={72 / scale} height={16 / scale}
+					fill="#6B7280" cornerRadius={3 / scale} opacity={0.8}
+				/>
+				<Text
+					x={wallMidX - rulerOffsetX * 2}
+					y={wallMidY - rulerOffsetY * 2}
+					text={`Free: ${remainingCm}cm`}
+					fontSize={9 / scale} fill="white"
+					align="center" offsetX={36 / scale} offsetY={8 / scale}
+				/>
+			</Group>
+		);
 
 		elements.push(
 			<Line
@@ -2394,6 +2373,21 @@ export function DesignerCanvas({
 					const cabType = wpTool as CabinetType;
 					const style = CABINET_STYLES[cabType];
 					const depthPx = cmToPixels(CABINET_DEPTHS[cabType]);
+
+					// Validate ghost placement for valid/invalid color
+					const ghostClearance = checkClearanceViolation(
+						offsetPosition, lengthEndPt, cabType, drawingState.openings, drawingState.walls
+					);
+					let ghostOverlap = false;
+					if (cabType === 'base' || cabType === 'wall_cabinet') {
+						ghostOverlap = findOverlappingCabinets(
+							offsetPosition, lengthEndPt, drawingState.cabinets, [cabType]
+						).length > 0;
+					}
+					const ghostValid = !ghostClearance && !ghostOverlap;
+					const ghostFill = ghostValid ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)';
+					const ghostStroke = ghostValid ? '#16A34A' : '#DC2626';
+
 					const label =
 						wpTool === 'tall'
 							? 'TC'
@@ -2422,9 +2416,8 @@ export function DesignerCanvas({
 								y={ghostYTop}
 								width={cabLenPx}
 								height={depthPx}
-								fill={style.fill}
-								opacity={0.3}
-								stroke={style.stroke}
+								fill={ghostFill}
+								stroke={ghostStroke}
 								strokeWidth={1.5 / scale}
 								dash={[6, 3]}
 								cornerRadius={3}
@@ -2459,7 +2452,7 @@ export function DesignerCanvas({
 								width={cabLenPx}
 								height={wallThickPx}
 								fill={oStyle.fill}
-								opacity={0.35}
+								opacity={stage === 'site_measurement' ? 0.8 : 0.35}
 								stroke={oStyle.stroke}
 								strokeWidth={1.5 / scale}
 								dash={[6, 3]}
@@ -2739,6 +2732,54 @@ export function DesignerCanvas({
 		if (elements.length === 0) return null;
 		return <Group listening={false}>{elements}</Group>;
 	};
+
+	// ── Anchor point markers on hovered wall ─────────────────────────────────
+	const renderAnchorMarkers = () => {
+		if (wallPlacement || wallAnchorPoints.length === 0) return null;
+		const elements: JSX.Element[] = [];
+		const size = 6 / scale;
+		for (let i = 0; i < wallAnchorPoints.length; i++) {
+			const a = wallAnchorPoints[i];
+			const key = `anchor-${i}`;
+			switch (a.type) {
+				case 'wall_corner':
+					elements.push(
+						<Rect key={key} x={a.point.x - size} y={a.point.y - size}
+							width={size * 2} height={size * 2}
+							fill="#9CA3AF" stroke="#6B7280" strokeWidth={1.5 / scale}
+							listening={false} />
+					);
+					break;
+				case 'door_edge':
+					elements.push(
+						<Rect key={key} x={a.point.x} y={a.point.y}
+							width={size * 2} height={size * 2}
+							offsetX={size} offsetY={size} rotation={45}
+							fill="#F97316" stroke="#EA580C" strokeWidth={1.5 / scale}
+							listening={false} />
+					);
+					break;
+				case 'window_edge':
+					elements.push(
+						<Rect key={key} x={a.point.x} y={a.point.y}
+							width={size * 2} height={size * 2}
+							offsetX={size} offsetY={size} rotation={45}
+							fill="#06B6D4" stroke="#0891B2" strokeWidth={1.5 / scale}
+							listening={false} />
+					);
+					break;
+				case 'cabinet_edge':
+					elements.push(
+						<Circle key={key} x={a.point.x} y={a.point.y}
+							radius={size} fill="#3B82F6" stroke="#2563EB"
+							strokeWidth={1.5 / scale} listening={false} />
+					);
+					break;
+			}
+		}
+		return <Group listening={false}>{elements}</Group>;
+	};
+
 	const renderWallPointRuler = () => {
 		if (!wallPointPlacement && !hoveredCorner) return null;
 		const elements: JSX.Element[] = [];
@@ -3720,15 +3761,16 @@ export function DesignerCanvas({
 					</Layer>
 				)}
 				<Layer>
-					{renderClearanceZones()}
-					{renderWalls()}
-					{renderWallCornerJoints()}
-					{renderOpenings()}
-					{renderCabinets()}
+					{stage !== 'site_measurement' && renderClearanceZones()}
+					{stage !== 'site_measurement' && renderWalls()}
+					{stage !== 'site_measurement' && renderWallCornerJoints()}
+					{stage !== 'site_measurement' && renderOpenings()}
+					{stage !== 'site_measurement' && renderCabinets()}
 					{renderWallPoints()}
 					{renderWallPointRuler()}
 					{renderMeasureTape()}
 					{renderIslandPlacement()}
+					{renderAnchorMarkers()}
 					{renderWallPlacementRuler()}
 					{renderPreview()}
 					{renderSplitPreview()}
