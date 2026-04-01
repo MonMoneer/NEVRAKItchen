@@ -881,17 +881,26 @@ export function DesignerCanvas({
 			parentWallId?: string
 		) => {
 			const connection = connectWalls(endPoint, walls);
-			let finalEnd = connection.point;
+			const finalEnd = connection.point;
 
-			// Offset non-wall elements to inner wall face
-			let adjustedStart = { ...startPoint };
+			// Compute original length BEFORE any offset (accurate measurement)
+			const originalLength = distanceBetween(startPoint, finalEnd);
+
+			// Compute depth direction BEFORE offset (uses wall-surface points for correct interior normal)
+			const flipped = (tool === 'base' || tool === 'wall_cabinet' || tool === 'tall')
+				? calculateDepthDirection(startPoint, finalEnd, walls)
+				: false;
+
+			// Offset non-wall elements to inner wall face (perpendicular shift only)
+			let placedStart = { ...startPoint };
+			let placedEnd = { ...finalEnd };
 			if (tool !== 'wall' && parentWallId) {
 				const parentWall = walls.find(w => w.id === parentWallId);
 				if (parentWall) {
 					const normal = computeInteriorNormal(parentWall.start, parentWall.end, walls);
 					const offset = WALL_THICKNESS / 2;
-					adjustedStart = { x: startPoint.x + normal.nx * offset, y: startPoint.y + normal.ny * offset };
-					finalEnd = { x: finalEnd.x + normal.nx * offset, y: finalEnd.y + normal.ny * offset };
+					placedStart = { x: startPoint.x + normal.nx * offset, y: startPoint.y + normal.ny * offset };
+					placedEnd = { x: finalEnd.x + normal.nx * offset, y: finalEnd.y + normal.ny * offset };
 				}
 			}
 
@@ -899,7 +908,7 @@ export function DesignerCanvas({
 				const wall: Wall = {
 					id: generateId(),
 					start: { ...startPoint },
-					end: finalEnd,
+					end: { ...finalEnd },
 					thickness: WALL_THICKNESS,
 				};
 				onAddWall(wall);
@@ -907,9 +916,9 @@ export function DesignerCanvas({
 				const opening: Opening = {
 					id: generateId(),
 					type: tool as OpeningType,
-					start: adjustedStart,
-					end: finalEnd,
-					length: distanceBetween(adjustedStart, finalEnd),
+					start: placedStart,
+					end: placedEnd,
+					length: originalLength,
 					wallId: parentWallId,
 				};
 				onAddOpening(opening);
@@ -918,18 +927,13 @@ export function DesignerCanvas({
 				tool === 'wall_cabinet' ||
 				tool === 'tall'
 			) {
-				const flipped = calculateDepthDirection(
-					adjustedStart,
-					finalEnd,
-					walls
-				);
 				const cabinet: Cabinet = {
 					id: generateId(),
 					type: tool as CabinetType,
-					start: adjustedStart,
-					end: finalEnd,
+					start: placedStart,
+					end: placedEnd,
 					depth: CABINET_DEPTHS[tool as CabinetType],
-					length: distanceBetween(adjustedStart, finalEnd),
+					length: pixelsToCm(originalLength),
 					depthFlipped: flipped,
 				};
 				onAddCabinet(cabinet);
@@ -2963,7 +2967,8 @@ export function DesignerCanvas({
 				{renderDimensionLabel(
 					cabinet.start,
 					cabinet.end,
-					drawingState.unit
+					drawingState.unit,
+					'interior'
 				)}
 			</Group>
 		);
@@ -3045,7 +3050,8 @@ export function DesignerCanvas({
 					{renderDimensionLabel(
 						wall.start,
 						wall.end,
-						drawingState.unit
+						drawingState.unit,
+						'exterior'
 					)}
 				</Group>
 			);
@@ -3227,7 +3233,8 @@ export function DesignerCanvas({
 					{renderDimensionLabel(
 						opening.start,
 						opening.end,
-						drawingState.unit
+						drawingState.unit,
+						'exterior'
 					)}
 				</Group>
 			);
@@ -3265,7 +3272,8 @@ export function DesignerCanvas({
 	const renderDimensionLabel = (
 		start: Point,
 		end: Point,
-		unit: 'cm' | 'm'
+		unit: 'cm' | 'm',
+		placement: 'interior' | 'exterior' = 'exterior'
 	) => {
 		const mid = getMidpoint(start, end);
 		const dist = distanceBetween(start, end);
@@ -3276,8 +3284,23 @@ export function DesignerCanvas({
 		const text = formatLength(dist, unit);
 		const angle = angleBetween(start, end);
 		const perpOffset = 14 / scale;
-		const labelX = mid.x + Math.cos(angle + Math.PI / 2) * perpOffset;
-		const labelY = mid.y + Math.sin(angle + Math.PI / 2) * perpOffset;
+
+		// Determine which perpendicular side to place the label
+		let perpAngle = angle + Math.PI / 2;
+		if (placement === 'interior') {
+			// Place inside the room (toward interior normal)
+			const normal = computeInteriorNormal(start, end, drawingState.walls);
+			const dot = Math.cos(perpAngle) * normal.nx + Math.sin(perpAngle) * normal.ny;
+			if (dot < 0) perpAngle = angle - Math.PI / 2; // flip to interior side
+		} else {
+			// Place outside the room (away from interior normal)
+			const normal = computeInteriorNormal(start, end, drawingState.walls);
+			const dot = Math.cos(perpAngle) * normal.nx + Math.sin(perpAngle) * normal.ny;
+			if (dot > 0) perpAngle = angle - Math.PI / 2; // flip to exterior side
+		}
+
+		const labelX = mid.x + Math.cos(perpAngle) * perpOffset;
+		const labelY = mid.y + Math.sin(perpAngle) * perpOffset;
 
 		return (
 			<Text
