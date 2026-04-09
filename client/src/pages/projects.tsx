@@ -1,11 +1,21 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useProjectStore, type Project, type ProjectStage } from "@/stores/useProjectStore";
+import { KanbanColumn } from "@/components/crm/KanbanColumn";
+import { KanbanCard } from "@/components/crm/KanbanCard";
+import { SlideOutPanel } from "@/components/crm/SlideOutPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -20,42 +30,22 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Search, LogOut, Settings, ChevronDown } from "lucide-react";
+import { Search, LogOut, Settings, ChevronDown } from "lucide-react";
 
-// ─── Stage config ─────────────────────────────────────────────────────────────
+// ─── Pipeline config ──────────────────────────────────────────────────────────
 
-const STAGES: { value: ProjectStage | "all"; label: string; color: string }[] = [
-  { value: "all", label: "All Projects", color: "" },
-  { value: "lead", label: "Lead", color: "bg-gray-100 text-gray-700" },
-  { value: "estimated_budget", label: "Estimated Budget", color: "bg-blue-100 text-blue-700" },
-  { value: "site_measurement", label: "Site Measurement", color: "bg-yellow-100 text-yellow-700" },
-  { value: "50_payment", label: "50% Payment", color: "bg-orange-100 text-orange-700" },
-  { value: "3d_design", label: "3D Design", color: "bg-purple-100 text-purple-700" },
-  { value: "manufacturing", label: "Manufacturing", color: "bg-indigo-100 text-indigo-700" },
-  { value: "delivered", label: "Delivered", color: "bg-green-100 text-green-700" },
-  { value: "100_payment", label: "100% Payment", color: "bg-emerald-100 text-emerald-700" },
+const PIPELINE: { id: ProjectStage; label: string; color: string }[] = [
+  { id: "lead", label: "Lead", color: "bg-gray-400" },
+  { id: "estimated_budget", label: "Est. Budget", color: "bg-blue-400" },
+  { id: "site_measurement", label: "Site Meas.", color: "bg-yellow-400" },
+  { id: "50_payment", label: "50% Payment", color: "bg-orange-400" },
+  { id: "3d_design", label: "3D Design", color: "bg-purple-400" },
+  { id: "manufacturing", label: "Manufacturing", color: "bg-indigo-400" },
+  { id: "delivered", label: "Delivered", color: "bg-green-400" },
+  { id: "100_payment", label: "100% Payment", color: "bg-emerald-400" },
 ];
 
-function stageBadge(stage: string) {
-  const s = STAGES.find((x) => x.value === stage);
-  return s ? (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${s.color}`}>
-      {s.label}
-    </span>
-  ) : (
-    <span className="text-xs text-muted-foreground">{stage}</span>
-  );
-}
-
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("en-AE", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-// ─── New project dialog ───────────────────────────────────────────────────────
+// ─── New Project Dialog ───────────────────────────────────────────────────────
 
 function NewProjectDialog({
   open,
@@ -121,25 +111,47 @@ function NewProjectDialog({
         <form onSubmit={handleSubmit} className="space-y-3 pt-1">
           <div className="space-y-1">
             <Label>Project name *</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Al Barsha Villa Kitchen" required />
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Al Barsha Villa Kitchen"
+              required
+            />
           </div>
           <div className="space-y-1">
             <Label>Client name</Label>
-            <Input value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Full name" />
+            <Input
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              placeholder="Full name"
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Phone</Label>
-              <Input value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} placeholder="+971 50 …" />
+              <Input
+                value={clientPhone}
+                onChange={(e) => setClientPhone(e.target.value)}
+                placeholder="+971 50 …"
+              />
             </div>
             <div className="space-y-1">
               <Label>Email</Label>
-              <Input type="email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="…@gmail.com" />
+              <Input
+                type="email"
+                value={clientEmail}
+                onChange={(e) => setClientEmail(e.target.value)}
+                placeholder="…@gmail.com"
+              />
             </div>
           </div>
           <div className="space-y-1">
             <Label>Address</Label>
-            <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Villa / flat address" />
+            <Input
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="Villa / flat address"
+            />
           </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -165,63 +177,155 @@ export default function Projects() {
   const { user, logout } = useAuthStore();
   const { projects, setProjects, upsertProject, removeProject } = useProjectStore();
 
-  const [stageFilter, setStageFilter] = useState<ProjectStage | "all">("all");
   const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [technicians, setTechnicians] = useState<{ id: number; username: string }[]>([]);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [activeDragProject, setActiveDragProject] = useState<Project | null>(null);
 
-  // Load projects
+  // Load projects and technicians on mount
   useEffect(() => {
     setIsLoading(true);
-    const url =
-      stageFilter === "all"
-        ? "/api/projects"
-        : `/api/projects?stage=${stageFilter}`;
+    Promise.all([
+      fetch("/api/projects").then((r) => r.json()),
+      fetch("/api/users").then((r) => r.json()).catch(() => []),
+    ]).then(([projectData, userData]) => {
+      setProjects(Array.isArray(projectData) ? projectData : []);
+      const techList = Array.isArray(userData)
+        ? userData.filter((u: { role: string }) => u.role === "technician")
+        : [];
+      setTechnicians(techList);
+    }).finally(() => setIsLoading(false));
+  }, [setProjects]);
 
-    fetch(url)
-      .then((r) => r.json())
-      .then((data) => setProjects(Array.isArray(data) ? data : []))
-      .finally(() => setIsLoading(false));
-  }, [stageFilter, setProjects]);
+  // Sensors: 8px activation distance to distinguish click from drag
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    })
+  );
 
-  // Client-side search filter
-  const filtered = projects.filter((p) => {
+  // Filter projects for technician role
+  const visibleProjects = user?.role === "technician"
+    ? projects.filter((p) => p.assignedTo === user.id)
+    : projects;
+
+  // Apply search filter
+  const filteredProjects = visibleProjects.filter((p) => {
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
       p.name.toLowerCase().includes(q) ||
-      p.clientName.toLowerCase().includes(q) ||
-      p.clientPhone.includes(q)
+      (p.clientName ?? "").toLowerCase().includes(q) ||
+      (p.clientPhone ?? "").includes(q)
     );
   });
+
+  // Group projects by stage, sorted by updatedAt descending
+  const projectsByStage = (stageId: ProjectStage) =>
+    filteredProjects
+      .filter((p) => p.stage === stageId)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   const handleLogout = async () => {
     await logout();
     navigate("/login");
   };
 
-  const handleDelete = async (id: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm("Delete this project?")) return;
+  const handleDragStart = (event: DragStartEvent) => {
+    // Technicians cannot drag
+    if (user?.role === "technician") return;
+    const project = projects.find((p) => p.id === event.active.id);
+    if (project) setActiveDragProject(project);
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    setActiveDragProject(null);
+
+    if (user?.role === "technician") return;
+
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    // `over.id` is the droppable column stageId
+    const newStage = over.id as ProjectStage;
+    const project = projects.find((p) => p.id === active.id);
+    if (!project || project.stage === newStage) return;
+
+    // Optimistic update
+    const previousProjects = [...projects];
+    upsertProject({ ...project, stage: newStage });
+
+    try {
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: newStage }),
+      });
+      if (!res.ok) throw new Error("Failed to update stage");
+      const updated = await res.json();
+      upsertProject(updated);
+      // Update selected project if it's the one being dragged
+      if (selectedProject?.id === project.id) {
+        setSelectedProject(updated);
+      }
+    } catch {
+      // Rollback on failure
+      setProjects(previousProjects);
+    }
+  };
+
+  const handleUpdateProject = async (id: number, updates: Partial<Project>) => {
+    const res = await fetch(`/api/projects/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      upsertProject(updated);
+      if (selectedProject?.id === id) {
+        setSelectedProject(updated);
+      }
+    }
+  };
+
+  const handleDeleteProject = async (id: number) => {
     const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
-    if (res.ok) removeProject(id);
+    if (res.ok) {
+      removeProject(id);
+      setSelectedProject(null);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b bg-white px-6 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-10 border-b bg-white px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-lg font-bold tracking-tight">NIVRA Kitchens</span>
           <span className="text-muted-foreground text-sm">/ Projects</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Search */}
+          <div className="relative w-56">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search name, phone…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 h-8 text-sm"
+            />
+          </div>
+
           {user?.role === "admin" && (
             <Button variant="ghost" size="sm" onClick={() => navigate("/admin")}>
               <Settings className="h-4 w-4 mr-1" />
               Admin
             </Button>
           )}
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm">
@@ -239,106 +343,59 @@ export default function Projects() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-6">
-        {/* Toolbar */}
-        <div className="flex items-center gap-3 mb-6">
-          {/* Stage filters */}
-          <div className="flex gap-1">
-            {STAGES.map((s) => (
-              <Button
-                key={s.value}
-                variant={stageFilter === s.value ? "default" : "outline"}
-                size="sm"
-                onClick={() => setStageFilter(s.value as typeof stageFilter)}
-                className="text-xs"
-              >
-                {s.label}
-              </Button>
-            ))}
-          </div>
-
-          <div className="flex-1" />
-
-          {/* Search */}
-          <div className="relative w-64">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search name, phone…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
-          </div>
-
-          <Button onClick={() => setNewOpen(true)}>
-            <Plus className="h-4 w-4 mr-1" />
-            New project
-          </Button>
+      {/* Board */}
+      {isLoading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <span className="text-sm text-muted-foreground">Loading…</span>
         </div>
-
-        {/* Project grid */}
-        {isLoading ? (
-          <div className="text-sm text-muted-foreground py-12 text-center">Loading projects…</div>
-        ) : filtered.length === 0 ? (
-          <div className="text-sm text-muted-foreground py-12 text-center">
-            No projects found.{" "}
-            <button className="underline" onClick={() => setNewOpen(true)}>
-              Create one?
-            </button>
+      ) : (
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <div className="flex-1 overflow-x-auto px-4 py-4">
+            <div className="flex gap-3 h-full min-w-max">
+              {PIPELINE.map((col) => (
+                <KanbanColumn
+                  key={col.id}
+                  stageId={col.id}
+                  label={col.label}
+                  color={col.color}
+                  projects={projectsByStage(col.id)}
+                  onCardClick={(project) => setSelectedProject(project)}
+                  onAddNew={col.id === "lead" ? () => setNewOpen(true) : undefined}
+                />
+              ))}
+            </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map((project) => (
-              <Card
-                key={project.id}
-                className="cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => navigate(`/projects/${project.id}`)}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <div className="font-semibold text-sm leading-snug truncate">
-                      {project.name}
-                    </div>
-                    {stageBadge(project.stage)}
-                  </div>
 
-                  <div className="space-y-1 text-xs text-muted-foreground">
-                    {project.clientName && (
-                      <div className="truncate">{project.clientName}</div>
-                    )}
-                    {project.clientPhone && (
-                      <div>{project.clientPhone}</div>
-                    )}
-                    {project.address && (
-                      <div className="truncate">{project.address}</div>
-                    )}
-                  </div>
+          <DragOverlay>
+            {activeDragProject ? (
+              <div className="opacity-90 rotate-1">
+                <KanbanCard
+                  project={activeDragProject}
+                  onClick={() => {}}
+                />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      )}
 
-                  <div className="flex items-center justify-between mt-3 pt-3 border-t">
-                    <span className="text-xs text-muted-foreground">
-                      {(project.spaceCount ?? 0)} space{(project.spaceCount ?? 0) !== 1 ? "s" : ""}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground">
-                        {formatDate(project.updatedAt)}
-                      </span>
-                      {(user?.role === "admin" || user?.role === "sales") && (
-                        <button
-                          className="text-xs text-red-500 hover:text-red-700 px-1"
-                          onClick={(e) => handleDelete(project.id, e)}
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </main>
+      {/* Slide-out panel */}
+      {selectedProject && (
+        <SlideOutPanel
+          project={selectedProject}
+          open={!!selectedProject}
+          onClose={() => setSelectedProject(null)}
+          onUpdateProject={handleUpdateProject}
+          onDeleteProject={handleDeleteProject}
+          technicians={technicians}
+        />
+      )}
 
+      {/* New project dialog */}
       <NewProjectDialog
         open={newOpen}
         onOpenChange={setNewOpen}
