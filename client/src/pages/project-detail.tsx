@@ -317,8 +317,8 @@ export default function ProjectDetail({ id }: { id: number }) {
 	const activeSpace = spaces.find((s) => s.id === activeSpaceId);
 	const stage = (currentProject?.stage ?? 'estimated_budget') as ProjectStage;
 	const isTechnician = user?.role === 'technician';
-	// Pricing hidden for technicians AND during site_measurement (field measure only)
-	const canEditPricing = !isTechnician && stage !== 'site_measurement';
+	// Pricing only shown during estimated_budget stage (not for technicians)
+	const canEditPricing = !isTechnician && stage === 'estimated_budget';
 
 	// Load element definitions once
 	useEffect(() => {
@@ -728,27 +728,6 @@ export default function ProjectDetail({ id }: { id: number }) {
 		toast,
 	]);
 
-	const handleAdvanceToFinal = useCallback(async () => {
-		if (!confirm('Mark as Final? This will lock the measurements.')) {
-			return;
-		}
-		setIsSaving(true);
-
-		try {
-			const res = await fetch(`/api/projects/${id}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ stage: 'delivered' }),
-			});
-			if (res.ok) {
-				updateCurrentProject({ stage: 'delivered' });
-				toast({ title: 'Project marked as Delivered' });
-			}
-		} finally {
-			setIsSaving(false);
-		}
-	}, [id, updateCurrentProject, toast]);
-
 	// ── Add / delete spaces ────────────────────────────────────────────────────
 
 	const handleAddSpace = useCallback(
@@ -901,27 +880,6 @@ export default function ProjectDetail({ id }: { id: number }) {
 					<span className="text-xs text-muted-foreground">
 						{STAGE_LABELS[stage]}
 					</span>
-
-					{stage === 'estimated_budget' && !isTechnician && (
-						<Button
-							size="sm"
-							variant="outline"
-							onClick={handleAdvanceToMeasurement}
-							disabled={isSaving}
-						>
-							Send to Measurement
-						</Button>
-					)}
-					{stage === 'site_measurement' && !isTechnician && (
-						<Button
-							size="sm"
-							variant="outline"
-							onClick={handleAdvanceToFinal}
-							disabled={isSaving}
-						>
-							Mark as Final
-						</Button>
-					)}
 
 					{/* Reference overlay toggle (technician in measurement stage) */}
 					{stage === 'site_measurement' && referenceImage && (
