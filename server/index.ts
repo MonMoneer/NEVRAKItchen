@@ -30,6 +30,16 @@ process.on("exit", (code) => {
   console.error(`[CRASH] process exiting with code ${code}`);
 });
 
+// Safe startup migration: add columns that might not exist yet.
+// Runs raw SQL with IF NOT EXISTS — no interactive prompts, no Drizzle conflicts.
+async function runMigrations() {
+  try {
+    await pool.query(`ALTER TABLE spaces ADD COLUMN IF NOT EXISTS site_measurement_data jsonb`);
+  } catch (err: any) {
+    console.error("[migration] failed:", err.message);
+  }
+}
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -103,6 +113,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  await runMigrations();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

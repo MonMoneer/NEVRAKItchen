@@ -1,1 +1,1 @@
-web: npm run db:push && node dist/index.cjs
+web: node dist/index.cjs
