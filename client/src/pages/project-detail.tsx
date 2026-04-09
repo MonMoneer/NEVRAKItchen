@@ -68,9 +68,14 @@ const SPACE_TYPES = [
 ];
 
 const STAGE_LABELS: Record<ProjectStage, string> = {
+	lead: 'Lead',
 	estimated_budget: 'Estimated Budget',
 	site_measurement: 'Site Measurement',
-	final: 'Final',
+	'50_payment': '50% Payment',
+	'3d_design': '3D Design',
+	manufacturing: 'Manufacturing',
+	delivered: 'Delivered',
+	'100_payment': '100% Payment',
 };
 
 // ─── Add space dialog ─────────────────────────────────────────────────────────
@@ -733,11 +738,11 @@ export default function ProjectDetail({ id }: { id: number }) {
 			const res = await fetch(`/api/projects/${id}`, {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ stage: 'final' }),
+				body: JSON.stringify({ stage: 'delivered' }),
 			});
 			if (res.ok) {
-				updateCurrentProject({ stage: 'final' });
-				toast({ title: 'Project marked as Final' });
+				updateCurrentProject({ stage: 'delivered' });
+				toast({ title: 'Project marked as Delivered' });
 			}
 		} finally {
 			setIsSaving(false);

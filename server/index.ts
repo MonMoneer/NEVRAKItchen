@@ -35,6 +35,18 @@ process.on("exit", (code) => {
 async function runMigrations() {
   try {
     await pool.query(`ALTER TABLE spaces ADD COLUMN IF NOT EXISTS site_measurement_data jsonb`);
+    await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS assigned_to integer REFERENCES users(id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_attachments (
+        id serial PRIMARY KEY,
+        project_id integer NOT NULL REFERENCES saved_projects(id) ON DELETE CASCADE,
+        file_name text NOT NULL,
+        file_data text NOT NULL,
+        file_type text NOT NULL,
+        created_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`UPDATE saved_projects SET stage = 'delivered' WHERE stage = 'final'`);
   } catch (err: any) {
     console.error("[migration] failed:", err.message);
   }

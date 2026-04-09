@@ -233,7 +233,7 @@ interface DesignerCanvasProps {
 	onSelectItem: (id: string | null) => void;
 	onStageRef?: (stage: Konva.Stage | null) => void;
 	referenceImage?: string | null;
-	stage?: 'estimated_budget' | 'site_measurement' | 'final';
+	stage?: string;
 	activeCustomTool?: CustomTool;
 	// Guidelines (measure tape nodes)
 	guidelines?: Guideline[];

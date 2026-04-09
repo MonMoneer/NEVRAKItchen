@@ -8,8 +8,10 @@ import {
   type ElementDefinition, type InsertElementDefinition,
   type WallPoint, type InsertWallPoint,
   type User, type InsertUser,
+  type ProjectAttachment, type InsertProjectAttachment,
   adminSettings, pricingConfig, finishingOptions, savedProjects,
   spaces, spacePhotos, elementDefinitions, wallPoints, users,
+  projectAttachments,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, desc, and, sql } from "drizzle-orm";
@@ -70,6 +72,11 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   listUsers(): Promise<Omit<User, "passwordHash">[]>;
+
+  // Attachments
+  getAttachments(projectId: number): Promise<ProjectAttachment[]>;
+  createAttachment(attachment: InsertProjectAttachment): Promise<ProjectAttachment>;
+  deleteAttachment(id: number): Promise<boolean>;
 }
 
 // ─── Implementation ──────────────────────────────────────────────────────────
@@ -337,6 +344,22 @@ export class DatabaseStorage implements IStorage {
   async listUsers(): Promise<Omit<User, "passwordHash">[]> {
     const rows = await db.select().from(users).orderBy(users.createdAt);
     return rows.map(({ passwordHash: _ph, ...rest }) => rest);
+  }
+
+  // ── Attachments ────────────────────────────────────────────────────────────
+
+  async getAttachments(projectId: number): Promise<ProjectAttachment[]> {
+    return db.select().from(projectAttachments).where(eq(projectAttachments.projectId, projectId)).orderBy(desc(projectAttachments.createdAt));
+  }
+
+  async createAttachment(attachment: InsertProjectAttachment): Promise<ProjectAttachment> {
+    const [created] = await db.insert(projectAttachments).values(attachment).returning();
+    return created;
+  }
+
+  async deleteAttachment(id: number): Promise<boolean> {
+    const [deleted] = await db.delete(projectAttachments).where(eq(projectAttachments.id, id)).returning();
+    return !!deleted;
   }
 }
 

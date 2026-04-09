@@ -38,13 +38,14 @@ export const savedProjects = pgTable("saved_projects", {
   clientPhone: text("client_phone").notNull().default(""),
   clientEmail: text("client_email").notNull().default(""),
   address: text("address").notNull().default(""),
-  stage: text("stage").notNull().default("estimated_budget"),
-  // estimated_budget | site_measurement | final
+  stage: text("stage").notNull().default("lead"),
+  // lead | estimated_budget | site_measurement | 50_payment | 3d_design | manufacturing | delivered | 100_payment
   notes: text("notes").notNull().default(""),
   selectedFinishing: text("selected_finishing").default("1"),
   projectData: jsonb("project_data"), // nullable — legacy field kept for migration
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  assignedTo: integer("assigned_to").references(() => users.id),
 });
 
 // ─── Spaces (multi-room per project) ────────────────────────────────────────
@@ -104,6 +105,17 @@ export const wallPoints = pgTable("wall_points", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ─── Project attachments (PDFs, images uploaded per project) ────────────────
+
+export const projectAttachments = pgTable("project_attachments", {
+  id: serial("id").primaryKey(),
+  projectId: integer("project_id").notNull().references(() => savedProjects.id, { onDelete: "cascade" }),
+  fileName: text("file_name").notNull(),
+  fileData: text("file_data").notNull(),
+  fileType: text("file_type").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 export const users = pgTable("users", {
@@ -125,6 +137,7 @@ export const insertSpacePhotoSchema = createInsertSchema(spacePhotos).omit({ id:
 export const insertElementDefinitionSchema = createInsertSchema(elementDefinitions).omit({ id: true, createdAt: true });
 export const insertWallPointSchema = createInsertSchema(wallPoints).omit({ id: true, createdAt: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
+export const insertProjectAttachmentSchema = createInsertSchema(projectAttachments).omit({ id: true, createdAt: true });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -154,3 +167,6 @@ export type WallPoint = typeof wallPoints.$inferSelect;
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+export type ProjectAttachment = typeof projectAttachments.$inferSelect;
+export type InsertProjectAttachment = typeof projectAttachments.$inferInsert;

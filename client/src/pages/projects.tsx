@@ -26,9 +26,14 @@ import { Plus, Search, LogOut, Settings, ChevronDown } from "lucide-react";
 
 const STAGES: { value: ProjectStage | "all"; label: string; color: string }[] = [
   { value: "all", label: "All Projects", color: "" },
+  { value: "lead", label: "Lead", color: "bg-gray-100 text-gray-700" },
   { value: "estimated_budget", label: "Estimated Budget", color: "bg-blue-100 text-blue-700" },
   { value: "site_measurement", label: "Site Measurement", color: "bg-yellow-100 text-yellow-700" },
-  { value: "final", label: "Final", color: "bg-green-100 text-green-700" },
+  { value: "50_payment", label: "50% Payment", color: "bg-orange-100 text-orange-700" },
+  { value: "3d_design", label: "3D Design", color: "bg-purple-100 text-purple-700" },
+  { value: "manufacturing", label: "Manufacturing", color: "bg-indigo-100 text-indigo-700" },
+  { value: "delivered", label: "Delivered", color: "bg-green-100 text-green-700" },
+  { value: "100_payment", label: "100% Payment", color: "bg-emerald-100 text-emerald-700" },
 ];
 
 function stageBadge(stage: string) {

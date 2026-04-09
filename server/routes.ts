@@ -11,6 +11,7 @@ import {
   insertSpacePhotoSchema,
   insertElementDefinitionSchema,
   insertUserSchema,
+  insertProjectAttachmentSchema,
 } from "@shared/schema";
 import type { User } from "@shared/schema";
 
@@ -328,6 +329,32 @@ export async function registerRoutes(
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
     const deleted = await storage.deleteWallPoint(id);
     if (!deleted) return res.status(404).json({ error: "Not found" });
+    res.json({ success: true });
+  });
+
+  // ── Attachments ──────────────────────────────────────────────────────────
+
+  app.get("/api/projects/:projectId/attachments", async (req, res) => {
+    const projectId = parseInt(req.params.projectId);
+    if (isNaN(projectId)) return res.status(400).json({ error: "Invalid projectId" });
+    const attachments = await storage.getAttachments(projectId);
+    res.json(attachments);
+  });
+
+  app.post("/api/projects/:projectId/attachments", async (req, res) => {
+    const projectId = parseInt(req.params.projectId);
+    if (isNaN(projectId)) return res.status(400).json({ error: "Invalid projectId" });
+    const parsed = insertProjectAttachmentSchema.safeParse({ ...req.body, projectId });
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const attachment = await storage.createAttachment(parsed.data);
+    res.status(201).json(attachment);
+  });
+
+  app.delete("/api/attachments/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    const deleted = await storage.deleteAttachment(id);
+    if (!deleted) return res.status(404).json({ error: "Attachment not found" });
     res.json({ success: true });
   });
 

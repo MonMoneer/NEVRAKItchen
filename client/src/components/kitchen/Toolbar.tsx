@@ -103,7 +103,7 @@ interface ToolbarProps {
   onToolChange: (tool: DrawingState["tool"]) => void;
   activeCustomTool?: CustomTool;
   onCustomToolChange?: (tool: CustomTool) => void;
-  stage?: "estimated_budget" | "site_measurement" | "final";
+  stage?: string;
   snapEnabled: boolean;
   onSnapToggle: () => void;
   gridEnabled: boolean;

@@ -1,6 +1,14 @@
 import { create } from "zustand";
 
-export type ProjectStage = "estimated_budget" | "site_measurement" | "final";
+export type ProjectStage =
+  | "lead"
+  | "estimated_budget"
+  | "site_measurement"
+  | "50_payment"
+  | "3d_design"
+  | "manufacturing"
+  | "delivered"
+  | "100_payment";
 
 export interface ProjectSpace {
   id: number;
@@ -27,6 +35,7 @@ export interface Project {
   stage: ProjectStage;
   notes: string;
   selectedFinishing: string | null;
+  assignedTo: number | null;
   createdAt: string;
   updatedAt: string;
   spaceCount?: number;
