@@ -340,14 +340,54 @@ export default function ProjectDetail({ id }: { id: number }) {
 	const canvasSourceField: 'canvasData' | 'siteMeasurementData' =
 		stage === 'site_measurement' ? 'siteMeasurementData' : 'canvasData';
 
+	// Track previous space/field so we can flush saves to the RIGHT space on switch
+	const prevSpaceRef = useRef<{ id: number | null; field: 'canvasData' | 'siteMeasurementData' }>({
+		id: activeSpaceId,
+		field: canvasSourceField,
+	});
+
+	// Save canvas data to server AND update local space store so switching
+	// spaces always loads the freshest data (not the stale initial-load copy).
+	const saveCanvasNow = useCallback(
+		(spaceId: number, field: 'canvasData' | 'siteMeasurementData') => {
+			const data = canvasStore.getCanvasData();
+			updateSpace(spaceId, { [field]: data, finishing: data.selectedFinishing } as any);
+			fetch(`/api/spaces/${spaceId}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ [field]: data, finishing: data.selectedFinishing }),
+			});
+		},
+		[canvasStore, updateSpace]
+	);
+
 	useEffect(() => {
+		// Flush pending save for the PREVIOUS space before loading new one.
+		if (saveTimeout.current) {
+			clearTimeout(saveTimeout.current);
+			saveTimeout.current = null;
+			const prev = prevSpaceRef.current;
+			if (prev.id) {
+				saveCanvasNow(prev.id, prev.field);
+			}
+		}
+
+		// Update ref to current values
+		prevSpaceRef.current = { id: activeSpaceId, field: canvasSourceField };
+
 		if (!activeSpace) {
 			return;
 		}
 		setSpaceNotes(activeSpace.notes ?? '');
 
-		const data = activeSpace[canvasSourceField] as any;
+		const data = (activeSpace[canvasSourceField] ?? activeSpace.canvasData) as any;
 		if (data) {
+			if (data.wallPoints && data.walls) {
+				const wallIds = new Set((data.walls as any[]).map((w: any) => w.id));
+				data.wallPoints = (data.wallPoints as any[]).filter(
+					(wp: any) => !wp.wallId || wallIds.has(wp.wallId)
+				);
+			}
 			canvasStore.loadFromCanvasData(data);
 		} else {
 			canvasStore.clear();
@@ -355,7 +395,18 @@ export default function ProjectDetail({ id }: { id: number }) {
 		}
 	}, [activeSpaceId, canvasSourceField]); // eslint-disable-line react-hooks/exhaustive-deps
 
-	// Auto-save canvas data on changes (debounced)
+	// Flush pending save on unmount (user clicks Back / navigates away)
+	useEffect(() => {
+		return () => {
+			if (saveTimeout.current) {
+				clearTimeout(saveTimeout.current);
+				saveTimeout.current = null;
+				const prev = prevSpaceRef.current;
+				if (prev.id) saveCanvasNow(prev.id, prev.field);
+			}
+		};
+	}, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 	const scheduleCanvasSave = useCallback(() => {
 		if (!activeSpaceId) {
 			return;
@@ -363,18 +414,10 @@ export default function ProjectDetail({ id }: { id: number }) {
 		if (saveTimeout.current) {
 			clearTimeout(saveTimeout.current);
 		}
-		saveTimeout.current = setTimeout(async () => {
-			const data = canvasStore.getCanvasData();
-			await fetch(`/api/spaces/${activeSpaceId}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					[canvasSourceField]: data,
-					finishing: data.selectedFinishing,
-				}),
-			});
+		saveTimeout.current = setTimeout(() => {
+			saveCanvasNow(activeSpaceId, canvasSourceField);
 		}, 1500);
-	}, [activeSpaceId, canvasStore, canvasSourceField]);
+	}, [activeSpaceId, canvasSourceField, saveCanvasNow]);
 
 	// ── Canvas event handlers ───────────────────────────────────────────────────
 
