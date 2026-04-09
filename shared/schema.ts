@@ -56,6 +56,7 @@ export const spaces = pgTable("spaces", {
   type: text("type").notNull().default("kitchen"),
   // kitchen | bathroom | washroom | tv_unit
   canvasData: jsonb("canvas_data"),
+  siteMeasurementData: jsonb("site_measurement_data"),
   finishing: text("finishing").default("1"),
   notes: text("notes").notNull().default(""),
   sortOrder: integer("sort_order").notNull().default(0),

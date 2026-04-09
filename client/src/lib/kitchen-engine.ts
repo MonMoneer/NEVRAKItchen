@@ -740,40 +740,41 @@ export function computeInteriorNormal(
   const perp1 = { nx: Math.cos(wallAngle + Math.PI / 2), ny: Math.sin(wallAngle + Math.PI / 2) };
   const perp2 = { nx: Math.cos(wallAngle - Math.PI / 2), ny: Math.sin(wallAngle - Math.PI / 2) };
 
+  // Primary method: compute room centroid from all wall endpoints, then check
+  // which perpendicular direction points TOWARD the centroid (= interior)
   const roomPoly = buildRoomPolygon(walls);
-  if (roomPoly) {
+  if (roomPoly && roomPoly.length >= 3) {
+    // Centroid of the room polygon — always reliably inside the room
+    let cx = 0, cy = 0;
+    for (const p of roomPoly) { cx += p.x; cy += p.y; }
+    cx /= roomPoly.length;
+    cy /= roomPoly.length;
+
     const wallMid = midpoint(wallStart, wallEnd);
-    const testDist = 5;
-    const testPt1: Point = { x: wallMid.x + perp1.nx * testDist, y: wallMid.y + perp1.ny * testDist };
-    const testPt2: Point = { x: wallMid.x + perp2.nx * testDist, y: wallMid.y + perp2.ny * testDist };
-    const in1 = pointInPolygon(testPt1, roomPoly);
-    const in2 = pointInPolygon(testPt2, roomPoly);
-    if (in1 && !in2) return perp1;
-    if (in2 && !in1) return perp2;
+    const toCentroid = { x: cx - wallMid.x, y: cy - wallMid.y };
+    const dot1 = perp1.nx * toCentroid.x + perp1.ny * toCentroid.y;
+    // If perp1 points toward centroid, it's the interior direction
+    return dot1 > 0 ? perp1 : perp2;
   }
 
-  const wallMid = midpoint(wallStart, wallEnd);
-  const testDist = 100;
-  const testPoint1: Point = {
-    x: wallMid.x + perp1.nx * testDist,
-    y: wallMid.y + perp1.ny * testDist,
-  };
-  const testPoint2: Point = {
-    x: wallMid.x + perp2.nx * testDist,
-    y: wallMid.y + perp2.ny * testDist,
-  };
+  // Fallback: use centroid of all wall midpoints (works even without closed polygon)
+  if (walls.length >= 2) {
+    let cx = 0, cy = 0;
+    for (const w of walls) {
+      const m = midpoint(w.start, w.end);
+      cx += m.x;
+      cy += m.y;
+    }
+    cx /= walls.length;
+    cy /= walls.length;
 
-  let minDist1 = Infinity;
-  let minDist2 = Infinity;
-
-  for (const wall of walls) {
-    const nearest1 = nearestPointOnSegment(testPoint1, wall.start, wall.end);
-    const nearest2 = nearestPointOnSegment(testPoint2, wall.start, wall.end);
-    minDist1 = Math.min(minDist1, distanceBetween(testPoint1, nearest1));
-    minDist2 = Math.min(minDist2, distanceBetween(testPoint2, nearest2));
+    const wallMid = midpoint(wallStart, wallEnd);
+    const toCentroid = { x: cx - wallMid.x, y: cy - wallMid.y };
+    const dot1 = perp1.nx * toCentroid.x + perp1.ny * toCentroid.y;
+    return dot1 > 0 ? perp1 : perp2;
   }
 
-  return minDist1 < minDist2 ? perp1 : perp2;
+  return perp1;
 }
 
 export function calculateDepthDirection(

@@ -16,6 +16,7 @@ import {
 } from '@/components/kitchen/Toolbar';
 import { DesignerCanvas } from '@/components/kitchen/DesignerCanvas';
 import { PricingPanel } from '@/components/kitchen/PricingPanel';
+import { SiteMeasurementPanel } from '@/components/kitchen/SiteMeasurementPanel';
 import {
 	type Wall,
 	type Cabinet,
@@ -335,20 +336,24 @@ export default function ProjectDetail({ id }: { id: number }) {
 	}, [id, setCurrentProject, setSpaces, navigate]);
 
 	// Load canvas data when active space changes
+	// Which space field backs the current canvas, based on stage
+	const canvasSourceField: 'canvasData' | 'siteMeasurementData' =
+		stage === 'site_measurement' ? 'siteMeasurementData' : 'canvasData';
+
 	useEffect(() => {
 		if (!activeSpace) {
 			return;
 		}
 		setSpaceNotes(activeSpace.notes ?? '');
 
-		const data = activeSpace.canvasData as any;
+		const data = activeSpace[canvasSourceField] as any;
 		if (data) {
 			canvasStore.loadFromCanvasData(data);
 		} else {
 			canvasStore.clear();
 			canvasStore.setSelectedFinishing(activeSpace.finishing ?? '1');
 		}
-	}, [activeSpaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [activeSpaceId, canvasSourceField]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	// Auto-save canvas data on changes (debounced)
 	const scheduleCanvasSave = useCallback(() => {
@@ -364,12 +369,12 @@ export default function ProjectDetail({ id }: { id: number }) {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					canvasData: data,
+					[canvasSourceField]: data,
 					finishing: data.selectedFinishing,
 				}),
 			});
 		}, 1500);
-	}, [activeSpaceId, canvasStore]);
+	}, [activeSpaceId, canvasStore, canvasSourceField]);
 
 	// ── Canvas event handlers ───────────────────────────────────────────────────
 
@@ -647,6 +652,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 						headers: { 'Content-Type': 'application/json' },
 						body: JSON.stringify({ referenceImage: image }),
 					});
+					// Update local space state so the right sidebar thumbnail
+					// picks up the newly-captured reference immediately.
+					updateSpace(activeSpaceId, { referenceImage: image });
 				}
 			}
 
@@ -984,13 +992,6 @@ export default function ProjectDetail({ id }: { id: number }) {
 					/>
 				</div>
 
-				{/* Site measurement banner */}
-				{stage === 'site_measurement' && (
-					<div className="bg-amber-100 text-amber-800 text-center text-sm py-1 px-3 shrink-0 font-medium">
-						Site Measurement Mode — design is locked
-					</div>
-				)}
-
 				{/* Canvas */}
 				<DesignerCanvas
 					drawingState={drawingState}
@@ -1063,6 +1064,23 @@ export default function ProjectDetail({ id }: { id: number }) {
 							}}
 						/>
 					</div>
+				)}
+
+				{/* Site measurement panel (right sidebar during site_measurement) */}
+				{stage === 'site_measurement' && (
+					<SiteMeasurementPanel
+						referenceImage={referenceImage}
+						wallPoints={canvasStore.wallPoints}
+						walls={drawingState.walls}
+						onUpdateWallPoint={(wpId, updates) => {
+							canvasStore.updateWallPoint(wpId, updates);
+							scheduleCanvasSave();
+						}}
+						onDeleteWallPoint={(wpId) => {
+							canvasStore.deleteWallPoint(wpId);
+							scheduleCanvasSave();
+						}}
+					/>
 				)}
 
 				{/* Side panel: notes + photos */}

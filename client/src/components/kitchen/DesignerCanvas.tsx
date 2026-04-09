@@ -332,94 +332,196 @@ interface WallPlacementState {
 	startPointOnWall?: Point;
 }
 
-// ── Island Cabinet 2-Phase State ─────────────────────────────────────────────
+// ── Island Cabinet 4-Phase CAD-Walk State ────────────────────────────────────
+type IslandPhase =
+	| 'pickingAnchor'
+	| 'settingWL'
+	| 'settingDL'
+	| 'settingCL'
+	| 'settingCD';
+
 interface IslandPlacementState {
-	phase: 'settingLength' | 'settingDepth';
-	start: Point;
-	depth: number;
-	isFlipped: boolean;
-	end?: Point;
-	angle?: number;
-	length?: number; // pixels
+	phase: IslandPhase;
+
+	// Phase 0 — anchor on wall
+	anchorPoint: Point | null;
+	anchorWallId: string | null;
+	wallAngle: number; // radians
+
+	// Phase 1 — Wall Length (along wall axis)
+	WL_cm: number;
+	WL_direction: 1 | -1; // +1 = along wallAngle, -1 = reversed
+
+	// Phase 2 — Deep Length (from turn1, any direction)
+	DL_cm: number;
+	DL_angle: number; // radians, absolute world angle
+
+	// Phase 3 — Cabinet Length (from turn2 = island corner, any direction)
+	CL_cm: number;
+	CL_angle: number; // radians, absolute world angle
+
+	// Phase 4 — Cabinet Depth (perpendicular to CL axis)
+	CD_cm: number;
+	CD_flipped: boolean; // which perpendicular side of CL
 }
 
-// ── Island Cabinet 2-Phase Dimension Panel ───────────────────────────────────
+// ── Island Cabinet 4-Phase Dimension Panel ───────────────────────────────────
+type IslandPanelField = 'WL' | 'DL' | 'CL' | 'CD';
+
 function IslandDimensionPanel({
 	phase,
-	liveLengthCm,
-	liveDepthCm,
+	liveWL_cm,
+	liveDL_cm,
+	liveCL_cm,
+	liveCD_cm,
+	WL_cm,
+	DL_cm,
+	CL_cm,
+	CD_cm,
 	unit,
-	onLengthConfirm,
-	onDepthConfirm,
+	onCommitField,
+	onJumpToField,
 	onCancel,
 }: {
-	phase: 'settingLength' | 'settingDepth';
-	liveLengthCm: number;
-	liveDepthCm: number;
+	phase: IslandPhase;
+	liveWL_cm: number;
+	liveDL_cm: number;
+	liveCL_cm: number;
+	liveCD_cm: number;
+	WL_cm: number;
+	DL_cm: number;
+	CL_cm: number;
+	CD_cm: number;
 	unit: 'cm' | 'm';
-	onLengthConfirm: (cm: number) => void;
-	onDepthConfirm: (cm: number) => void;
+	onCommitField: (field: IslandPanelField, cm: number) => void;
+	onJumpToField: (field: IslandPanelField) => boolean; // returns false if blocked
 	onCancel: () => void;
 }) {
-	const [value, setValue] = useState('');
+	const [inputValue, setInputValue] = useState('');
 	const inputRef = useRef<HTMLInputElement>(null);
 
+	const phaseToField: Record<IslandPhase, IslandPanelField | null> = {
+		pickingAnchor: null,
+		settingWL: 'WL',
+		settingDL: 'DL',
+		settingCL: 'CL',
+		settingCD: 'CD',
+	};
+	const activeField = phaseToField[phase];
+
+	// Reset input on phase change + refocus
 	useEffect(() => {
-		setValue('');
+		setInputValue('');
 		const t = setTimeout(() => inputRef.current?.focus(), 50);
 		return () => clearTimeout(t);
 	}, [phase]);
 
-	const liveCm = phase === 'settingLength' ? liveLengthCm : liveDepthCm;
-	const placeholder =
-		unit === 'm' ? (liveCm / 100).toFixed(2) : `${Math.round(liveCm)}`;
+	const liveByField: Record<IslandPanelField, number> = {
+		WL: liveWL_cm,
+		DL: liveDL_cm,
+		CL: liveCL_cm,
+		CD: liveCD_cm,
+	};
+	const storedByField: Record<IslandPanelField, number> = {
+		WL: WL_cm,
+		DL: DL_cm,
+		CL: CL_cm,
+		CD: CD_cm,
+	};
+
+	const formatCm = (cm: number) =>
+		unit === 'm' ? (cm / 100).toFixed(2) : `${Math.round(cm)}`;
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
-		if (e.key === 'Enter') {
+		if (!activeField) return;
+		if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
 			e.preventDefault();
-			const num = parseFloat(value);
-			const cm =
-				!isNaN(num) && num > 0
-					? unit === 'm'
-						? num * 100
-						: num
-					: liveCm;
-			if (phase === 'settingLength') onLengthConfirm(cm);
-			else onDepthConfirm(cm);
+			const num = parseFloat(inputValue);
+			const typed =
+				!isNaN(num) && num > 0 ? (unit === 'm' ? num * 100 : num) : NaN;
+			const cm = !isNaN(typed) ? typed : liveByField[activeField];
+			onCommitField(activeField, cm);
 		} else if (e.key === 'Escape') {
 			e.preventDefault();
 			onCancel();
 		}
 	};
 
+	const fields: { key: IslandPanelField; label: string }[] = [
+		{ key: 'WL', label: 'Wall len' },
+		{ key: 'DL', label: 'Deep len' },
+		{ key: 'CL', label: 'Cab len' },
+		{ key: 'CD', label: 'Cab depth' },
+	];
+
 	return (
 		<div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
-			<div className="bg-card border border-border rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 backdrop-blur-sm">
-				<div className="text-xs font-semibold text-amber-500 whitespace-nowrap">
-					Island Cabinet
+			<div className="bg-card border border-border rounded-lg shadow-lg px-4 py-3 backdrop-blur-sm min-w-[420px]">
+				<div className="flex items-center justify-between mb-2">
+					<div className="text-xs font-semibold text-amber-500">
+						Island Cabinet
+					</div>
+					<button
+						onClick={onCancel}
+						className="text-[10px] text-muted-foreground hover:text-foreground"
+					>
+						Cancel ✕
+					</button>
 				</div>
-				<div className="w-px h-8 bg-border" />
-				<label className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-					{phase === 'settingLength' ? 'Length' : 'Depth'}
-				</label>
-				<div className="flex items-center bg-amber-50 border border-amber-300 rounded-md overflow-hidden">
-					<input
-						ref={inputRef}
-						type="number"
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						onKeyDown={handleKeyDown}
-						placeholder={placeholder}
-						className="w-16 h-7 px-2 text-sm font-mono bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-						step="any"
-						min="0"
-					/>
-					<span className="text-[10px] text-muted-foreground font-medium pr-2 select-none">
-						{unit}
-					</span>
+				<div className="grid grid-cols-2 gap-2">
+					{fields.map((f) => {
+						const isActive = f.key === activeField;
+						const stored = storedByField[f.key];
+						const isFilled = stored > 0;
+						const live = liveByField[f.key];
+						const placeholder = formatCm(isActive ? live : stored);
+						return (
+							<div
+								key={f.key}
+								className={`flex items-center gap-2 px-2 py-1 rounded-md border transition-colors ${
+									isActive
+										? 'border-amber-400 bg-amber-50'
+										: isFilled
+											? 'border-border bg-muted/30 cursor-pointer hover:bg-muted/50'
+											: 'border-border bg-muted/10'
+								}`}
+								onClick={() => {
+									if (!isActive && isFilled) onJumpToField(f.key);
+								}}
+							>
+								<label className="text-[11px] font-medium text-muted-foreground whitespace-nowrap w-[56px]">
+									{f.label}
+								</label>
+								{isActive ? (
+									<input
+										ref={inputRef}
+										type="number"
+										value={inputValue}
+										onChange={(e) => setInputValue(e.target.value)}
+										onKeyDown={handleKeyDown}
+										placeholder={placeholder}
+										className="w-16 h-6 px-1 text-sm font-mono bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+										step="any"
+										min="0"
+									/>
+								) : (
+									<div className="w-16 h-6 px-1 text-sm font-mono flex items-center text-foreground">
+										{isFilled ? formatCm(stored) : '—'}
+									</div>
+								)}
+								<span className="text-[10px] text-muted-foreground font-medium select-none">
+									{unit}
+								</span>
+							</div>
+						);
+					})}
 				</div>
-				<div className="text-[10px] text-muted-foreground whitespace-nowrap">
-					{phase === 'settingDepth' ? 'F to flip · Enter · Esc' : 'Enter · Esc'}
+				<div className="text-[10px] text-muted-foreground mt-2">
+					{phase === 'pickingAnchor'
+						? 'Click any anchor on a wall (corner, door edge, window edge, cabinet edge)'
+						: phase === 'settingCD'
+							? 'Shift ortho · F to flip · Enter · Esc to step back'
+							: 'Shift ortho · Tab/Enter · Esc to step back'}
 				</div>
 			</div>
 		</div>
@@ -624,6 +726,37 @@ function findNearestCorner(
 		}
 	}
 	return best;
+}
+
+// ── Island walk-path geometry ────────────────────────────────────────────────
+// Computes turn points from the 4-phase walk state.
+// turn1 = anchor + WL along wall (signed by WL_direction)
+// turn2 = turn1 + DL at DL_angle (= island's entry corner; stored as cabinet.start)
+// turn3 = turn2 + CL at CL_angle (= opposite corner; stored as cabinet.end)
+interface IslandWalkPoints {
+	turn1: Point; // end of WL segment
+	turn2: Point; // end of DL segment = cabinet corner
+	turn3: Point; // end of CL segment = opposite corner along CL
+}
+
+function computeIslandWalk(ip: IslandPlacementState): IslandWalkPoints | null {
+	if (!ip.anchorPoint) return null;
+	const WL_px = cmToPixels(ip.WL_cm) * ip.WL_direction;
+	const turn1: Point = {
+		x: ip.anchorPoint.x + Math.cos(ip.wallAngle) * WL_px,
+		y: ip.anchorPoint.y + Math.sin(ip.wallAngle) * WL_px,
+	};
+	const DL_px = cmToPixels(ip.DL_cm);
+	const turn2: Point = {
+		x: turn1.x + Math.cos(ip.DL_angle) * DL_px,
+		y: turn1.y + Math.sin(ip.DL_angle) * DL_px,
+	};
+	const CL_px = cmToPixels(ip.CL_cm);
+	const turn3: Point = {
+		x: turn2.x + Math.cos(ip.CL_angle) * CL_px,
+		y: turn2.y + Math.sin(ip.CL_angle) * CL_px,
+	};
+	return { turn1, turn2, turn3 };
 }
 
 // Distance input panel for electrical/plumbing placement (shown when corner is locked)
@@ -872,6 +1005,40 @@ export function DesignerCanvas({
 		return { x: start.x, y: end.y };
 	}, []);
 
+	// Snap a point to one of 4 wall-relative cardinal directions (0°, 90°, 180°, 270° from wallAngle).
+	// Returns the snapped endpoint where the direction from origin is the closest cardinal.
+	const snapToWallOrtho = useCallback(
+		(origin: Point, mouse: Point, wallAngle: number): Point => {
+			const dx = mouse.x - origin.x;
+			const dy = mouse.y - origin.y;
+			const rawAngle = Math.atan2(dy, dx);
+			const candidates = [0, Math.PI / 2, Math.PI, -Math.PI / 2].map(
+				(d) => wallAngle + d
+			);
+			const angleDiff = (a: number, b: number) => {
+				let d = ((a - b) % (2 * Math.PI)) + 2 * Math.PI;
+				d = d % (2 * Math.PI);
+				return Math.min(d, 2 * Math.PI - d);
+			};
+			let best = candidates[0];
+			let bestDiff = angleDiff(candidates[0], rawAngle);
+			for (let i = 1; i < candidates.length; i++) {
+				const diff = angleDiff(candidates[i], rawAngle);
+				if (diff < bestDiff) {
+					best = candidates[i];
+					bestDiff = diff;
+				}
+			}
+			// Project raw vector onto snapped axis; magnitude = |projection|
+			const cosA = Math.cos(best);
+			const sinA = Math.sin(best);
+			const proj = dx * cosA + dy * sinA;
+			const mag = Math.max(0, proj); // clamp negative (180° flip was already picked by snap)
+			return { x: origin.x + cosA * mag, y: origin.y + sinA * mag };
+		},
+		[]
+	);
+
 	const createElementAtPoints = useCallback(
 		(
 			startPoint: Point,
@@ -882,27 +1049,6 @@ export function DesignerCanvas({
 		) => {
 			const connection = connectWalls(endPoint, walls);
 			const finalEnd = connection.point;
-
-			// Compute original length BEFORE any offset (accurate measurement)
-			const originalLength = distanceBetween(startPoint, finalEnd);
-
-			// Compute depth direction BEFORE offset (uses wall-surface points for correct interior normal)
-			const flipped = (tool === 'base' || tool === 'wall_cabinet' || tool === 'tall')
-				? calculateDepthDirection(startPoint, finalEnd, walls)
-				: false;
-
-			// Offset non-wall elements to inner wall face (perpendicular shift only)
-			let placedStart = { ...startPoint };
-			let placedEnd = { ...finalEnd };
-			if (tool !== 'wall' && parentWallId) {
-				const parentWall = walls.find(w => w.id === parentWallId);
-				if (parentWall) {
-					const normal = computeInteriorNormal(parentWall.start, parentWall.end, walls);
-					const offset = WALL_THICKNESS / 2;
-					placedStart = { x: startPoint.x + normal.nx * offset, y: startPoint.y + normal.ny * offset };
-					placedEnd = { x: finalEnd.x + normal.nx * offset, y: finalEnd.y + normal.ny * offset };
-				}
-			}
 
 			if (tool === 'wall') {
 				const wall: Wall = {
@@ -916,9 +1062,9 @@ export function DesignerCanvas({
 				const opening: Opening = {
 					id: generateId(),
 					type: tool as OpeningType,
-					start: placedStart,
-					end: placedEnd,
-					length: originalLength,
+					start: { ...startPoint },
+					end: { ...finalEnd },
+					length: distanceBetween(startPoint, finalEnd),
 					wallId: parentWallId,
 				};
 				onAddOpening(opening);
@@ -927,14 +1073,21 @@ export function DesignerCanvas({
 				tool === 'wall_cabinet' ||
 				tool === 'tall'
 			) {
+				// Use CABINET endpoints for depth direction (same frame as renderCabinetBody).
+				// renderCabinetBody rotates by angleBetween(cabinet.start, cabinet.end),
+				// so depthFlipped must be computed in that same frame — otherwise if the
+				// user drags the cabinet opposite to the wall's start→end direction, the
+				// interior/exterior sides invert and the cabinet extrudes outward.
+				const flipped = calculateDepthDirection(startPoint, finalEnd, walls);
 				const cabinet: Cabinet = {
 					id: generateId(),
 					type: tool as CabinetType,
-					start: placedStart,
-					end: placedEnd,
+					start: { ...startPoint },
+					end: { ...finalEnd },
 					depth: CABINET_DEPTHS[tool as CabinetType],
-					length: pixelsToCm(originalLength),
+					length: distanceBetween(startPoint, finalEnd),
 					depthFlipped: flipped,
+					wallId: parentWallId,
 				};
 				onAddCabinet(cabinet);
 			}
@@ -991,12 +1144,8 @@ export function DesignerCanvas({
 				return;
 			}
 
-			// Site measurement: only allow electrical/plumbing wall-point tools
-			if (stage === 'site_measurement') {
-				if (activeCustomTool !== 'electrical' && activeCustomTool !== 'plumbing') {
-					return;
-				}
-			}
+			// Site measurement now has its own separate canvas —
+			// all tools are allowed (walls, doors, windows, cabinets, electrical, plumbing).
 
 			const pos = getPointerPos(e);
 			if (!pos) {
@@ -1030,21 +1179,140 @@ export function DesignerCanvas({
 				return;
 			}
 
-			// ── Island Cabinet: Edge-Based Extrusion ─────────────────────────
+			// ── Island Cabinet: 4-Phase CAD-Walk ──────────────────────────────
 			if (activeCustomTool === 'island') {
-				const snapPos = snapResult?.point ?? pos;
-				if (!islandPlacement) {
-					// Phase 0 → Phase 1: first click locks Point A
-					setIslandPlacement({ phase: 'settingLength', start: snapPos, depth: 90, isFlipped: false });
-				} else if (islandPlacement.phase === 'settingLength') {
-					// Phase 1 → Phase 2: second click confirms axis end
-					const liveEnd = shiftHeldRef.current ? constrainToAxis(islandPlacement.start, snapPos) : snapPos;
-					const length = distanceBetween(islandPlacement.start, liveEnd);
-					if (length < 5) { setIslandPlacement(null); return; }
-					const angle = angleBetween(islandPlacement.start, liveEnd);
-					setIslandPlacement({ ...islandPlacement, phase: 'settingDepth', end: liveEnd, angle, length });
-				} else if (islandPlacement.phase === 'settingDepth') {
-					placeIsland(islandPlacement);
+				if (!islandPlacement || islandPlacement.phase === 'pickingAnchor') {
+					// Phase 0: click must land on a visible wall anchor (within 15px)
+					const ANCHOR_HIT_RADIUS = 15;
+					let hit: { point: Point } | null = null;
+					for (const a of wallAnchorPoints) {
+						if (distanceBetween(pos, a.point) <= ANCHOR_HIT_RADIUS) {
+							hit = { point: a.point };
+							break;
+						}
+					}
+					// Fallback: wall corners via findNearestCorner
+					if (!hit) {
+						const corner = findNearestCorner(pos, walls, ANCHOR_HIT_RADIUS);
+						if (corner) hit = { point: corner.point };
+					}
+					if (!hit || !hoveredWallId) return;
+					const anchorWall = walls.find((w) => w.id === hoveredWallId);
+					if (!anchorWall) return;
+					const wallAngle = angleBetween(anchorWall.start, anchorWall.end);
+					setIslandPlacement({
+						phase: 'settingWL',
+						anchorPoint: hit.point,
+						anchorWallId: anchorWall.id,
+						wallAngle,
+						WL_cm: 0,
+						WL_direction: 1,
+						DL_cm: 0,
+						DL_angle: wallAngle + Math.PI / 2, // default: perpendicular-into-room (ghost will correct via mouse)
+						CL_cm: 0,
+						CL_angle: wallAngle,
+						CD_cm: 60,
+						CD_flipped: false,
+					});
+					return;
+				}
+				// Phases 1-4: clicks confirm current mouse-derived value and advance
+				const ip = islandPlacement;
+				if (ip.phase === 'settingWL') {
+					// Project mouse onto wall axis; clamp to wall length
+					const dx = pos.x - ip.anchorPoint!.x;
+					const dy = pos.y - ip.anchorPoint!.y;
+					const proj = dx * Math.cos(ip.wallAngle) + dy * Math.sin(ip.wallAngle);
+					const anchorWall = walls.find((w) => w.id === ip.anchorWallId);
+					if (!anchorWall) return;
+					const wallLen = distanceBetween(anchorWall.start, anchorWall.end);
+					// Clamp WL: from anchor, can go forward (+proj) up to (wall.end - anchor dist) OR backward to (wall.start - anchor dist)
+					const anchorProj =
+						(ip.anchorPoint!.x - anchorWall.start.x) * Math.cos(ip.wallAngle) +
+						(ip.anchorPoint!.y - anchorWall.start.y) * Math.sin(ip.wallAngle);
+					const maxFwd = wallLen - anchorProj;
+					const maxBwd = -anchorProj;
+					const clamped = Math.max(maxBwd, Math.min(maxFwd, proj));
+					const WL_px = Math.abs(clamped);
+					const dir: 1 | -1 = clamped >= 0 ? 1 : -1;
+					setIslandPlacement({
+						...ip,
+						phase: 'settingDL',
+						WL_cm: pixelsToCm(WL_px),
+						WL_direction: dir,
+					});
+					return;
+				}
+				if (ip.phase === 'settingDL') {
+					const walk0 = computeIslandWalk({ ...ip, DL_cm: 0 });
+					if (!walk0) return;
+					const origin = walk0.turn1;
+					let target = pos;
+					if (!shiftHeldRef.current) {
+						target = snapToWallOrtho(origin, pos, ip.wallAngle);
+					}
+					const DL_px = distanceBetween(origin, target);
+					if (DL_px < 5) return;
+					const DL_angle = angleBetween(origin, target);
+					setIslandPlacement({
+						...ip,
+						phase: 'settingCL',
+						DL_cm: pixelsToCm(DL_px),
+						DL_angle,
+					});
+					return;
+				}
+				if (ip.phase === 'settingCL') {
+					const walk0 = computeIslandWalk({ ...ip, CL_cm: 0 });
+					if (!walk0) return;
+					const origin = walk0.turn2;
+					let target = pos;
+					if (!shiftHeldRef.current) {
+						target = snapToWallOrtho(origin, pos, ip.wallAngle);
+					}
+					const CL_px = distanceBetween(origin, target);
+					if (CL_px < 5) return;
+					const CL_angle = angleBetween(origin, target);
+					setIslandPlacement({
+						...ip,
+						phase: 'settingCD',
+						CL_cm: pixelsToCm(CL_px),
+						CL_angle,
+					});
+					return;
+				}
+				if (ip.phase === 'settingCD') {
+					// Perpendicular to CL axis; mouse side picks flipped
+					const walk = computeIslandWalk(ip);
+					if (!walk) return;
+					const origin = walk.turn2;
+					const CL_dx = Math.cos(ip.CL_angle);
+					const CL_dy = Math.sin(ip.CL_angle);
+					const mx = pos.x - origin.x;
+					const my = pos.y - origin.y;
+					// Perpendicular projection: flip sign indicates which side
+					const perpSigned = -CL_dy * mx + CL_dx * my; // CCW perp
+					const CD_px = Math.abs(perpSigned);
+					if (CD_px < 5) return;
+					const CD_flipped = perpSigned < 0;
+					const committed: IslandPlacementState = {
+						...ip,
+						CD_cm: pixelsToCm(CD_px),
+						CD_flipped,
+					};
+					const finalWalk = computeIslandWalk(committed);
+					if (!finalWalk || committed.CL_cm <= 0 || committed.CD_cm <= 0) return;
+					onAddCabinet({
+						id: generateId(),
+						type: 'island',
+						start: finalWalk.turn2,
+						end: finalWalk.turn3,
+						depth: committed.CD_cm,
+						length: committed.CL_cm,
+						depthFlipped: committed.CD_flipped,
+					});
+					setIslandPlacement(null);
+					return;
 				}
 				return;
 			}
@@ -1356,7 +1624,11 @@ export function DesignerCanvas({
 			measureTape,
 			onAddGuideline,
 			guidelines,
-			constrainToAxis,
+			islandPlacement,
+			wallAnchorPoints,
+			hoveredWallId,
+			snapToWallOrtho,
+			onAddCabinet,
 		]
 	);
 
@@ -1433,10 +1705,12 @@ export function DesignerCanvas({
 				tool,
 			} = drawingState;
 
-			if (
-				isWallPlacementTool(activeCustomTool || tool) &&
-				!wallPlacement
-			) {
+			const showAnchorHover =
+				(isWallPlacementTool(activeCustomTool || tool) && !wallPlacement) ||
+				(activeCustomTool === 'island' &&
+					(!islandPlacement || islandPlacement.phase === 'pickingAnchor'));
+
+			if (showAnchorHover) {
 				const wallResult = findNearestWall(pos, walls, 30);
 				setHoveredWallId(wallResult ? wallResult.wall.id : null);
 				if (wallResult) {
@@ -1444,7 +1718,7 @@ export function DesignerCanvas({
 				} else {
 					setWallAnchorPoints([]);
 				}
-			} else if (!isWallPlacementTool(activeCustomTool || tool)) {
+			} else {
 				if (hoveredWallId) {
 					setHoveredWallId(null);
 					setWallAnchorPoints([]);
@@ -1741,6 +2015,7 @@ export function DesignerCanvas({
 			setHoveredCorner,
 			setWallPointPlacement,
 			guidelines,
+			islandPlacement,
 		]
 	);
 
@@ -1961,15 +2236,19 @@ export function DesignerCanvas({
 	}, [drawingState, onUpdateCabinet, onMoveComplete]);
 
 	const placeIsland = useCallback((ip: IslandPlacementState) => {
-		if (!ip.end || ip.angle === undefined || ip.length === undefined) return;
+		const walk = computeIslandWalk(ip);
+		if (!walk) return;
+		if (ip.CL_cm <= 0 || ip.CD_cm <= 0) return;
+		// turn2 = entry corner (stored as cabinet.start)
+		// turn3 = opposite corner along CL (stored as cabinet.end)
 		const cabinet: Cabinet = {
 			id: generateId(),
 			type: 'island',
-			start: ip.start,
-			end: ip.end,
-			depth: ip.depth,
-			length: pixelsToCm(ip.length),
-			depthFlipped: ip.isFlipped,
+			start: walk.turn2,
+			end: walk.turn3,
+			depth: ip.CD_cm,
+			length: ip.CL_cm,
+			depthFlipped: ip.CD_flipped,
 		};
 		onAddCabinet(cabinet);
 		setIslandPlacement(null);
@@ -1985,7 +2264,24 @@ export function DesignerCanvas({
 			}
 			if (e.key === 'Escape') {
 				if (islandPlacement) {
-					setIslandPlacement(null);
+					// Step back one phase, clearing that phase's value
+					setIslandPlacement((prev) => {
+						if (!prev) return null;
+						switch (prev.phase) {
+							case 'settingCD':
+								return { ...prev, phase: 'settingCL', CL_cm: 0, CD_cm: 60, CD_flipped: false };
+							case 'settingCL':
+								return { ...prev, phase: 'settingDL', DL_cm: 0, CL_cm: 0 };
+							case 'settingDL':
+								return { ...prev, phase: 'settingWL', WL_cm: 0, DL_cm: 0 };
+							case 'settingWL':
+								return null; // back to anchor pick = cancel tool (user can click again)
+							case 'pickingAnchor':
+								return null;
+							default:
+								return null;
+						}
+					});
 					return;
 				}
 				if (measureTape) {
@@ -2001,8 +2297,10 @@ export function DesignerCanvas({
 				}
 			}
 			if (e.key === 'f' || e.key === 'F') {
-				if (islandPlacement?.phase === 'settingDepth') {
-					setIslandPlacement(prev => prev ? { ...prev, isFlipped: !prev.isFlipped } : null);
+				if (islandPlacement?.phase === 'settingCD') {
+					setIslandPlacement((prev) =>
+						prev ? { ...prev, CD_flipped: !prev.CD_flipped } : null
+					);
 					return;
 				}
 				if (drawingState.tool === 'select' && drawingState.selectedId) {
@@ -2398,15 +2696,15 @@ export function DesignerCanvas({
 							: wpTool === 'base'
 								? 'BC'
 								: 'WC';
-					// Dynamically determine interior depth direction using the same
-					// logic as calculateDepthDirection — works for any polygon room.
+					// Use WALL endpoints (not cabinet preview points) for depth direction
 					const interiorFlipped = calculateDepthDirection(
-						offsetPosition,
-						lengthEndPt,
+						wall.start,
+						wall.end,
 						drawingState.walls
 					);
-					const ghostYTop = interiorFlipped ? -depthPx : 0;
-					const ghostYMid = interiorFlipped ? -depthPx / 2 : depthPx / 2;
+					const halfW = WALL_THICKNESS / 2;
+					const ghostYTop = interiorFlipped ? -(halfW + depthPx) : halfW;
+					const ghostYMid = interiorFlipped ? -(halfW + depthPx / 2) : halfW + depthPx / 2;
 					elements.push(
 						<Group
 							key="cabinet-ghost"
@@ -2603,7 +2901,7 @@ export function DesignerCanvas({
 
 		// Live chain line (from last confirmed point to current mouse position)
 		if (activeCustomTool === 'measure_tape' && measureTape && mousePos) {
-			const liveEnd = shiftHeldRef.current
+			const liveEnd = !shiftHeldRef.current
 				? constrainToAxis(measureTape.startPoint, mousePos)
 				: mousePos;
 			const liveLenCm = Math.round(pixelsToCm(distanceBetween(measureTape.startPoint, liveEnd)));
@@ -2635,105 +2933,241 @@ export function DesignerCanvas({
 	};
 
 
-	// ── Island Cabinet rendering ────────────────────────────────────────────
+	// ── Island Cabinet 4-Phase ghost rendering ──────────────────────────────
 	const renderIslandPlacement = () => {
-		if (!islandPlacement || !mousePos) return null;
+		if (!islandPlacement) return null;
 		const ip = islandPlacement;
+		if (ip.phase === 'pickingAnchor' || !ip.anchorPoint) return null;
+
 		const elements: JSX.Element[] = [];
 
-		if (ip.phase === 'settingLength') {
-			// Live axis line from start to mouse (ortho-locked if Shift)
-			const liveEnd = shiftHeldRef.current ? constrainToAxis(ip.start, mousePos) : mousePos;
-			const lenPx = distanceBetween(ip.start, liveEnd);
-			const lenCm = Math.round(pixelsToCm(lenPx));
-			const mid = { x: (ip.start.x + liveEnd.x) / 2, y: (ip.start.y + liveEnd.y) / 2 };
-			elements.push(
-				<Group key="island-phase1" listening={false}>
+		// Compute working state: for the active phase, use mouse-derived value
+		const live: IslandPlacementState = { ...ip };
+		const origin =
+			ip.phase === 'settingWL'
+				? ip.anchorPoint
+				: ip.phase === 'settingDL'
+					? computeIslandWalk({ ...ip, DL_cm: 0 })?.turn1 ?? null
+					: ip.phase === 'settingCL'
+						? computeIslandWalk({ ...ip, CL_cm: 0 })?.turn2 ?? null
+						: ip.phase === 'settingCD'
+							? computeIslandWalk(ip)?.turn2 ?? null
+							: null;
+
+		if (mousePos && origin) {
+			if (ip.phase === 'settingWL') {
+				// Project mouse onto wall axis; clamp to wall length
+				const anchorWall = drawingState.walls.find((w) => w.id === ip.anchorWallId);
+				if (anchorWall) {
+					const dx = mousePos.x - origin.x;
+					const dy = mousePos.y - origin.y;
+					const proj = dx * Math.cos(ip.wallAngle) + dy * Math.sin(ip.wallAngle);
+					const wallLen = distanceBetween(anchorWall.start, anchorWall.end);
+					const anchorProj =
+						(ip.anchorPoint.x - anchorWall.start.x) * Math.cos(ip.wallAngle) +
+						(ip.anchorPoint.y - anchorWall.start.y) * Math.sin(ip.wallAngle);
+					const clamped = Math.max(-anchorProj, Math.min(wallLen - anchorProj, proj));
+					live.WL_cm = pixelsToCm(Math.abs(clamped));
+					live.WL_direction = clamped >= 0 ? 1 : -1;
+				}
+			} else if (ip.phase === 'settingDL') {
+				const target = !shiftHeldRef.current
+					? snapToWallOrtho(origin, mousePos, ip.wallAngle)
+					: mousePos;
+				live.DL_cm = pixelsToCm(distanceBetween(origin, target));
+				live.DL_angle = angleBetween(origin, target);
+			} else if (ip.phase === 'settingCL') {
+				const target = !shiftHeldRef.current
+					? snapToWallOrtho(origin, mousePos, ip.wallAngle)
+					: mousePos;
+				live.CL_cm = pixelsToCm(distanceBetween(origin, target));
+				live.CL_angle = angleBetween(origin, target);
+			} else if (ip.phase === 'settingCD') {
+				const CL_dx = Math.cos(ip.CL_angle);
+				const CL_dy = Math.sin(ip.CL_angle);
+				const mx = mousePos.x - origin.x;
+				const my = mousePos.y - origin.y;
+				const perpSigned = -CL_dy * mx + CL_dx * my;
+				live.CD_cm = Math.max(1, pixelsToCm(Math.abs(perpSigned)));
+				live.CD_flipped = perpSigned < 0;
+			}
+		}
+
+		const walk = computeIslandWalk(live);
+		if (!walk) return null;
+
+		// Anchor dot (purple)
+		elements.push(
+			<Circle
+				key="island-anchor"
+				x={ip.anchorPoint.x}
+				y={ip.anchorPoint.y}
+				radius={5 / scale}
+				fill="#A855F7"
+				stroke="white"
+				strokeWidth={1.5 / scale}
+				listening={false}
+			/>
+		);
+
+		// Helper to draw a dashed segment + midpoint label pill
+		const dashedSegment = (
+			key: string,
+			a: Point,
+			b: Point,
+			color: string,
+			labelText: string
+		) => {
+			const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+			const len = distanceBetween(a, b);
+			return (
+				<Group key={key} listening={false}>
 					<Line
-						points={[ip.start.x, ip.start.y, liveEnd.x, liveEnd.y]}
-						stroke="#F59E0B"
+						points={[a.x, a.y, b.x, b.y]}
+						stroke={color}
 						strokeWidth={2 / scale}
 						dash={[6, 4]}
 						listening={false}
 					/>
-					<Circle x={ip.start.x} y={ip.start.y} radius={5 / scale}
-						fill="#F59E0B" listening={false} />
-					<Circle x={liveEnd.x} y={liveEnd.y} radius={4 / scale}
-						stroke="#F59E0B" strokeWidth={1.5 / scale} fill="white" listening={false} />
-					{lenPx > 10 && (
+					<Circle
+						x={b.x}
+						y={b.y}
+						radius={4 / scale}
+						stroke={color}
+						strokeWidth={1.5 / scale}
+						fill="white"
+						listening={false}
+					/>
+					{len > 10 && (
 						<>
 							<Rect
-								x={mid.x - 18 / scale} y={mid.y - 9 / scale}
-								width={36 / scale} height={16 / scale}
-								fill="#F59E0B" cornerRadius={3 / scale} opacity={0.9}
+								x={mid.x - 22 / scale}
+								y={mid.y - 9 / scale}
+								width={44 / scale}
+								height={16 / scale}
+								fill={color}
+								cornerRadius={3 / scale}
+								opacity={0.9}
 							/>
-							<Text x={mid.x} y={mid.y}
-								text={`${lenCm}cm`} fontSize={9 / scale} fill="white"
-								align="center" offsetX={18 / scale} offsetY={8 / scale} listening={false} />
+							<Text
+								x={mid.x}
+								y={mid.y}
+								text={labelText}
+								fontSize={9 / scale}
+								fill="white"
+								align="center"
+								offsetX={22 / scale}
+								offsetY={8 / scale}
+								listening={false}
+							/>
 						</>
 					)}
 				</Group>
 			);
-		} else if (ip.phase === 'settingDepth' && ip.end && ip.angle !== undefined && ip.length !== undefined) {
-			const depthPx = cmToPixels(ip.depth);
-			const angleDeg = (ip.angle * 180) / Math.PI;
-			const perpSign = ip.isFlipped ? 1 : -1;
-			const perpAngle = ip.angle + perpSign * Math.PI / 2;
-			const depthMidX = (ip.start.x + ip.end.x) / 2 + Math.cos(perpAngle) * depthPx / 2;
-			const depthMidY = (ip.start.y + ip.end.y) / 2 + Math.sin(perpAngle) * depthPx / 2;
-			const depthCm = Math.round(ip.depth);
-			const lenCm = Math.round(pixelsToCm(ip.length));
+		};
+
+		// WL segment (gray)
+		if (live.WL_cm > 0 || ip.phase === 'settingWL') {
 			elements.push(
-				<Group key="island-phase2" listening={false}>
-					{/* Base edge */}
-					<Line
-						points={[ip.start.x, ip.start.y, ip.end.x, ip.end.y]}
-						stroke="#F59E0B" strokeWidth={2 / scale} listening={false}
-					/>
-					<Circle x={ip.start.x} y={ip.start.y} radius={5 / scale} fill="#F59E0B" listening={false} />
-					<Circle x={ip.end.x} y={ip.end.y} radius={5 / scale} fill="#F59E0B" listening={false} />
-					{/* Extruded rectangle */}
-					<Group x={ip.start.x} y={ip.start.y} rotation={angleDeg} listening={false}>
+				dashedSegment(
+					'island-wl',
+					ip.anchorPoint,
+					walk.turn1,
+					'#6B7280',
+					`WL ${Math.round(live.WL_cm)}cm`
+				)
+			);
+		}
+
+		// DL segment (gray) — shown once WL is done
+		if (live.DL_cm > 0 || ip.phase === 'settingDL') {
+			elements.push(
+				dashedSegment(
+					'island-dl',
+					walk.turn1,
+					walk.turn2,
+					'#6B7280',
+					`DL ${Math.round(live.DL_cm)}cm`
+				)
+			);
+		}
+
+		// CL segment (amber)
+		if (live.CL_cm > 0 || ip.phase === 'settingCL') {
+			elements.push(
+				dashedSegment(
+					'island-cl',
+					walk.turn2,
+					walk.turn3,
+					'#F59E0B',
+					`CL ${Math.round(live.CL_cm)}cm`
+				)
+			);
+		}
+
+		// CD rectangle (amber fill + purple stroke)
+		if (live.CD_cm > 0 || ip.phase === 'settingCD') {
+			const depthPx = cmToPixels(live.CD_cm);
+			const angleDeg = (live.CL_angle * 180) / Math.PI;
+			const CL_px = cmToPixels(live.CL_cm);
+			const perpSign = live.CD_flipped ? 1 : -1;
+			const perpAngle = live.CL_angle + (perpSign * Math.PI) / 2;
+			const depthMidX =
+				(walk.turn2.x + walk.turn3.x) / 2 +
+				(Math.cos(perpAngle) * depthPx) / 2;
+			const depthMidY =
+				(walk.turn2.y + walk.turn3.y) / 2 +
+				(Math.sin(perpAngle) * depthPx) / 2;
+			elements.push(
+				<Group key="island-cd" listening={false}>
+					<Group x={walk.turn2.x} y={walk.turn2.y} rotation={angleDeg} listening={false}>
 						<Rect
-							x={0} y={ip.isFlipped ? 0 : -depthPx}
-							width={ip.length} height={depthPx}
-							fill="rgba(168,85,247,0.2)" stroke="#A855F7"
-							strokeWidth={1.5 / scale} dash={[6, 3]}
+							x={0}
+							y={live.CD_flipped ? 0 : -depthPx}
+							width={CL_px}
+							height={depthPx}
+							fill="rgba(245,158,11,0.2)"
+							stroke="#A855F7"
+							strokeWidth={1.5 / scale}
+							dash={[6, 3]}
 						/>
 						<Text
-							x={ip.length / 2} y={ip.isFlipped ? depthPx / 2 : -depthPx / 2}
-							text="IC" fontSize={12 / scale} fill="#7C3AED"
-							align="center" offsetX={8 / scale} offsetY={6 / scale} listening={false}
+							x={CL_px / 2}
+							y={live.CD_flipped ? depthPx / 2 : -depthPx / 2}
+							text="IC"
+							fontSize={12 / scale}
+							fill="#7C3AED"
+							align="center"
+							offsetX={8 / scale}
+							offsetY={6 / scale}
+							listening={false}
 						/>
 					</Group>
-					{/* Length label */}
+					{/* Depth label pill */}
 					<Rect
-						x={(ip.start.x + ip.end.x) / 2 - 18 / scale}
-						y={(ip.start.y + ip.end.y) / 2 - 9 / scale}
-						width={36 / scale} height={16 / scale}
-						fill="#F59E0B" cornerRadius={3 / scale} opacity={0.9}
+						x={depthMidX - 22 / scale}
+						y={depthMidY - 9 / scale}
+						width={44 / scale}
+						height={16 / scale}
+						fill="#A855F7"
+						cornerRadius={3 / scale}
+						opacity={0.9}
 					/>
 					<Text
-						x={(ip.start.x + ip.end.x) / 2} y={(ip.start.y + ip.end.y) / 2}
-						text={`${lenCm}cm`} fontSize={9 / scale} fill="white"
-						align="center" offsetX={18 / scale} offsetY={8 / scale} listening={false}
-					/>
-					{/* Depth label */}
-					<Rect
-						x={depthMidX - 18 / scale} y={depthMidY - 9 / scale}
-						width={36 / scale} height={16 / scale}
-						fill="#A855F7" cornerRadius={3 / scale} opacity={0.9}
-					/>
-					<Text
-						x={depthMidX} y={depthMidY}
-						text={`${depthCm}cm`} fontSize={9 / scale} fill="white"
-						align="center" offsetX={18 / scale} offsetY={8 / scale} listening={false}
+						x={depthMidX}
+						y={depthMidY}
+						text={`CD ${Math.round(live.CD_cm)}cm`}
+						fontSize={9 / scale}
+						fill="white"
+						align="center"
+						offsetX={22 / scale}
+						offsetY={8 / scale}
+						listening={false}
 					/>
 				</Group>
 			);
 		}
 
-		if (elements.length === 0) return null;
 		return <Group listening={false}>{elements}</Group>;
 	};
 
@@ -2884,21 +3318,45 @@ export function DesignerCanvas({
 		const length = distanceBetween(cabinet.start, cabinet.end);
 		const depthPx = cmToPixels(cabinet.depth);
 		const deg = (angle * 180) / Math.PI;
-		const yOffset = cabinet.depthFlipped ? -depthPx : 0;
+		const halfWall = WALL_THICKNESS / 2;
 
-		// Simple rectangle — cabinets overlap cleanly at corners (L-shape)
+		// Cabinet back edge sits flush against the inner wall face.
+		// depthFlipped=false → depth extends toward +y (angle+PI/2 direction)
+		// depthFlipped=true → depth extends toward -y (angle-PI/2 direction)
+		const yOffset = cabinet.depthFlipped ? -(halfWall + depthPx) : halfWall;
+
+		// At wall corners, inset the cabinet start/end by halfWall so it doesn't
+		// overlap the perpendicular wall. Check if start or end is at a wall corner.
+		let xInsetStart = 0;
+		let xInsetEnd = 0;
+		if (cabinet.type !== 'island') {
+			for (const w of drawingState.walls) {
+				if (w.id === cabinet.wallId) continue; // skip own wall
+				// Check if cabinet start is at a corner with this wall
+				if (distanceBetween(cabinet.start, w.start) < SNAP_RADIUS ||
+					distanceBetween(cabinet.start, w.end) < SNAP_RADIUS) {
+					xInsetStart = halfWall;
+				}
+				// Check if cabinet end is at a corner with this wall
+				if (distanceBetween(cabinet.end, w.start) < SNAP_RADIUS ||
+					distanceBetween(cabinet.end, w.end) < SNAP_RADIUS) {
+					xInsetEnd = halfWall;
+				}
+			}
+		}
+
 		const points = [
-			0,
+			xInsetStart,
 			yOffset,
-			length,
+			length - xInsetEnd,
 			yOffset,
-			length,
+			length - xInsetEnd,
 			yOffset + depthPx,
-			0,
+			xInsetStart,
 			yOffset + depthPx,
 		];
-		const minX = 0;
-		const maxX = length;
+		const minX = xInsetStart;
+		const maxX = length - xInsetEnd;
 		const minY = yOffset;
 		const maxY = yOffset + depthPx;
 
@@ -2929,20 +3387,29 @@ export function DesignerCanvas({
 							style.stroke
 						)}
 					</Group>
-					<Text
-						x={0}
-						y={yOffset}
-						width={length}
-						height={depthPx}
-						text={style.label}
-						fontSize={Math.min(11, depthPx * 0.35)}
-						fill={style.textColor}
-						fontStyle="bold"
-						fontFamily="sans-serif"
-						align="center"
-						verticalAlign="middle"
-						listening={false}
-					/>
+					{/* Counter-rotate label so text always reads left-to-right */}
+					{(() => {
+						const normDeg = ((deg % 360) + 360) % 360;
+						const flip = normDeg > 90 && normDeg < 270;
+						const visLen = maxX - minX;
+						return (
+							<Text
+								x={flip ? maxX : minX}
+								y={flip ? yOffset + depthPx : yOffset}
+								width={visLen}
+								height={depthPx}
+								text={style.label}
+								fontSize={Math.min(11, depthPx * 0.35)}
+								fill={style.textColor}
+								fontStyle="bold"
+								fontFamily="sans-serif"
+								align="center"
+								verticalAlign="middle"
+								rotation={flip ? 180 : 0}
+								listening={false}
+							/>
+						);
+					})()}
 				</Group>
 				{isSelected && drawingState.tool === 'select' && (
 					<>
@@ -2964,12 +3431,7 @@ export function DesignerCanvas({
 						/>
 					</>
 				)}
-				{renderDimensionLabel(
-					cabinet.start,
-					cabinet.end,
-					drawingState.unit,
-					'interior'
-				)}
+
 			</Group>
 		);
 	};
@@ -3050,8 +3512,7 @@ export function DesignerCanvas({
 					{renderDimensionLabel(
 						wall.start,
 						wall.end,
-						drawingState.unit,
-						'exterior'
+						drawingState.unit
 					)}
 				</Group>
 			);
@@ -3233,8 +3694,7 @@ export function DesignerCanvas({
 					{renderDimensionLabel(
 						opening.start,
 						opening.end,
-						drawingState.unit,
-						'exterior'
+						drawingState.unit
 					)}
 				</Group>
 			);
@@ -3272,8 +3732,7 @@ export function DesignerCanvas({
 	const renderDimensionLabel = (
 		start: Point,
 		end: Point,
-		unit: 'cm' | 'm',
-		placement: 'interior' | 'exterior' = 'exterior'
+		unit: 'cm' | 'm'
 	) => {
 		const mid = getMidpoint(start, end);
 		const dist = distanceBetween(start, end);
@@ -3285,22 +3744,16 @@ export function DesignerCanvas({
 		const angle = angleBetween(start, end);
 		const perpOffset = 14 / scale;
 
-		// Determine which perpendicular side to place the label
-		let perpAngle = angle + Math.PI / 2;
-		if (placement === 'interior') {
-			// Place inside the room (toward interior normal)
-			const normal = computeInteriorNormal(start, end, drawingState.walls);
-			const dot = Math.cos(perpAngle) * normal.nx + Math.sin(perpAngle) * normal.ny;
-			if (dot < 0) perpAngle = angle - Math.PI / 2; // flip to interior side
-		} else {
-			// Place outside the room (away from interior normal)
-			const normal = computeInteriorNormal(start, end, drawingState.walls);
-			const dot = Math.cos(perpAngle) * normal.nx + Math.sin(perpAngle) * normal.ny;
-			if (dot > 0) perpAngle = angle - Math.PI / 2; // flip to exterior side
-		}
+		// Always place label OUTSIDE the room (away from centroid)
+		const interior = computeInteriorNormal(start, end, drawingState.walls);
+		// Exterior = opposite of interior
+		const exteriorAngle = Math.atan2(-interior.ny, -interior.nx);
+		const labelX = mid.x + Math.cos(exteriorAngle) * perpOffset;
+		const labelY = mid.y + Math.sin(exteriorAngle) * perpOffset;
 
-		const labelX = mid.x + Math.cos(perpAngle) * perpOffset;
-		const labelY = mid.y + Math.sin(perpAngle) * perpOffset;
+		// Rotate label to follow wall direction, but keep readable (not upside-down)
+		let angleDeg = (angle * 180) / Math.PI;
+		if (angleDeg > 90 || angleDeg < -90) angleDeg += 180;
 
 		return (
 			<Text
@@ -3313,6 +3766,7 @@ export function DesignerCanvas({
 				align="center"
 				offsetX={(text.length * 3) / scale}
 				offsetY={5 / scale}
+				rotation={angleDeg}
 				listening={false}
 			/>
 		);
@@ -3838,28 +4292,136 @@ export function DesignerCanvas({
 				/>
 			)}
 
-			{islandPlacement && (
-				<IslandDimensionPanel
-					phase={islandPlacement.phase}
-					liveLengthCm={mousePos ? pixelsToCm(distanceBetween(islandPlacement.start,
-						shiftHeldRef.current ? constrainToAxis(islandPlacement.start, mousePos) : mousePos)) : 0}
-					liveDepthCm={islandPlacement.depth}
-					unit={drawingState.unit}
-					onLengthConfirm={(cm) => {
-						if (!islandPlacement || !mousePos) return;
-						const liveEnd = shiftHeldRef.current ? constrainToAxis(islandPlacement.start, mousePos) : mousePos;
-						const angle = angleBetween(islandPlacement.start, liveEnd);
-						const lengthPx = cmToPixels(cm);
-						const end: Point = {
-							x: islandPlacement.start.x + Math.cos(angle) * lengthPx,
-							y: islandPlacement.start.y + Math.sin(angle) * lengthPx,
-						};
-						setIslandPlacement({ ...islandPlacement, phase: 'settingDepth', end, angle, length: lengthPx });
-					}}
-					onDepthConfirm={(cm) => placeIsland({ ...islandPlacement, depth: cm })}
-					onCancel={() => setIslandPlacement(null)}
-				/>
-			)}
+			{islandPlacement && islandPlacement.phase !== 'pickingAnchor' && (() => {
+				const ip = islandPlacement;
+				// Compute live cm values for the currently-active phase
+				let liveWL = 0, liveDL = 0, liveCL = 0, liveCD = 0;
+				if (mousePos && ip.anchorPoint) {
+					if (ip.phase === 'settingWL') {
+						const anchorWall = drawingState.walls.find((w) => w.id === ip.anchorWallId);
+						if (anchorWall) {
+							const dx = mousePos.x - ip.anchorPoint.x;
+							const dy = mousePos.y - ip.anchorPoint.y;
+							const proj = dx * Math.cos(ip.wallAngle) + dy * Math.sin(ip.wallAngle);
+							const wallLen = distanceBetween(anchorWall.start, anchorWall.end);
+							const anchorProj =
+								(ip.anchorPoint.x - anchorWall.start.x) * Math.cos(ip.wallAngle) +
+								(ip.anchorPoint.y - anchorWall.start.y) * Math.sin(ip.wallAngle);
+							const clamped = Math.max(-anchorProj, Math.min(wallLen - anchorProj, proj));
+							liveWL = pixelsToCm(Math.abs(clamped));
+						}
+					} else if (ip.phase === 'settingDL') {
+						const t1 = computeIslandWalk({ ...ip, DL_cm: 0 })?.turn1;
+						if (t1) {
+							const target = !shiftHeldRef.current ? snapToWallOrtho(t1, mousePos, ip.wallAngle) : mousePos;
+							liveDL = pixelsToCm(distanceBetween(t1, target));
+						}
+					} else if (ip.phase === 'settingCL') {
+						const t2 = computeIslandWalk({ ...ip, CL_cm: 0 })?.turn2;
+						if (t2) {
+							const target = !shiftHeldRef.current ? snapToWallOrtho(t2, mousePos, ip.wallAngle) : mousePos;
+							liveCL = pixelsToCm(distanceBetween(t2, target));
+						}
+					} else if (ip.phase === 'settingCD') {
+						const t2 = computeIslandWalk(ip)?.turn2;
+						if (t2) {
+							const CL_dx = Math.cos(ip.CL_angle);
+							const CL_dy = Math.sin(ip.CL_angle);
+							const mx = mousePos.x - t2.x;
+							const my = mousePos.y - t2.y;
+							liveCD = Math.max(1, pixelsToCm(Math.abs(-CL_dy * mx + CL_dx * my)));
+						}
+					}
+				}
+				return (
+					<IslandDimensionPanel
+						phase={ip.phase}
+						liveWL_cm={liveWL}
+						liveDL_cm={liveDL}
+						liveCL_cm={liveCL}
+						liveCD_cm={liveCD}
+						WL_cm={ip.WL_cm}
+						DL_cm={ip.DL_cm}
+						CL_cm={ip.CL_cm}
+						CD_cm={ip.CD_cm}
+						unit={drawingState.unit}
+						onCommitField={(field, cm) => {
+							if (field === 'WL') {
+								// For WL, preserve WL_direction from live mouse projection (clamped)
+								let dir: 1 | -1 = ip.WL_direction;
+								if (mousePos && ip.anchorPoint) {
+									const anchorWall = drawingState.walls.find((w) => w.id === ip.anchorWallId);
+									if (anchorWall) {
+										const dx = mousePos.x - ip.anchorPoint.x;
+										const dy = mousePos.y - ip.anchorPoint.y;
+										const proj = dx * Math.cos(ip.wallAngle) + dy * Math.sin(ip.wallAngle);
+										const wallLen = distanceBetween(anchorWall.start, anchorWall.end);
+										const anchorProj =
+											(ip.anchorPoint.x - anchorWall.start.x) * Math.cos(ip.wallAngle) +
+											(ip.anchorPoint.y - anchorWall.start.y) * Math.sin(ip.wallAngle);
+										const clamped = Math.max(-anchorProj, Math.min(wallLen - anchorProj, proj));
+										if (Math.abs(clamped) > 0.5) dir = clamped >= 0 ? 1 : -1;
+									}
+								}
+								setIslandPlacement({ ...ip, WL_cm: cm, WL_direction: dir, phase: 'settingDL' });
+							} else if (field === 'DL') {
+								// For DL, use mouse-derived angle (or existing if no mouse)
+								let angle = ip.DL_angle;
+								if (mousePos) {
+									const t1 = computeIslandWalk({ ...ip, DL_cm: 0 })?.turn1;
+									if (t1) {
+										const target = !shiftHeldRef.current ? snapToWallOrtho(t1, mousePos, ip.wallAngle) : mousePos;
+										if (distanceBetween(t1, target) > 1) angle = angleBetween(t1, target);
+									}
+								}
+								setIslandPlacement({ ...ip, DL_cm: cm, DL_angle: angle, phase: 'settingCL' });
+							} else if (field === 'CL') {
+								let angle = ip.CL_angle;
+								if (mousePos) {
+									const t2 = computeIslandWalk({ ...ip, CL_cm: 0 })?.turn2;
+									if (t2) {
+										const target = !shiftHeldRef.current ? snapToWallOrtho(t2, mousePos, ip.wallAngle) : mousePos;
+										if (distanceBetween(t2, target) > 1) angle = angleBetween(t2, target);
+									}
+								}
+								setIslandPlacement({ ...ip, CL_cm: cm, CL_angle: angle, phase: 'settingCD' });
+							} else if (field === 'CD') {
+								let flipped = ip.CD_flipped;
+								if (mousePos) {
+									const t2 = computeIslandWalk(ip)?.turn2;
+									if (t2) {
+										const CL_dx = Math.cos(ip.CL_angle);
+										const CL_dy = Math.sin(ip.CL_angle);
+										const mx = mousePos.x - t2.x;
+										const my = mousePos.y - t2.y;
+										const perp = -CL_dy * mx + CL_dx * my;
+										if (Math.abs(perp) > 1) flipped = perp < 0;
+									}
+								}
+								placeIsland({ ...ip, CD_cm: cm, CD_flipped: flipped });
+							}
+						}}
+						onJumpToField={(field) => {
+							const canJump: Record<IslandPanelField, boolean> = {
+								WL: true,
+								DL: ip.WL_cm > 0,
+								CL: ip.WL_cm > 0 && ip.DL_cm > 0,
+								CD: ip.WL_cm > 0 && ip.DL_cm > 0 && ip.CL_cm > 0,
+							};
+							if (!canJump[field]) return false;
+							const targetPhase: Record<IslandPanelField, IslandPhase> = {
+								WL: 'settingWL',
+								DL: 'settingDL',
+								CL: 'settingCL',
+								CD: 'settingCD',
+							};
+							setIslandPlacement({ ...ip, phase: targetPhase[field] });
+							return true;
+						}}
+						onCancel={() => setIslandPlacement(null)}
+					/>
+				);
+			})()}
 
 						{showDimensionInput && wallPlacement && (
 				<FixedDimensionPanel

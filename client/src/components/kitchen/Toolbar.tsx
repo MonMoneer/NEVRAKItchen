@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Badge } from "@/components/ui/badge";
 import {
   Ruler,
   Square,
@@ -25,8 +24,67 @@ import {
   Droplets,
   LayoutPanelTop,
   PencilRuler,
+  ChevronRight,
 } from "lucide-react";
+import { useState, useEffect } from "react";
 import type { DrawingState } from "@/lib/kitchen-engine";
+import { Keypad } from "./Keypad";
+
+// ── Accordion persistence ────────────────────────────────────────────────
+type AccordionKey = "basic" | "architecture" | "kitchen" | null;
+const ACCORDION_STORAGE_KEY = "nivra.sidebar.openSection";
+
+function loadOpenSection(): AccordionKey {
+  try {
+    const v = localStorage.getItem(ACCORDION_STORAGE_KEY);
+    if (v === "basic" || v === "architecture" || v === "kitchen") return v;
+  } catch {
+    // localStorage unavailable
+  }
+  return null;
+}
+
+function saveOpenSection(k: AccordionKey): void {
+  try {
+    if (k === null) localStorage.removeItem(ACCORDION_STORAGE_KEY);
+    else localStorage.setItem(ACCORDION_STORAGE_KEY, k);
+  } catch {
+    // ignore
+  }
+}
+
+interface CollapsibleSectionProps {
+  id: Exclude<AccordionKey, null>;
+  title: string;
+  isOpen: boolean;
+  onToggle: (id: Exclude<AccordionKey, null>) => void;
+  children: React.ReactNode;
+}
+
+function CollapsibleSection({
+  id,
+  title,
+  isOpen,
+  onToggle,
+  children,
+}: CollapsibleSectionProps) {
+  return (
+    <div className="shrink-0">
+      <button
+        onClick={() => onToggle(id)}
+        className="flex items-center gap-1 w-full px-2 py-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wider hover:bg-accent/50 transition-colors"
+        data-testid={`accordion-${id}`}
+        aria-expanded={isOpen}
+      >
+        <ChevronRight
+          className={`w-3 h-3 transition-transform ${isOpen ? "rotate-90" : ""}`}
+        />
+        <span>{title}</span>
+      </button>
+      {isOpen && <div className="p-2 pt-0 flex flex-col gap-1">{children}</div>}
+    </div>
+  );
+}
 
 export type CustomTool = "electrical" | "plumbing" | "island" | "measure_tape" | null;
 
@@ -95,6 +153,18 @@ export function Toolbar({
 }: ToolbarProps) {
   const isMeasurement = stage === "site_measurement";
 
+  const [openSection, setOpenSectionState] = useState<AccordionKey>(() => loadOpenSection());
+  const handleToggleSection = (id: Exclude<AccordionKey, null>) => {
+    const next: AccordionKey = openSection === id ? null : id;
+    setOpenSectionState(next);
+    saveOpenSection(next);
+  };
+
+  // Persist on unmount in case of any programmatic changes
+  useEffect(() => {
+    saveOpenSection(openSection);
+  }, [openSection]);
+
   const handleToolChange = (tool: DrawingState["tool"]) => {
     onCustomToolChange?.(null);
     onElementSelect?.(null);
@@ -128,9 +198,53 @@ export function Toolbar({
         )}
       </div>
 
-      {/* ── BASIC TOOLS (always visible) ── */}
-      <div className="p-2 flex flex-col gap-1 shrink-0">
-        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2 mb-1">Basic</p>
+      {/* ── TOGGLE STRIP: Snap / Grid / Unit ── */}
+      <div className="px-2 py-2 flex items-center gap-1 border-b border-sidebar-border shrink-0">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              data-testid="toggle-snap"
+              onClick={onSnapToggle}
+              className={`flex-1 flex items-center justify-center h-8 rounded-md text-xs transition-colors ${
+                snapEnabled ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <Magnet className="w-4 h-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">Snap {snapEnabled ? "ON" : "OFF"}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              data-testid="toggle-grid"
+              onClick={onGridToggle}
+              className={`flex-1 flex items-center justify-center h-8 rounded-md text-xs transition-colors ${
+                gridEnabled ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent"
+              }`}
+            >
+              <Grid3X3 className="w-4 h-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">Grid {gridEnabled ? "ON" : "OFF"}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              data-testid="toggle-unit"
+              onClick={onUnitToggle}
+              className="flex-1 flex items-center justify-center gap-1 h-8 rounded-md text-xs text-sidebar-foreground/80 hover:bg-accent"
+            >
+              <Ruler className="w-4 h-4" />
+              <span className="text-[10px] font-semibold">{unit.toUpperCase()}</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="text-xs">Unit: {unit}</TooltipContent>
+        </Tooltip>
+      </div>
+
+      {/* ── BASIC TOOLS (accordion) ── */}
+      <CollapsibleSection id="basic" title="Basic" isOpen={openSection === "basic"} onToggle={handleToggleSection}>
 
         {/* Select */}
         <Tooltip>
@@ -211,13 +325,10 @@ export function Toolbar({
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">Delete (D)</TooltipContent>
         </Tooltip>
-      </div>
+      </CollapsibleSection>
 
-      <Separator className="mx-2" />
-
-      {/* ── ARCHITECTURE (always visible) ── */}
-      <div className="p-2 flex flex-col gap-1 shrink-0">
-        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2 mb-1">Architecture</p>
+      {/* ── ARCHITECTURE (accordion) ── */}
+      <CollapsibleSection id="architecture" title="Architecture" isOpen={openSection === "architecture"} onToggle={handleToggleSection}>
 
         {/* Wall */}
         <Tooltip>
@@ -278,14 +389,11 @@ export function Toolbar({
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">Window (N)</TooltipContent>
         </Tooltip>
-      </div>
+      </CollapsibleSection>
 
       {/* ── KITCHEN ELEMENTS (estimated_budget + final only) ── */}
       {!isMeasurement && (
-        <>
-          <Separator className="mx-2" />
-          <div className="p-2 flex flex-col gap-1 shrink-0">
-            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2 mb-1">Kitchen</p>
+        <CollapsibleSection id="kitchen" title="Kitchen" isOpen={openSection === "kitchen"} onToggle={handleToggleSection}>
 
             {/* Base Cabinet */}
             <Tooltip>
@@ -366,8 +474,7 @@ export function Toolbar({
               </TooltipTrigger>
               <TooltipContent side="right" className="text-xs">Click anywhere to drop island (I)</TooltipContent>
             </Tooltip>
-          </div>
-        </>
+        </CollapsibleSection>
       )}
 
       {/* ── FIELD POINTS (site_measurement only) ── */}
@@ -420,49 +527,8 @@ export function Toolbar({
         </>
       )}
 
-      <Separator className="mx-2" />
-
-      {/* ── OPTIONS ── */}
-      <div className="p-2 flex flex-col gap-1 shrink-0">
-        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-2 mb-1">Options</p>
-        <button
-          data-testid="toggle-snap"
-          onClick={onSnapToggle}
-          className={`flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${
-            snapEnabled ? "text-primary" : "text-muted-foreground"
-          }`}
-        >
-          <Magnet className="w-4 h-4" />
-          <span>Snap</span>
-          <Badge variant={snapEnabled ? "default" : "secondary"} className="ml-auto text-[10px] px-1.5 py-0">
-            {snapEnabled ? "ON" : "OFF"}
-          </Badge>
-        </button>
-        <button
-          data-testid="toggle-grid"
-          onClick={onGridToggle}
-          className={`flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${
-            gridEnabled ? "text-primary" : "text-muted-foreground"
-          }`}
-        >
-          <Grid3X3 className="w-4 h-4" />
-          <span>Grid</span>
-          <Badge variant={gridEnabled ? "default" : "secondary"} className="ml-auto text-[10px] px-1.5 py-0">
-            {gridEnabled ? "ON" : "OFF"}
-          </Badge>
-        </button>
-        <button
-          data-testid="toggle-unit"
-          onClick={onUnitToggle}
-          className="flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium text-sidebar-foreground/80"
-        >
-          <Ruler className="w-4 h-4" />
-          <span>Unit</span>
-          <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0">
-            {unit.toUpperCase()}
-          </Badge>
-        </button>
-      </div>
+      {/* ── CALCULATOR KEYPAD ── */}
+      <Keypad />
 
       <Separator className="mx-2" />
 

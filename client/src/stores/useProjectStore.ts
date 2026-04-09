@@ -8,6 +8,7 @@ export interface ProjectSpace {
   name: string;
   type: string;
   canvasData: unknown;
+  siteMeasurementData: unknown;
   finishing: string | null;
   notes: string;
   sortOrder: number;
