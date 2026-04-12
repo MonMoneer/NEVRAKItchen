@@ -92,7 +92,8 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
     if (layer.type === "divider" || layer.type === "drawer") return 0;
     const layerCabs = getLayerCabinets(layer);
     if (layerCabs.length === 0) return 0;
-    const effectiveLengths = computeEffectiveLengths(layerCabs, walls);
+    const depthCm = layer.depth ?? undefined;
+    const effectiveLengths = computeEffectiveLengths(layerCabs, walls, depthCm);
     return layerCabs.reduce((sum, c) => {
       const effPx = effectiveLengths.get(c.id) ?? 0;
       return sum + pixelsToCm(effPx) / 100;

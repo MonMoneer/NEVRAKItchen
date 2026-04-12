@@ -221,7 +221,7 @@ export async function exportToPDF(
     const isIsland = layer.type === "island";
 
     const layerCabinets = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
-    const effLengths = computeEffectiveLengths(layerCabinets, walls);
+    const effLengths = computeEffectiveLengths(layerCabinets, walls, layer.depth ?? undefined);
     const lengthM = layerCabinets.reduce((sum, c) => {
       const effPx = effLengths.get(c.id) ?? 0;
       return sum + pixelsToCm(effPx) / 100;

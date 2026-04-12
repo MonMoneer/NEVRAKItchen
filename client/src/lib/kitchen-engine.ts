@@ -1333,6 +1333,7 @@ export function getCabinetLocalPolygon(cabinet: Cabinet, pairs: CornerCabinetPai
 export function computeEffectiveLengths(
   cabinets: Cabinet[],
   walls: Wall[],
+  overrideDepthCm?: number,
 ): Map<string, number> {
   const effectiveLengths = new Map<string, number>();
 
@@ -1357,7 +1358,7 @@ export function computeEffectiveLengths(
 
     const deductFrom = len1 <= len2 ? pair.cabinet1 : pair.cabinet2;
     const deductEndpoint = len1 <= len2 ? pair.cab1Endpoint : pair.cab2Endpoint;
-    const depthPx = cmToPixels(deductFrom.depth);
+    const depthPx = cmToPixels(overrideDepthCm ?? deductFrom.depth);
 
     const d = deductions.get(deductFrom.id)!;
     if (deductEndpoint === "start") {
