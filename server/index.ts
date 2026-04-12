@@ -47,6 +47,32 @@ async function runMigrations() {
       )
     `);
     await pool.query(`UPDATE saved_projects SET stage = 'delivered' WHERE stage = 'final'`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS price_matrix (
+        id serial PRIMARY KEY,
+        cabinet_type text NOT NULL,
+        depth integer NOT NULL,
+        height integer NOT NULL,
+        price_per_unit numeric(10,2) NOT NULL,
+        currency text DEFAULT 'AED' NOT NULL
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS depth_options (
+        id serial PRIMARY KEY,
+        cabinet_type text NOT NULL,
+        value integer NOT NULL,
+        sort_order integer DEFAULT 0 NOT NULL
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS height_options (
+        id serial PRIMARY KEY,
+        cabinet_type text NOT NULL,
+        value integer NOT NULL,
+        sort_order integer DEFAULT 0 NOT NULL
+      )
+    `);
   } catch (err: any) {
     console.error("[migration] failed:", err.message);
   }
