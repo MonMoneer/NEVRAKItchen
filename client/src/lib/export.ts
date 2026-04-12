@@ -1,7 +1,7 @@
 import jsPDF from "jspdf";
 import { PDFDocument } from "pdf-lib";
 import type { Wall, Cabinet, Opening, Layer } from "./kitchen-engine";
-import { pixelsToCm, OPENING_STYLES } from "./kitchen-engine";
+import { pixelsToCm, OPENING_STYLES, computeEffectiveLengths } from "./kitchen-engine";
 import letterheadUrl from "@assets/NIVRA_LETTERHEAD_V1.1_(1)_1772051682721.pdf?url";
 
 const cabinetLabels: Record<string, string> = {
@@ -220,8 +220,12 @@ export async function exportToPDF(
     const isCountType = layer.type === "divider" || layer.type === "drawer";
     const isIsland = layer.type === "island";
 
-    const layerCabinets = cabinets.filter((c) => layer.cabinetIds.includes(c.id));
-    const lengthM = layerCabinets.reduce((sum, c) => sum + pixelsToCm(c.length) / 100, 0);
+    const layerCabinets = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
+    const effLengths = computeEffectiveLengths(layerCabinets, walls);
+    const lengthM = layerCabinets.reduce((sum, c) => {
+      const effPx = effLengths.get(c.id) ?? 0;
+      return sum + pixelsToCm(effPx) / 100;
+    }, 0);
     const effectiveDepth = isIsland && layerCabinets.length > 0
       ? pixelsToCm(layerCabinets[0].depth)
       : (layer.depth ?? 0);

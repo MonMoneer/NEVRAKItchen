@@ -22,7 +22,7 @@ import { Plus, Trash2, Layers } from "lucide-react";
 import { useCanvasStore } from "@/stores/useCanvasStore";
 import type { FinishingOption, PriceMatrix, DepthOption, HeightOption } from "@shared/schema";
 import type { Layer, LayerType, Cabinet, Wall } from "@/lib/kitchen-engine";
-import { pixelsToCm } from "@/lib/kitchen-engine";
+import { pixelsToCm, computeEffectiveLengths } from "@/lib/kitchen-engine";
 
 const LAYER_LABELS: Record<LayerType, string> = {
   base: "Base Cabinet",
@@ -91,7 +91,12 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
   const getLayerLength = (layer: Layer): number => {
     if (layer.type === "divider" || layer.type === "drawer") return 0;
     const layerCabs = getLayerCabinets(layer);
-    return layerCabs.reduce((sum, c) => sum + pixelsToCm(c.length) / 100, 0);
+    if (layerCabs.length === 0) return 0;
+    const effectiveLengths = computeEffectiveLengths(layerCabs, walls);
+    return layerCabs.reduce((sum, c) => {
+      const effPx = effectiveLengths.get(c.id) ?? 0;
+      return sum + pixelsToCm(effPx) / 100;
+    }, 0);
   };
 
   const getIslandDepth = (layer: Layer): number => {
