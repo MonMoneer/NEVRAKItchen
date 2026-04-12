@@ -82,17 +82,23 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
     addLayer(newLayer);
   };
 
+  const getLayerCabinets = (layer: Layer): Cabinet[] => {
+    return cabinets.filter(
+      (c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id)
+    );
+  };
+
   const getLayerLength = (layer: Layer): number => {
     if (layer.type === "divider" || layer.type === "drawer") return 0;
-    const layerCabinets = cabinets.filter((c) => layer.cabinetIds.includes(c.id));
-    return layerCabinets.reduce((sum, c) => sum + pixelsToCm(c.length) / 100, 0);
+    const layerCabs = getLayerCabinets(layer);
+    return layerCabs.reduce((sum, c) => sum + pixelsToCm(c.length) / 100, 0);
   };
 
   const getIslandDepth = (layer: Layer): number => {
     if (layer.type !== "island") return layer.depth ?? 0;
-    const layerCabinets = cabinets.filter((c) => layer.cabinetIds.includes(c.id));
-    if (layerCabinets.length === 0) return 0;
-    return pixelsToCm(layerCabinets[0].depth);
+    const layerCabs = getLayerCabinets(layer);
+    if (layerCabs.length === 0) return 0;
+    return pixelsToCm(layerCabs[0].depth);
   };
 
   return (

@@ -380,11 +380,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   toggleReferenceOverlay: () =>
     set((state) => ({ showReferenceOverlay: !state.showReferenceOverlay })),
 
-  addLayer: (layer) =>
-    set((state) => ({
+  addLayer: (layer) => {
+    const state = get();
+    const drawableCabinetTypes = ["base", "wall_cabinet", "tall"];
+    const newState: Partial<CanvasState> = {
       layers: [...state.layers, layer],
       activeLayerId: layer.id,
-    })),
+    };
+    if (drawableCabinetTypes.includes(layer.type)) {
+      newState.drawingState = {
+        ...state.drawingState,
+        tool: layer.type as DrawingState["tool"],
+        startPoint: null,
+        previewPoint: null,
+        isDrawing: false,
+      };
+    }
+    set(newState);
+  },
 
   removeLayer: (id) =>
     set((state) => {
