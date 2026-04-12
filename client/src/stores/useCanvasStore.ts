@@ -169,15 +169,26 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       previewPoint: null,
       isDrawing: false,
     };
-    if (state.activeLayerId) {
-      const newLayers = state.layers.map((l) =>
-        l.id === state.activeLayerId
-          ? { ...l, cabinetIds: [...l.cabinetIds, cabinetWithLayer.id] }
-          : l
-      );
-      set({ layers: newLayers });
-    }
-    pushDesignState(set, get, newDrawingState);
+    const newLayers = state.activeLayerId
+      ? state.layers.map((l) =>
+          l.id === state.activeLayerId
+            ? { ...l, cabinetIds: [...l.cabinetIds, cabinetWithLayer.id] }
+            : l
+        )
+      : state.layers;
+    set((s) => ({
+      layers: newLayers,
+      drawingState: newDrawingState,
+      history: pushState(s.history, {
+        walls: newDrawingState.walls,
+        cabinets: newDrawingState.cabinets,
+        openings: newDrawingState.openings,
+        elements: s.elements,
+        wallPoints: s.wallPoints,
+        guidelines: s.guidelines,
+        layers: newLayers,
+      }),
+    }));
   },
 
   addOpening: (opening) => {
