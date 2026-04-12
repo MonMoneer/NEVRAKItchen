@@ -282,62 +282,76 @@ function LayerCard({
         ) : (
           <>
             <span className="text-muted-foreground self-center">Depth</span>
-            <Select
-              value={layer.depth?.toString() ?? ""}
-              onValueChange={(v) => onUpdate({ depth: parseInt(v) })}
-            >
-              <SelectTrigger
-                className="h-6 text-xs"
-                onClick={(e) => e.stopPropagation()}
+            {depthOpts.length === 0 ? (
+              <span className="text-right text-[10px] text-muted-foreground italic">
+                {layer.depth ? `${layer.depth} cm` : "Set in Admin"}
+              </span>
+            ) : (
+              <Select
+                value={depthOpts.some((d) => d.value === layer.depth) ? layer.depth?.toString() : undefined}
+                onValueChange={(v) => onUpdate({ depth: parseInt(v) })}
               >
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                {depthOpts.map((d) => (
-                  <SelectItem key={d.id} value={d.value.toString()}>
-                    {d.value} cm
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                <SelectTrigger
+                  className="h-6 text-xs"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <SelectValue placeholder="Select depth" />
+                </SelectTrigger>
+                <SelectContent>
+                  {depthOpts.map((d) => (
+                    <SelectItem key={d.id} value={d.value.toString()}>
+                      {d.value} cm
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </>
         )}
 
         {/* Height */}
         <span className="text-muted-foreground self-center">Height</span>
-        <Select
-          value={layer.height?.toString() ?? ""}
-          onValueChange={(v) => onUpdate({ height: parseInt(v) })}
-        >
-          <SelectTrigger
-            className="h-6 text-xs"
-            onClick={(e) => e.stopPropagation()}
+        {heightOpts.length === 0 ? (
+          <span className="text-right text-[10px] text-muted-foreground italic">
+            {layer.height ? `${layer.height} cm` : "Set in Admin"}
+          </span>
+        ) : (
+          <Select
+            value={heightOpts.some((h) => h.value === layer.height) ? layer.height?.toString() : undefined}
+            onValueChange={(v) => onUpdate({ height: parseInt(v) })}
           >
-            <SelectValue placeholder="Select" />
-          </SelectTrigger>
-          <SelectContent>
-            {heightOpts.map((h) => (
-              <SelectItem key={h.id} value={h.value.toString()}>
-                {h.value} cm
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <SelectTrigger
+              className="h-6 text-xs"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <SelectValue placeholder="Select height" />
+            </SelectTrigger>
+            <SelectContent>
+              {heightOpts.map((h) => (
+                <SelectItem key={h.id} value={h.value.toString()}>
+                  {h.value} cm
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
 
         {/* Finish */}
         <span className="text-muted-foreground self-center">Finish</span>
         {finishingLoading ? (
           <Skeleton className="h-6 w-full" />
+        ) : finishingOptions.length === 0 ? (
+          <span className="text-right text-[10px] text-muted-foreground italic">Set in Admin</span>
         ) : (
           <Select
-            value={layer.finishId}
+            value={finishingOptions.some((f) => f.id.toString() === layer.finishId) ? layer.finishId : undefined}
             onValueChange={(v) => onUpdate({ finishId: v })}
           >
             <SelectTrigger
               className="h-6 text-xs"
               onClick={(e) => e.stopPropagation()}
             >
-              <SelectValue placeholder="Select" />
+              <SelectValue placeholder="Select finish" />
             </SelectTrigger>
             <SelectContent>
               {finishingOptions.map((f) => (
