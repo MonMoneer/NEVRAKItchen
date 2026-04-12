@@ -9,9 +9,12 @@ import {
   type WallPoint, type InsertWallPoint,
   type User, type InsertUser,
   type ProjectAttachment, type InsertProjectAttachment,
+  type PriceMatrix, type InsertPriceMatrix,
+  type DepthOption, type InsertDepthOption,
+  type HeightOption, type InsertHeightOption,
   adminSettings, pricingConfig, finishingOptions, savedProjects,
   spaces, spacePhotos, elementDefinitions, wallPoints, users,
-  projectAttachments,
+  projectAttachments, priceMatrix, depthOptions, heightOptions,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, desc, and, sql } from "drizzle-orm";
@@ -77,6 +80,21 @@ export interface IStorage {
   getAttachments(projectId: number): Promise<ProjectAttachment[]>;
   createAttachment(attachment: InsertProjectAttachment): Promise<ProjectAttachment>;
   deleteAttachment(id: number): Promise<boolean>;
+
+  // Price matrix
+  getPriceMatrix(cabinetType: string): Promise<PriceMatrix[]>;
+  upsertPriceMatrix(entry: InsertPriceMatrix): Promise<PriceMatrix>;
+  deletePriceMatrix(id: number): Promise<boolean>;
+
+  // Depth options
+  getDepthOptions(cabinetType: string): Promise<DepthOption[]>;
+  createDepthOption(option: InsertDepthOption): Promise<DepthOption>;
+  deleteDepthOption(id: number): Promise<boolean>;
+
+  // Height options
+  getHeightOptions(cabinetType: string): Promise<HeightOption[]>;
+  createHeightOption(option: InsertHeightOption): Promise<HeightOption>;
+  deleteHeightOption(id: number): Promise<boolean>;
 }
 
 // ─── Implementation ──────────────────────────────────────────────────────────
@@ -360,6 +378,80 @@ export class DatabaseStorage implements IStorage {
   async deleteAttachment(id: number): Promise<boolean> {
     const [deleted] = await db.delete(projectAttachments).where(eq(projectAttachments.id, id)).returning();
     return !!deleted;
+  }
+
+  // ── Price matrix ──────────────────────────────────────────────────────────
+
+  async getPriceMatrix(cabinetType: string): Promise<PriceMatrix[]> {
+    return db.select().from(priceMatrix).where(eq(priceMatrix.cabinetType, cabinetType));
+  }
+
+  async upsertPriceMatrix(entry: InsertPriceMatrix): Promise<PriceMatrix> {
+    const [existing] = await db
+      .select()
+      .from(priceMatrix)
+      .where(
+        and(
+          eq(priceMatrix.cabinetType, entry.cabinetType),
+          eq(priceMatrix.depth, entry.depth),
+          eq(priceMatrix.height, entry.height),
+        )
+      );
+    if (existing) {
+      const [updated] = await db
+        .update(priceMatrix)
+        .set({ pricePerUnit: entry.pricePerUnit, currency: entry.currency })
+        .where(eq(priceMatrix.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(priceMatrix).values(entry).returning();
+    return created;
+  }
+
+  async deletePriceMatrix(id: number): Promise<boolean> {
+    const result = await db.delete(priceMatrix).where(eq(priceMatrix.id, id)).returning();
+    return result.length > 0;
+  }
+
+  // ── Depth options ─────────────────────────────────────────────────────────
+
+  async getDepthOptions(cabinetType: string): Promise<DepthOption[]> {
+    return db
+      .select()
+      .from(depthOptions)
+      .where(eq(depthOptions.cabinetType, cabinetType))
+      .orderBy(depthOptions.sortOrder);
+  }
+
+  async createDepthOption(option: InsertDepthOption): Promise<DepthOption> {
+    const [created] = await db.insert(depthOptions).values(option).returning();
+    return created;
+  }
+
+  async deleteDepthOption(id: number): Promise<boolean> {
+    const result = await db.delete(depthOptions).where(eq(depthOptions.id, id)).returning();
+    return result.length > 0;
+  }
+
+  // ── Height options ────────────────────────────────────────────────────────
+
+  async getHeightOptions(cabinetType: string): Promise<HeightOption[]> {
+    return db
+      .select()
+      .from(heightOptions)
+      .where(eq(heightOptions.cabinetType, cabinetType))
+      .orderBy(heightOptions.sortOrder);
+  }
+
+  async createHeightOption(option: InsertHeightOption): Promise<HeightOption> {
+    const [created] = await db.insert(heightOptions).values(option).returning();
+    return created;
+  }
+
+  async deleteHeightOption(id: number): Promise<boolean> {
+    const result = await db.delete(heightOptions).where(eq(heightOptions.id, id)).returning();
+    return result.length > 0;
   }
 }
 

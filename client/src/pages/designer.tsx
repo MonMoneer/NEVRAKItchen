@@ -3,7 +3,7 @@ import type Konva from "konva";
 import { useLocation } from "wouter";
 import { Toolbar } from "@/components/kitchen/Toolbar";
 import { DesignerCanvas } from "@/components/kitchen/DesignerCanvas";
-import { PricingPanel } from "@/components/kitchen/PricingPanel";
+import { LayerPanel } from "@/components/kitchen/LayerPanel";
 import { ProjectsDialog } from "@/components/kitchen/ProjectsDialog";
 import {
   type DrawingState,
@@ -285,7 +285,7 @@ export default function Designer() {
   const handleExport = useCallback(async () => {
     try {
       const layoutImage = captureCanvasImage();
-      await exportToPDF(drawingState.walls, drawingState.cabinets, selectedFinishing, currentProjectName || undefined, currentClientName || undefined, currentClientPhone || undefined, drawingState.openings, layoutImage);
+      await exportToPDF(drawingState.walls, drawingState.cabinets, selectedFinishing, currentProjectName || undefined, currentClientName || undefined, currentClientPhone || undefined, drawingState.openings, layoutImage, []);
       toast({ title: "PDF exported successfully" });
     } catch {
       toast({ title: "Export failed", variant: "destructive" });
@@ -444,12 +444,10 @@ export default function Designer() {
         onStageRef={(stage) => { konvaStageRef.current = stage; }}
       />
 
-      <div className="w-[260px] shrink-0">
-        <PricingPanel
+      <div className="w-[280px] shrink-0">
+        <LayerPanel
           cabinets={drawingState.cabinets}
           walls={drawingState.walls}
-          selectedFinishing={selectedFinishing}
-          onFinishingChange={setSelectedFinishing}
         />
       </div>
 

@@ -1,26 +1,32 @@
 import jsPDF from "jspdf";
 import { PDFDocument } from "pdf-lib";
-import type { Wall, Cabinet, Opening } from "./kitchen-engine";
-import { distanceBetween, pixelsToCm, OPENING_STYLES, groupConnectedCabinets } from "./kitchen-engine";
+import type { Wall, Cabinet, Opening, Layer } from "./kitchen-engine";
+import { pixelsToCm, OPENING_STYLES } from "./kitchen-engine";
 import letterheadUrl from "@assets/NIVRA_LETTERHEAD_V1.1_(1)_1772051682721.pdf?url";
 
 const cabinetLabels: Record<string, string> = {
   base: "Base Cabinet",
   wall_cabinet: "Wall Cabinet",
   tall: "Tall Cabinet",
+  island: "Island",
+  divider: "Divider",
+  drawer: "Drawer",
 };
 
 async function fetchSettings() {
-  const [settingsRes, pricingRes, finishingRes] = await Promise.all([
+  const [settingsRes, finishingRes] = await Promise.all([
     fetch("/api/admin/settings"),
-    fetch("/api/pricing"),
     fetch("/api/finishing-options"),
   ]);
   return {
     settings: await settingsRes.json(),
-    pricing: await pricingRes.json(),
     finishing: await finishingRes.json(),
   };
+}
+
+async function fetchPriceMatrix(type: string) {
+  const res = await fetch(`/api/price-matrix?type=${type}`);
+  return res.json();
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -46,14 +52,14 @@ export async function exportToPDF(
   clientPhone?: string,
   openings: Opening[] = [],
   layoutImageDataUrl?: string,
+  layers: Layer[] = [],
 ) {
-  const { pricing, finishing } = await fetchSettings();
+  const { finishing } = await fetchSettings();
 
   const activeFinishing = finishing.find(
     (f: { id: number }) => f.id.toString() === selectedFinishingId
   ) || finishing[0];
-  const multiplier = activeFinishing ? parseFloat(activeFinishing.multiplier) : 1;
-  const currency = pricing[0]?.currency || "AED";
+  const currency = "AED";
   const quoteNo = generateQuoteNumber();
   const dateStr = new Date().toLocaleDateString("en-GB", {
     day: "numeric",
@@ -67,7 +73,6 @@ export async function exportToPDF(
   const contentWidth = pageWidth - margin * 2;
 
   const topSafe = 30;
-  const bottomSafe = 30;
 
   let y = topSafe;
 
@@ -86,7 +91,6 @@ export async function exportToPDF(
     ["Project:", projectName || "Kitchen Layout"],
     ["Quote No:", quoteNo],
     ["Date:", dateStr],
-    ["Finishing:", activeFinishing?.label || "Standard"],
   ];
 
   const rightInfo: [string, string][] = [];
@@ -188,13 +192,13 @@ export async function exportToPDF(
   doc.text("Cost Estimation", margin, y);
   y += 6;
 
-  const colX = [margin, margin + contentWidth * 0.35, margin + contentWidth * 0.55, margin + contentWidth * 0.8];
-  const headers = ["Item Type", "Length (m)", "Unit Price", "Subtotal"];
+  const colX = [margin, margin + contentWidth * 0.25, margin + contentWidth * 0.45, margin + contentWidth * 0.65, margin + contentWidth * 0.82];
+  const headers = ["Layer", "Qty", "Depth×Height", "Finish", "Subtotal"];
 
   doc.setFillColor(242, 242, 247);
   doc.rect(margin, y - 3.5, contentWidth, 6, "F");
 
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(100, 100, 100);
   headers.forEach((h, i) => doc.text(h, colX[i], y));
@@ -204,13 +208,33 @@ export async function exportToPDF(
   doc.setTextColor(50, 50, 50);
 
   let total = 0;
-  const groups = groupConnectedCabinets(cabinets, walls);
 
-  groups.forEach((group, idx) => {
-    const billableLengthM = pixelsToCm(group.effectiveLengthPx) / 100;
-    const priceConfig = pricing.find((p: { unitType: string }) => p.unitType === group.type);
-    const pricePerM = priceConfig ? parseFloat(priceConfig.pricePerMeter) : 0;
-    const subtotal = billableLengthM * pricePerM * multiplier;
+  const uniqueTypes = [...new Set(layers.map((l) => l.type))];
+  const priceMatrices: Record<string, any[]> = {};
+  for (const t of uniqueTypes) {
+    priceMatrices[t] = await fetchPriceMatrix(t);
+  }
+
+  for (let idx = 0; idx < layers.length; idx++) {
+    const layer = layers[idx];
+    const isCountType = layer.type === "divider" || layer.type === "drawer";
+    const isIsland = layer.type === "island";
+
+    const layerCabinets = cabinets.filter((c) => layer.cabinetIds.includes(c.id));
+    const lengthM = layerCabinets.reduce((sum, c) => sum + pixelsToCm(c.length) / 100, 0);
+    const effectiveDepth = isIsland && layerCabinets.length > 0
+      ? pixelsToCm(layerCabinets[0].depth)
+      : (layer.depth ?? 0);
+
+    const matrix = priceMatrices[layer.type] ?? [];
+    const priceEntry = matrix.find((m: any) => m.depth === effectiveDepth && m.height === (layer.height ?? 0));
+    const pricePerUnit = priceEntry ? parseFloat(priceEntry.pricePerUnit) : 0;
+
+    const layerFinish = finishing.find((f: any) => f.id.toString() === layer.finishId);
+    const multiplier = layerFinish ? parseFloat(layerFinish.multiplier) : 1;
+
+    const qty = isCountType ? (layer.count ?? 0) : lengthM;
+    const subtotal = pricePerUnit * qty * multiplier;
     total += subtotal;
 
     if (idx % 2 === 1) {
@@ -219,21 +243,22 @@ export async function exportToPDF(
     }
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
+    doc.setFontSize(7);
     doc.setTextColor(50, 50, 50);
 
-    doc.text(cabinetLabels[group.type] || group.type, colX[0], y);
-    doc.text(`${billableLengthM.toFixed(2)} m`, colX[1], y);
-    doc.text(`${pricePerM.toFixed(0)} ${currency}/m`, colX[2], y);
+    doc.text(cabinetLabels[layer.type] || layer.type, colX[0], y);
+    doc.text(isCountType ? `${layer.count ?? 0} pcs` : `${lengthM.toFixed(2)} m`, colX[1], y);
+    doc.text(`${effectiveDepth}×${layer.height ?? 0} cm`, colX[2], y);
+    doc.text(layerFinish?.label ?? "—", colX[3], y);
 
     doc.setFont("helvetica", "bold");
-    doc.text(`${subtotal.toFixed(0)} ${currency}`, colX[3], y);
+    doc.text(`${subtotal.toFixed(0)} ${currency}`, colX[4], y);
     y += 5.5;
-  });
+  }
 
-  if (groups.length === 0) {
+  if (layers.length === 0) {
     doc.setTextColor(150, 150, 150);
-    doc.text("No cabinets placed", margin, y);
+    doc.text("No layers configured", margin, y);
     y += 5;
   }
 

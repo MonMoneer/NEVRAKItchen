@@ -12,6 +12,9 @@ import {
   insertElementDefinitionSchema,
   insertUserSchema,
   insertProjectAttachmentSchema,
+  insertPriceMatrixSchema,
+  insertDepthOptionSchema,
+  insertHeightOptionSchema,
 } from "@shared/schema";
 import type { User } from "@shared/schema";
 
@@ -380,6 +383,78 @@ export async function registerRoutes(
     const updated = await storage.updateElementDefinition(id, parsed.data);
     if (!updated) return res.status(404).json({ error: "Element definition not found" });
     res.json(updated);
+  });
+
+  // ── Price matrix ──────────────────────────────────────────────────────────
+
+  app.get("/api/price-matrix", async (req, res) => {
+    const type = req.query.type as string;
+    if (!type) return res.status(400).json({ error: "type query param is required" });
+    const entries = await storage.getPriceMatrix(type);
+    res.json(entries);
+  });
+
+  app.put("/api/price-matrix", async (req, res) => {
+    const parsed = insertPriceMatrixSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const entry = await storage.upsertPriceMatrix(parsed.data);
+    res.json(entry);
+  });
+
+  app.delete("/api/price-matrix/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    const deleted = await storage.deletePriceMatrix(id);
+    if (!deleted) return res.status(404).json({ error: "Not found" });
+    res.json({ success: true });
+  });
+
+  // ── Depth options ────────────────────────────────────────────────────────
+
+  app.get("/api/depth-options", async (req, res) => {
+    const type = req.query.type as string;
+    if (!type) return res.status(400).json({ error: "type query param is required" });
+    const options = await storage.getDepthOptions(type);
+    res.json(options);
+  });
+
+  app.post("/api/depth-options", async (req, res) => {
+    const parsed = insertDepthOptionSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const created = await storage.createDepthOption(parsed.data);
+    res.status(201).json(created);
+  });
+
+  app.delete("/api/depth-options/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    const deleted = await storage.deleteDepthOption(id);
+    if (!deleted) return res.status(404).json({ error: "Not found" });
+    res.json({ success: true });
+  });
+
+  // ── Height options ───────────────────────────────────────────────────────
+
+  app.get("/api/height-options", async (req, res) => {
+    const type = req.query.type as string;
+    if (!type) return res.status(400).json({ error: "type query param is required" });
+    const options = await storage.getHeightOptions(type);
+    res.json(options);
+  });
+
+  app.post("/api/height-options", async (req, res) => {
+    const parsed = insertHeightOptionSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const created = await storage.createHeightOption(parsed.data);
+    res.status(201).json(created);
+  });
+
+  app.delete("/api/height-options/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    const deleted = await storage.deleteHeightOption(id);
+    if (!deleted) return res.status(404).json({ error: "Not found" });
+    res.json({ success: true });
   });
 
   // ── Users (admin only) ────────────────────────────────────────────────────

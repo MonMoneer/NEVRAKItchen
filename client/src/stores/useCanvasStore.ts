@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Wall, Cabinet, Opening, DrawingState, Guideline } from "@/lib/kitchen-engine";
+import type { Wall, Cabinet, Opening, DrawingState, Guideline, Layer } from "@/lib/kitchen-engine";
 import { createInitialDrawingState } from "@/lib/kitchen-engine";
 import {
   type HistoryState,
@@ -41,6 +41,7 @@ interface DesignData {
   elements: CanvasElement[];
   wallPoints: WallPointItem[];
   guidelines: Guideline[];
+  layers?: Layer[];
 }
 
 interface CanvasState {
@@ -48,6 +49,8 @@ interface CanvasState {
   elements: CanvasElement[];
   wallPoints: WallPointItem[];
   guidelines: Guideline[];
+  layers: Layer[];
+  activeLayerId: string | null;
   history: HistoryState<DesignData>;
   selectedFinishing: string;
   showReferenceOverlay: boolean;
@@ -80,8 +83,12 @@ interface CanvasState {
   moveComplete: () => void;
   setSelectedFinishing: (id: string) => void;
   toggleReferenceOverlay: () => void;
-  loadFromCanvasData: (data: Partial<DesignData> & { selectedFinishing?: string }) => void;
-  getCanvasData: () => DesignData & { selectedFinishing: string };
+  addLayer: (layer: Layer) => void;
+  removeLayer: (id: string) => void;
+  updateLayer: (id: string, updates: Partial<Layer>) => void;
+  setActiveLayer: (id: string | null) => void;
+  loadFromCanvasData: (data: Partial<DesignData> & { selectedFinishing?: string; layers?: Layer[] }) => void;
+  getCanvasData: () => DesignData & { selectedFinishing: string; layers: Layer[] };
 }
 
 function pushDesignState(
@@ -111,7 +118,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   elements: [],
   wallPoints: [],
   guidelines: [],
-  history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [] }),
+  layers: [],
+  activeLayerId: null,
+  history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [] }),
   selectedFinishing: "1",
   showReferenceOverlay: false,
 
@@ -149,7 +158,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addCabinet: (cabinet) => {
     const state = get();
-    const newCabinets = [...state.drawingState.cabinets, cabinet];
+    const cabinetWithLayer = state.activeLayerId
+      ? { ...cabinet, layerId: state.activeLayerId }
+      : cabinet;
+    const newCabinets = [...state.drawingState.cabinets, cabinetWithLayer];
     const newDrawingState = {
       ...state.drawingState,
       cabinets: newCabinets,
@@ -157,6 +169,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       previewPoint: null,
       isDrawing: false,
     };
+    if (state.activeLayerId) {
+      const newLayers = state.layers.map((l) =>
+        l.id === state.activeLayerId
+          ? { ...l, cabinetIds: [...l.cabinetIds, cabinetWithLayer.id] }
+          : l
+      );
+      set({ layers: newLayers });
+    }
     pushDesignState(set, get, newDrawingState);
   },
 
@@ -309,11 +329,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
 
   clear: () => {
-    const emptyData: DesignData = { walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [] };
+    const emptyData: DesignData = { walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [] };
     set((state) => ({
       elements: [],
       wallPoints: [],
       guidelines: [],
+      layers: [],
+      activeLayerId: null,
       history: pushState(state.history, emptyData),
       drawingState: {
         ...state.drawingState,
@@ -347,6 +369,59 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   toggleReferenceOverlay: () =>
     set((state) => ({ showReferenceOverlay: !state.showReferenceOverlay })),
 
+  addLayer: (layer) =>
+    set((state) => ({
+      layers: [...state.layers, layer],
+      activeLayerId: layer.id,
+    })),
+
+  removeLayer: (id) =>
+    set((state) => {
+      const newLayers = state.layers.filter((l) => l.id !== id);
+      const removedLayer = state.layers.find((l) => l.id === id);
+      const cabinetIdsToRemove = removedLayer?.cabinetIds ?? [];
+      const newCabinets = state.drawingState.cabinets.filter(
+        (c) => !cabinetIdsToRemove.includes(c.id)
+      );
+      const newDrawingState = { ...state.drawingState, cabinets: newCabinets, selectedId: null };
+      return {
+        layers: newLayers,
+        activeLayerId: state.activeLayerId === id ? (newLayers[0]?.id ?? null) : state.activeLayerId,
+        drawingState: newDrawingState,
+        history: pushState(state.history, {
+          walls: newDrawingState.walls,
+          cabinets: newDrawingState.cabinets,
+          openings: newDrawingState.openings,
+          elements: state.elements,
+          wallPoints: state.wallPoints,
+          guidelines: state.guidelines,
+          layers: newLayers,
+        }),
+      };
+    }),
+
+  updateLayer: (id, updates) =>
+    set((state) => ({
+      layers: state.layers.map((l) => (l.id === id ? { ...l, ...updates } : l)),
+    })),
+
+  setActiveLayer: (id) => {
+    const state = get();
+    const layer = state.layers.find((l) => l.id === id);
+    const drawableCabinetTypes = ["base", "wall_cabinet", "tall"];
+    const update: Partial<CanvasState> = { activeLayerId: id };
+    if (layer && drawableCabinetTypes.includes(layer.type)) {
+      update.drawingState = {
+        ...state.drawingState,
+        tool: layer.type as DrawingState["tool"],
+        startPoint: null,
+        previewPoint: null,
+        isDrawing: false,
+      };
+    }
+    set(update);
+  },
+
   loadFromCanvasData: (data) => {
     const walls = data.walls ?? [];
     const cabinets = data.cabinets ?? [];
@@ -354,12 +429,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const elements = data.elements ?? [];
     const wallPoints = data.wallPoints ?? [];
     const guidelines = data.guidelines ?? [];
+    const layers = data.layers ?? [];
     set((state) => ({
       elements,
       wallPoints,
       guidelines,
+      layers,
+      activeLayerId: layers[0]?.id ?? null,
       selectedFinishing: data.selectedFinishing ?? "1",
-      history: createHistory({ walls, cabinets, openings, elements, wallPoints, guidelines }),
+      history: createHistory({ walls, cabinets, openings, elements, wallPoints, guidelines, layers }),
       drawingState: {
         ...state.drawingState,
         walls,
@@ -383,6 +461,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       wallPoints: state.wallPoints,
       guidelines: state.guidelines,
       selectedFinishing: state.selectedFinishing,
+      layers: state.layers,
     };
   },
 }));

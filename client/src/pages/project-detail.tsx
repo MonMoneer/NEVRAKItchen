@@ -15,7 +15,7 @@ import {
 	type CustomTool,
 } from '@/components/kitchen/Toolbar';
 import { DesignerCanvas } from '@/components/kitchen/DesignerCanvas';
-import { PricingPanel } from '@/components/kitchen/PricingPanel';
+import { LayerPanel } from '@/components/kitchen/LayerPanel';
 import { SiteMeasurementPanel } from '@/components/kitchen/SiteMeasurementPanel';
 import {
 	type Wall,
@@ -68,14 +68,8 @@ const SPACE_TYPES = [
 ];
 
 const STAGE_LABELS: Record<ProjectStage, string> = {
-	lead: 'Lead',
-	estimated_budget: 'Estimated Budget',
+	estimated_price: 'Estimated Price',
 	site_measurement: 'Site Measurement',
-	'50_payment': '50% Payment',
-	'3d_design': '3D Design',
-	manufacturing: 'Manufacturing',
-	delivered: 'Delivered',
-	'100_payment': '100% Payment',
 };
 
 // ─── Add space dialog ─────────────────────────────────────────────────────────
@@ -315,10 +309,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 	const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	const activeSpace = spaces.find((s) => s.id === activeSpaceId);
-	const stage = (currentProject?.stage ?? 'estimated_budget') as ProjectStage;
+	const stage = (currentProject?.stage ?? 'estimated_price') as ProjectStage;
 	const isTechnician = user?.role === 'technician';
-	// Pricing only shown during estimated_budget stage (not for technicians)
-	const canEditPricing = !isTechnician && stage === 'estimated_budget';
+	const canEditPricing = !isTechnician && stage !== 'site_measurement';
 
 	// Load element definitions once
 	useEffect(() => {
@@ -643,7 +636,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 
 	const handleExport = useCallback(async () => {
 		try {
-			const { drawingState, selectedFinishing } = canvasStore;
+			const { drawingState, selectedFinishing, layers } = canvasStore;
 			const layoutImage = captureCanvasImage();
 			await exportToPDF(
 				drawingState.walls,
@@ -653,7 +646,8 @@ export default function ProjectDetail({ id }: { id: number }) {
 				currentProject?.clientName,
 				currentProject?.clientPhone,
 				drawingState.openings,
-				layoutImage
+				layoutImage,
+				layers
 			);
 			toast({ title: 'PDF exported successfully' });
 		} catch {
@@ -1057,17 +1051,12 @@ export default function ProjectDetail({ id }: { id: number }) {
 					}}
 				/>
 
-				{/* Pricing panel (hidden for technicians) */}
+				{/* Layer panel (hidden for technicians) */}
 				{canEditPricing && (
-					<div className="w-[260px] shrink-0">
-						<PricingPanel
+					<div className="w-[280px] shrink-0">
+						<LayerPanel
 							cabinets={drawingState.cabinets}
 							walls={drawingState.walls}
-							selectedFinishing={canvasStore.selectedFinishing}
-							onFinishingChange={(v) => {
-								canvasStore.setSelectedFinishing(v);
-								scheduleCanvasSave();
-							}}
 						/>
 					</div>
 				)}

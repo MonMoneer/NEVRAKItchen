@@ -38,8 +38,8 @@ export const savedProjects = pgTable("saved_projects", {
   clientPhone: text("client_phone").notNull().default(""),
   clientEmail: text("client_email").notNull().default(""),
   address: text("address").notNull().default(""),
-  stage: text("stage").notNull().default("lead"),
-  // lead | estimated_budget | site_measurement | 50_payment | 3d_design | manufacturing | delivered | 100_payment
+  stage: text("stage").notNull().default("estimated_price"),
+  // estimated_price | site_measurement
   notes: text("notes").notNull().default(""),
   selectedFinishing: text("selected_finishing").default("1"),
   projectData: jsonb("project_data"), // nullable — legacy field kept for migration
@@ -116,6 +116,35 @@ export const projectAttachments = pgTable("project_attachments", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ─── Price matrix (depth × height → price per unit, per cabinet type) ────────
+
+export const priceMatrix = pgTable("price_matrix", {
+  id: serial("id").primaryKey(),
+  cabinetType: text("cabinet_type").notNull(), // base | wall_cabinet | tall | island | divider | drawer
+  depth: integer("depth").notNull(),           // cm
+  height: integer("height").notNull(),         // cm
+  pricePerUnit: numeric("price_per_unit", { precision: 10, scale: 2 }).notNull(),
+  currency: text("currency").notNull().default("AED"),
+});
+
+// ─── Depth options (admin-configurable dropdown values per cabinet type) ─────
+
+export const depthOptions = pgTable("depth_options", {
+  id: serial("id").primaryKey(),
+  cabinetType: text("cabinet_type").notNull(),
+  value: integer("value").notNull(),           // cm
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+// ─── Height options (admin-configurable dropdown values per cabinet type) ────
+
+export const heightOptions = pgTable("height_options", {
+  id: serial("id").primaryKey(),
+  cabinetType: text("cabinet_type").notNull(),
+  value: integer("value").notNull(),           // cm
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 export const users = pgTable("users", {
@@ -138,6 +167,9 @@ export const insertElementDefinitionSchema = createInsertSchema(elementDefinitio
 export const insertWallPointSchema = createInsertSchema(wallPoints).omit({ id: true, createdAt: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertProjectAttachmentSchema = createInsertSchema(projectAttachments).omit({ id: true, createdAt: true });
+export const insertPriceMatrixSchema = createInsertSchema(priceMatrix).omit({ id: true });
+export const insertDepthOptionSchema = createInsertSchema(depthOptions).omit({ id: true });
+export const insertHeightOptionSchema = createInsertSchema(heightOptions).omit({ id: true });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -170,3 +202,12 @@ export type User = typeof users.$inferSelect;
 
 export type ProjectAttachment = typeof projectAttachments.$inferSelect;
 export type InsertProjectAttachment = typeof projectAttachments.$inferInsert;
+
+export type InsertPriceMatrix = z.infer<typeof insertPriceMatrixSchema>;
+export type PriceMatrix = typeof priceMatrix.$inferSelect;
+
+export type InsertDepthOption = z.infer<typeof insertDepthOptionSchema>;
+export type DepthOption = typeof depthOptions.$inferSelect;
+
+export type InsertHeightOption = z.infer<typeof insertHeightOptionSchema>;
+export type HeightOption = typeof heightOptions.$inferSelect;

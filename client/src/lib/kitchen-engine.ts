@@ -11,6 +11,7 @@ export interface Wall {
 }
 
 export type CabinetType = "base" | "wall_cabinet" | "tall" | "island";
+export type LayerType = CabinetType | "divider" | "drawer";
 export type OpeningType = "door" | "window";
 
 export interface Cabinet {
@@ -22,7 +23,18 @@ export interface Cabinet {
   length: number;
   wallId?: string;
   depthFlipped?: boolean;
-  rotation?: number; // degrees, used for island free-drop rotation
+  rotation?: number;
+  layerId?: string;
+}
+
+export interface Layer {
+  id: string;
+  type: LayerType;
+  depth: number | null;
+  height: number | null;
+  finishId: string;
+  count?: number;
+  cabinetIds: string[];
 }
 
 export interface Guideline {
@@ -72,6 +84,15 @@ export const CABINET_DEPTHS: Record<CabinetType, number> = {
   wall_cabinet: 35,
   tall: 60,
   island: 60,
+};
+
+export const DEFAULT_HEIGHTS: Record<LayerType, number> = {
+  base: 90,
+  wall_cabinet: 60,
+  tall: 210,
+  island: 90,
+  divider: 90,
+  drawer: 90,
 };
 
 export const WALL_THICKNESS = 15;

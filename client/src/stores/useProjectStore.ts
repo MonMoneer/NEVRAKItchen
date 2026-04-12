@@ -1,14 +1,8 @@
 import { create } from "zustand";
 
 export type ProjectStage =
-  | "lead"
-  | "estimated_budget"
-  | "site_measurement"
-  | "50_payment"
-  | "3d_design"
-  | "manufacturing"
-  | "delivered"
-  | "100_payment";
+  | "estimated_price"
+  | "site_measurement";
 
 export interface ProjectSpace {
   id: number;

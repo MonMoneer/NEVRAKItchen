@@ -131,7 +131,7 @@ export function Toolbar({
   onToolChange,
   activeCustomTool = null,
   onCustomToolChange,
-  stage = "estimated_budget",
+  stage = "estimated_price",
   snapEnabled,
   onSnapToggle,
   gridEnabled,
@@ -391,89 +391,12 @@ export function Toolbar({
         </Tooltip>
       </CollapsibleSection>
 
-      {/* ── KITCHEN ELEMENTS (estimated_budget + final only) ── */}
+      {/* ── KITCHEN CABINETS — now managed via Layer panel (right sidebar) ── */}
       {!isMeasurement && (
         <CollapsibleSection id="kitchen" title="Kitchen" isOpen={openSection === "kitchen"} onToggle={handleToggleSection}>
-
-            {/* Base Cabinet */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  data-testid="tool-base"
-                  onClick={() => handleToolChange("base")}
-                  className={`relative flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${
-                    isToolActive("base")
-                      ? "bg-primary text-primary-foreground"
-                      : "text-sidebar-foreground/80 hover:bg-accent"
-                  }`}
-                >
-                  <RectangleHorizontal className="w-4 h-4 shrink-0" />
-                  <span>Base Cabinet</span>
-                  <span className={`ml-auto text-[10px] ${isToolActive("base") ? "text-primary-foreground/70" : "text-muted-foreground"}`}>B</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="text-xs">Base Cabinet (B)</TooltipContent>
-            </Tooltip>
-
-            {/* Wall Cabinet */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  data-testid="tool-wall_cabinet"
-                  onClick={() => handleToolChange("wall_cabinet")}
-                  className={`relative flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${
-                    isToolActive("wall_cabinet")
-                      ? "bg-primary text-primary-foreground"
-                      : "text-sidebar-foreground/80 hover:bg-accent"
-                  }`}
-                >
-                  <Square className="w-4 h-4 shrink-0" />
-                  <span>Wall Cabinet</span>
-                  <span className={`ml-auto text-[10px] ${isToolActive("wall_cabinet") ? "text-primary-foreground/70" : "text-muted-foreground"}`}>U</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="text-xs">Wall Cabinet (U)</TooltipContent>
-            </Tooltip>
-
-            {/* Tall Cabinet */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  data-testid="tool-tall"
-                  onClick={() => handleToolChange("tall")}
-                  className={`relative flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${
-                    isToolActive("tall")
-                      ? "bg-primary text-primary-foreground"
-                      : "text-sidebar-foreground/80 hover:bg-accent"
-                  }`}
-                >
-                  <Columns3 className="w-4 h-4 shrink-0" />
-                  <span>Tall Cabinet</span>
-                  <span className={`ml-auto text-[10px] ${isToolActive("tall") ? "text-primary-foreground/70" : "text-muted-foreground"}`}>T</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="text-xs">Tall Cabinet (T)</TooltipContent>
-            </Tooltip>
-
-            {/* Island Cabinet */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  data-testid="tool-island"
-                  onClick={() => handleCustomTool("island")}
-                  className={`flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors ${
-                    activeCustomTool === "island"
-                      ? "bg-amber-500 text-white"
-                      : "text-sidebar-foreground/80 hover:bg-accent"
-                  }`}
-                >
-                  <LayoutPanelTop className={`w-4 h-4 shrink-0 ${activeCustomTool === "island" ? "text-white" : "text-amber-500"}`} />
-                  <span>Island Cabinet</span>
-                  <span className={`ml-auto text-[10px] ${activeCustomTool === "island" ? "text-white/70" : "text-muted-foreground"}`}>I</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="text-xs">Click anywhere to drop island (I)</TooltipContent>
-            </Tooltip>
+          <div className="px-2.5 py-3 text-[10px] text-muted-foreground leading-relaxed">
+            Use the <strong>Layers panel</strong> (right sidebar) to add cabinet layers and draw on the canvas.
+          </div>
         </CollapsibleSection>
       )}
 
