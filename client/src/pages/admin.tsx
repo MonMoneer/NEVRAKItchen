@@ -125,7 +125,6 @@ export default function Admin() {
           <Tabs defaultValue="pricing">
             <TabsList className="mb-6">
               <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
-              <TabsTrigger value="finishing" data-testid="tab-finishing">Finishing Options</TabsTrigger>
               <TabsTrigger value="elements" data-testid="tab-elements">Elements</TabsTrigger>
               <TabsTrigger value="branding" data-testid="tab-branding">Branding</TabsTrigger>
               <TabsTrigger value="snap" data-testid="tab-snap">Snap Settings</TabsTrigger>
@@ -140,7 +139,13 @@ export default function Admin() {
                   </p>
                 </CardHeader>
                 <CardContent>
-                  <FinishPriceMatrixGrid finishingOptions={finishingOptions ?? []} />
+                  <FinishPriceMatrixGrid
+                    finishingOptions={finishingOptions ?? []}
+                    onAddFinish={(data) => addFinishingMutation.mutate(data)}
+                    onDeleteFinish={(id) => deleteFinishingMutation.mutate(id)}
+                    onRenameFinish={(id, label) => finishingMutation.mutate({ id, label })}
+                    isMutating={addFinishingMutation.isPending || deleteFinishingMutation.isPending || finishingMutation.isPending}
+                  />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -222,7 +227,23 @@ export default function Admin() {
   );
 }
 
-function FinishPriceMatrixGrid({ finishingOptions }: { finishingOptions: FinishingOption[] }) {
+function FinishPriceMatrixGrid({
+  finishingOptions,
+  onAddFinish,
+  onDeleteFinish,
+  onRenameFinish,
+  isMutating,
+}: {
+  finishingOptions: FinishingOption[];
+  onAddFinish: (data: { label: string; multiplier: string; sortOrder: number }) => void;
+  onDeleteFinish: (id: number) => void;
+  onRenameFinish: (id: number, label: string) => void;
+  isMutating: boolean;
+}) {
+  const [newFinishName, setNewFinishName] = useState("");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingLabel, setEditingLabel] = useState("");
+
   const { data: matrix = [], isLoading } = useQuery<FinishPriceMatrix[]>({
     queryKey: ["/api/finish-price-matrix"],
   });
@@ -242,67 +263,131 @@ function FinishPriceMatrixGrid({ finishingOptions }: { finishingOptions: Finishi
 
   if (isLoading) return <Skeleton className="h-40 w-full" />;
 
-  if (finishingOptions.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        No finishing options yet. Add them in the Finishing Options tab first.
-      </p>
-    );
-  }
-
   return (
-    <div className="overflow-x-auto">
-      <table className="border-collapse text-sm">
-        <thead>
-          <tr>
-            <th className="border border-border px-3 py-2 bg-orange-100 text-left font-medium whitespace-nowrap">
-              Cabinet Type
-            </th>
-            {finishingOptions.map((f) => (
-              <th
-                key={f.id}
-                className="border border-border px-3 py-2 bg-yellow-100 text-center font-medium min-w-[110px] whitespace-nowrap"
-              >
-                {f.label}
+    <div className="space-y-4">
+      <div className="overflow-x-auto">
+        <table className="border-collapse text-sm">
+          <thead>
+            <tr>
+              <th className="border border-border px-3 py-2 bg-orange-100 text-left font-medium whitespace-nowrap">
+                Cabinet Type
               </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {FINISH_CABINET_TYPES.map(({ key, label }) => (
-            <tr key={key}>
-              <td className="border border-border px-3 py-2 bg-orange-50 font-medium whitespace-nowrap">
-                {label}
-              </td>
-              {finishingOptions.map((f) => {
-                const currentVal = getPrice(key, f.id);
-                return (
-                  <td key={f.id} className="border border-border px-1 py-1 bg-blue-50">
-                    <Input
-                      type="number"
-                      defaultValue={currentVal}
-                      className="w-full h-8 text-xs text-center"
-                      placeholder="AED/m"
-                      min="0"
-                      step="0.01"
-                      onBlur={(e) => {
-                        const val = e.target.value;
-                        if (val !== "" && val !== currentVal) {
-                          upsertMutation.mutate({
-                            cabinetType: key,
-                            finishingOptionId: f.id,
-                            pricePerMeter: val,
-                          });
-                        }
-                      }}
-                    />
-                  </td>
-                );
-              })}
+              {finishingOptions.map((f) => (
+                <th
+                  key={f.id}
+                  className="border border-border px-2 py-1 bg-yellow-100 text-center font-medium min-w-[120px]"
+                >
+                  {editingId === f.id ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        autoFocus
+                        value={editingLabel}
+                        onChange={(e) => setEditingLabel(e.target.value)}
+                        className="h-7 text-xs w-20"
+                        onBlur={() => {
+                          if (editingLabel.trim()) onRenameFinish(f.id, editingLabel.trim());
+                          setEditingId(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            if (editingLabel.trim()) onRenameFinish(f.id, editingLabel.trim());
+                            setEditingId(null);
+                          }
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center gap-1">
+                      <span
+                        className="cursor-pointer hover:underline"
+                        title="Click to rename"
+                        onClick={() => { setEditingId(f.id); setEditingLabel(f.label); }}
+                      >
+                        {f.label}
+                      </span>
+                      <button
+                        onClick={() => onDeleteFinish(f.id)}
+                        className="text-red-400 hover:text-red-600 text-xs ml-1"
+                        title="Remove finish"
+                        disabled={isMutating}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </th>
+              ))}
+              {/* Add new finish column */}
+              <th className="border border-border px-2 py-1 bg-yellow-50 min-w-[150px]">
+                <div className="flex items-center gap-1">
+                  <Input
+                    value={newFinishName}
+                    onChange={(e) => setNewFinishName(e.target.value)}
+                    className="h-7 text-xs w-24"
+                    placeholder="New finish"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newFinishName.trim()) {
+                        onAddFinish({ label: newFinishName.trim(), multiplier: "1.0", sortOrder: finishingOptions.length });
+                        setNewFinishName("");
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    disabled={!newFinishName.trim() || isMutating}
+                    onClick={() => {
+                      onAddFinish({ label: newFinishName.trim(), multiplier: "1.0", sortOrder: finishingOptions.length });
+                      setNewFinishName("");
+                    }}
+                  >
+                    <Plus className="w-3 h-3" />
+                  </Button>
+                </div>
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {FINISH_CABINET_TYPES.map(({ key, label }) => (
+              <tr key={key}>
+                <td className="border border-border px-3 py-2 bg-orange-50 font-medium whitespace-nowrap">
+                  {label}
+                </td>
+                {finishingOptions.map((f) => {
+                  const currentVal = getPrice(key, f.id);
+                  return (
+                    <td key={f.id} className="border border-border px-1 py-1 bg-blue-50">
+                      <Input
+                        type="number"
+                        defaultValue={currentVal}
+                        className="w-full h-8 text-xs text-center"
+                        placeholder="AED/m"
+                        min="0"
+                        step="0.01"
+                        onBlur={(e) => {
+                          const val = e.target.value;
+                          if (val !== "" && val !== currentVal) {
+                            upsertMutation.mutate({
+                              cabinetType: key,
+                              finishingOptionId: f.id,
+                              pricePerMeter: val,
+                            });
+                          }
+                        }}
+                      />
+                    </td>
+                  );
+                })}
+                <td className="border border-border bg-gray-50" />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Click a finish name to rename it. Use × to remove. Add new finishes with the input above.
+      </p>
     </div>
   );
 }
