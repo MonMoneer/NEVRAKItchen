@@ -9,7 +9,7 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:pre-push": "tsx script/pre-db-push.ts",
-    "db:push": "npm run db:pre-push && drizzle-kit push --force",
+    "db:push": "tsx script/pre-db-push.ts",
     "db:seed": "tsx --env-file=.env server/seed.ts"
   },
   "dependencies": {

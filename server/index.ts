@@ -56,6 +56,46 @@ async function runMigrations() {
     await pool.query(`DROP TABLE IF EXISTS height_options CASCADE`);
     await pool.query(`DROP TABLE IF EXISTS pricing_config CASCADE`);
     await pool.query(`DROP TABLE IF EXISTS finishing_options CASCADE`);
+
+    // Create new Dream Home pricing tables (raw SQL, idempotent)
+    // Done here instead of drizzle-kit push because drizzle-kit is
+    // interactive and hangs in Railway's non-TTY shell.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dream_home_finishes (
+        id serial PRIMARY KEY,
+        name text NOT NULL,
+        system text NOT NULL DEFAULT '',
+        sort_order integer NOT NULL DEFAULT 0
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dream_home_prices (
+        id serial PRIMARY KEY,
+        cabinet_type text NOT NULL,
+        finish_id integer NOT NULL REFERENCES dream_home_finishes(id) ON DELETE CASCADE,
+        price_cny_per_m numeric(10,2) NOT NULL DEFAULT '0'
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tall_heights (
+        id serial PRIMARY KEY,
+        source text NOT NULL,
+        height_mm integer NOT NULL,
+        finish_id integer NOT NULL REFERENCES dream_home_finishes(id) ON DELETE CASCADE,
+        price_cny_per_m numeric(10,2) NOT NULL DEFAULT '0'
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS pricing_settings (
+        id serial PRIMARY KEY,
+        fx_rate numeric(10,4) NOT NULL DEFAULT '0.51',
+        packing_mult numeric(4,2) NOT NULL DEFAULT '1.10',
+        shipping_mult numeric(4,2) NOT NULL DEFAULT '1.10',
+        margin_div numeric(4,2) NOT NULL DEFAULT '0.50',
+        decorative_cny_per_m2 numeric(10,2) NOT NULL DEFAULT '880',
+        drawer_flat_aed numeric(10,2) NOT NULL DEFAULT '500'
+      )
+    `);
     console.log("[migration] schema migrations OK");
   } catch (err: any) {
     console.error("[migration] failed:", err.message, err.stack);
