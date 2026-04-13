@@ -11,7 +11,7 @@ export interface Wall {
 }
 
 export type CabinetType = "base" | "wall_cabinet" | "tall" | "island";
-export type LayerType = CabinetType | "divider" | "drawer";
+export type LayerType = CabinetType | "end_panel" | "filler" | "drawer";
 export type OpeningType = "door" | "window";
 
 export interface Cabinet {
@@ -32,8 +32,11 @@ export interface Layer {
   type: LayerType;
   depth: number | null;
   height: number | null;
-  finishId: string;
-  count?: number;
+  finishId: number | null;
+  endPanelVariant?: "base" | "wall" | "decorative";
+  endPanelWallArea?: number;
+  endPanelDecorHeight?: number;
+  qty?: number;
   cabinetIds: string[];
 }
 
@@ -91,9 +94,28 @@ export const DEFAULT_HEIGHTS: Record<LayerType, number> = {
   wall_cabinet: 60,
   tall: 210,
   island: 90,
-  divider: 90,
+  end_panel: 90,
+  filler: 90,
   drawer: 90,
 };
+
+export function normalizeLayer(raw: any): Layer {
+  const out = { ...raw };
+  // Legacy: divider → end_panel (with base variant default)
+  if (out.type === "divider") {
+    out.type = "end_panel";
+    out.endPanelVariant = out.endPanelVariant ?? "base";
+    out.qty = out.qty ?? out.count ?? 1;
+  }
+  // Legacy: finishId stringified → number
+  if (typeof out.finishId === "string") {
+    const n = parseInt(out.finishId, 10);
+    out.finishId = Number.isFinite(n) ? n : null;
+  }
+  // Ensure cabinetIds exists
+  if (!Array.isArray(out.cabinetIds)) out.cabinetIds = [];
+  return out as Layer;
+}
 
 export const WALL_THICKNESS = 15;
 export const SNAP_RADIUS = 12;

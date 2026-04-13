@@ -1,35 +1,29 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Plus, Trash2, Layers } from "lucide-react";
 import { useCanvasStore } from "@/stores/useCanvasStore";
-import type { FinishingOption, PriceMatrix, DepthOption, HeightOption } from "@shared/schema";
+import type {
+  DreamHomeFinish,
+  DreamHomePrice,
+  TallHeight,
+  PricingSettings,
+} from "@shared/schema";
 import type { Layer, LayerType, Cabinet, Wall } from "@/lib/kitchen-engine";
 import { pixelsToCm, computeEffectiveLengths } from "@/lib/kitchen-engine";
+import { calculateLayerPrice, type PricingLayer } from "@/lib/dream-home-pricing";
 
 const LAYER_LABELS: Record<LayerType, string> = {
   base: "Base Cabinet",
   wall_cabinet: "Wall Cabinet",
   tall: "Tall Cabinet",
   island: "Island",
-  divider: "Divider",
+  end_panel: "End Panel",
+  filler: "Filler",
   drawer: "Drawer",
 };
 
@@ -38,12 +32,14 @@ const LAYER_COLORS: Record<LayerType, string> = {
   wall_cabinet: "#22C55E",
   tall: "#A855F7",
   island: "#F59E0B",
-  divider: "#6B7280",
-  drawer: "#6B7280",
+  end_panel: "#6B7280",
+  filler: "#9CA3AF",
+  drawer: "#64748B",
 };
 
 const DRAWABLE_TYPES: LayerType[] = ["base", "wall_cabinet", "tall", "island"];
-const ALL_TYPES: LayerType[] = ["base", "wall_cabinet", "tall", "island", "divider", "drawer"];
+const COUNT_TYPES: LayerType[] = ["end_panel", "filler", "drawer"];
+const ALL_TYPES: LayerType[] = ["base", "wall_cabinet", "tall", "island", "end_panel", "filler", "drawer"];
 
 function generateId() {
   return `layer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -55,72 +51,53 @@ interface LayerPanelProps {
 }
 
 export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
-  const {
-    layers,
-    activeLayerId,
-    addLayer,
-    removeLayer,
-    updateLayer,
-    setActiveLayer,
-  } = useCanvasStore();
+  const { layers, activeLayerId, addLayer, removeLayer, updateLayer, setActiveLayer } = useCanvasStore();
 
-  const { data: finishingOptions, isLoading: finishingLoading } = useQuery<FinishingOption[]>({
-    queryKey: ["/api/finishing-options"],
-  });
+  const { data: finishes = [] } = useQuery<DreamHomeFinish[]>({ queryKey: ["/api/dream-home/finishes"] });
+  const { data: prices = [] } = useQuery<DreamHomePrice[]>({ queryKey: ["/api/dream-home/prices"] });
+  const { data: tallRows = [] } = useQuery<TallHeight[]>({ queryKey: ["/api/dream-home/tall-heights"] });
+  const { data: settings } = useQuery<PricingSettings>({ queryKey: ["/api/pricing-settings"] });
 
   const handleAddLayer = (type: LayerType) => {
-    const defaultFinish = finishingOptions?.[0]?.id?.toString() ?? "1";
+    const defaultFinish = finishes[0]?.id ?? null;
     const newLayer: Layer = {
       id: generateId(),
       type,
-      depth: type === "island" ? null : 60,
-      height: 90,
-      finishId: defaultFinish,
-      count: type === "divider" || type === "drawer" ? 1 : undefined,
+      depth: COUNT_TYPES.includes(type) ? null : type === "wall_cabinet" ? 35 : 60,
+      height: COUNT_TYPES.includes(type) ? null : type === "tall" ? 210 : type === "wall_cabinet" ? 70 : 90,
+      finishId: DRAWABLE_TYPES.includes(type) ? defaultFinish : null,
       cabinetIds: [],
     };
+    if (type === "end_panel") {
+      newLayer.endPanelVariant = "base";
+      newLayer.qty = 1;
+    }
+    if (type === "filler" || type === "drawer") {
+      newLayer.qty = 1;
+    }
     addLayer(newLayer);
   };
 
-  const getLayerCabinets = (layer: Layer): Cabinet[] => {
-    return cabinets.filter(
-      (c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id)
-    );
-  };
+  const getLayerCabinets = (layer: Layer): Cabinet[] =>
+    cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
 
   const getLayerLength = (layer: Layer): number => {
-    if (layer.type === "divider" || layer.type === "drawer") return 0;
-    const layerCabs = getLayerCabinets(layer);
-    if (layerCabs.length === 0) return 0;
-    const depthCm = layer.depth ?? undefined;
-    const effectiveLengths = computeEffectiveLengths(layerCabs, walls, depthCm);
-    return layerCabs.reduce((sum, c) => {
-      const effPx = effectiveLengths.get(c.id) ?? 0;
-      return sum + pixelsToCm(effPx) / 100;
-    }, 0);
-  };
-
-  const getIslandDepth = (layer: Layer): number => {
-    if (layer.type !== "island") return layer.depth ?? 0;
-    const layerCabs = getLayerCabinets(layer);
-    if (layerCabs.length === 0) return 0;
-    return pixelsToCm(layerCabs[0].depth);
+    if (!DRAWABLE_TYPES.includes(layer.type)) return 0;
+    const cabs = getLayerCabinets(layer);
+    if (cabs.length === 0) return 0;
+    const effectiveLengths = computeEffectiveLengths(cabs, walls, layer.depth ?? undefined);
+    return cabs.reduce((sum, c) => sum + pixelsToCm(effectiveLengths.get(c.id) ?? 0) / 100, 0);
   };
 
   return (
-    <div
-      className="flex flex-col h-full bg-sidebar border-l border-sidebar-border"
-      data-testid="layer-panel"
-    >
+    <div className="flex flex-col h-full bg-sidebar border-l border-sidebar-border" data-testid="layer-panel">
       <div className="p-3 border-b border-sidebar-border flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-sidebar-foreground flex items-center gap-1.5">
             <Layers className="w-4 h-4" />
             Layers
           </h3>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
-            Click a layer to draw on it
-          </p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Click a layer to draw on it</p>
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -132,10 +109,7 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
           <DropdownMenuContent align="end">
             {ALL_TYPES.map((type) => (
               <DropdownMenuItem key={type} onClick={() => handleAddLayer(type)}>
-                <div
-                  className="w-2.5 h-2.5 rounded-sm mr-2 shrink-0"
-                  style={{ backgroundColor: LAYER_COLORS[type] }}
-                />
+                <div className="w-2.5 h-2.5 rounded-sm mr-2 shrink-0" style={{ backgroundColor: LAYER_COLORS[type] }} />
                 {LAYER_LABELS[type]}
               </DropdownMenuItem>
             ))}
@@ -148,7 +122,7 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
           <div className="text-center py-8">
             <p className="text-xs text-muted-foreground">No layers yet</p>
             <p className="text-[10px] text-muted-foreground mt-1">
-              Click "New Layer" to add one and start drawing
+              Click "New Layer" to add one
             </p>
           </div>
         ) : (
@@ -159,9 +133,10 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
               index={idx}
               isActive={layer.id === activeLayerId}
               lengthM={getLayerLength(layer)}
-              islandDepthCm={layer.type === "island" ? getIslandDepth(layer) : 0}
-              finishingOptions={finishingOptions ?? []}
-              finishingLoading={finishingLoading}
+              finishes={finishes}
+              prices={prices}
+              tallRows={tallRows}
+              settings={settings}
               onSelect={() => setActiveLayer(layer.id)}
               onUpdate={(updates) => updateLayer(layer.id, updates)}
               onDelete={() => removeLayer(layer.id)}
@@ -170,9 +145,30 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
         )}
       </div>
 
-      <LayerTotalFooter layers={layers} cabinets={cabinets} finishingOptions={finishingOptions} />
+      <TotalFooter
+        layers={layers}
+        cabinets={cabinets}
+        walls={walls}
+        prices={prices}
+        tallRows={tallRows}
+        settings={settings}
+      />
     </div>
   );
+}
+
+interface LayerCardProps {
+  layer: Layer;
+  index: number;
+  isActive: boolean;
+  lengthM: number;
+  finishes: DreamHomeFinish[];
+  prices: DreamHomePrice[];
+  tallRows: TallHeight[];
+  settings?: PricingSettings;
+  onSelect: () => void;
+  onUpdate: (u: Partial<Layer>) => void;
+  onDelete: () => void;
 }
 
 function LayerCard({
@@ -180,56 +176,26 @@ function LayerCard({
   index,
   isActive,
   lengthM,
-  islandDepthCm,
-  finishingOptions,
-  finishingLoading,
+  finishes,
+  prices,
+  tallRows,
+  settings,
   onSelect,
   onUpdate,
   onDelete,
-}: {
-  layer: Layer;
-  index: number;
-  isActive: boolean;
-  lengthM: number;
-  islandDepthCm: number;
-  finishingOptions: FinishingOption[];
-  finishingLoading: boolean;
-  onSelect: () => void;
-  onUpdate: (updates: Partial<Layer>) => void;
-  onDelete: () => void;
-}) {
-  const isDrawable = DRAWABLE_TYPES.includes(layer.type as any);
-  const isIsland = layer.type === "island";
-  const isCountType = layer.type === "divider" || layer.type === "drawer";
+}: LayerCardProps) {
+  const isDrawable = DRAWABLE_TYPES.includes(layer.type);
+  const isCount = COUNT_TYPES.includes(layer.type);
 
-  const { data: depthOpts = [] } = useQuery<DepthOption[]>({
-    queryKey: ["/api/depth-options", layer.type],
-    queryFn: () => fetch(`/api/depth-options?type=${layer.type}`).then((r) => r.json()),
-  });
-  const { data: heightOpts = [] } = useQuery<HeightOption[]>({
-    queryKey: ["/api/height-options", layer.type],
-    queryFn: () => fetch(`/api/height-options?type=${layer.type}`).then((r) => r.json()),
-  });
-  const { data: priceMatrix = [] } = useQuery<PriceMatrix[]>({
-    queryKey: ["/api/price-matrix", layer.type],
-    queryFn: () => fetch(`/api/price-matrix?type=${layer.type}`).then((r) => r.json()),
-  });
-
-  const effectiveDepth = isIsland ? islandDepthCm : (layer.depth ?? 0);
-  const priceEntry = priceMatrix.find(
-    (m) => m.depth === effectiveDepth && m.height === (layer.height ?? 0)
-  );
-  const pricePerUnit = priceEntry ? parseFloat(priceEntry.pricePerUnit) : 0;
-
-  const finish = finishingOptions.find((f) => f.id.toString() === layer.finishId);
-  const multiplier = finish ? parseFloat(finish.multiplier) : 1;
-
-  let subtotal = 0;
-  if (isCountType) {
-    subtotal = pricePerUnit * (layer.count ?? 0) * multiplier;
-  } else {
-    subtotal = pricePerUnit * lengthM * multiplier;
-  }
+  const result = settings
+    ? calculateLayerPrice({
+        layer: layer as unknown as PricingLayer,
+        lengthM,
+        settings,
+        dreamHomePrices: prices,
+        tallHeights: tallRows,
+      })
+    : { subtotalAED: 0, breakdown: "Loading...", error: undefined as string | undefined };
 
   return (
     <div
@@ -243,14 +209,10 @@ function LayerCard({
       <div className="flex items-center gap-1.5 mb-2">
         <div
           className="w-2.5 h-2.5 rounded-sm shrink-0"
-          style={{ backgroundColor: LAYER_COLORS[layer.type as LayerType] }}
+          style={{ backgroundColor: LAYER_COLORS[layer.type] }}
         />
-        <span className="text-xs font-medium text-card-foreground">
-          {LAYER_LABELS[layer.type as LayerType]}
-        </span>
-        <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0">
-          #{index + 1}
-        </Badge>
+        <span className="text-xs font-medium text-card-foreground">{LAYER_LABELS[layer.type]}</span>
+        <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0">#{index + 1}</Badge>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           className="text-muted-foreground hover:text-red-500 ml-1"
@@ -261,118 +223,118 @@ function LayerCard({
       </div>
 
       <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10px]">
-        {/* Length or Count */}
-        {isCountType ? (
-          <>
-            <span className="text-muted-foreground self-center">Count</span>
-            <Input
-              type="number"
-              value={layer.count ?? 1}
-              onChange={(e) => onUpdate({ count: parseInt(e.target.value) || 0 })}
-              className="h-6 text-xs text-right"
-              min={0}
-              onClick={(e) => e.stopPropagation()}
-            />
-          </>
-        ) : (
+        {isDrawable && (
           <>
             <span className="text-muted-foreground">Length</span>
-            <span className="text-right font-mono text-card-foreground">
-              {lengthM.toFixed(2)} m
-            </span>
+            <span className="text-right font-mono text-card-foreground">{lengthM.toFixed(2)} m</span>
+
+            <span className="text-muted-foreground self-center">Depth (cm)</span>
+            <Input
+              type="number"
+              value={layer.depth ?? ""}
+              className="h-6 text-xs text-right"
+              onChange={(e) => onUpdate({ depth: e.target.value === "" ? null : parseInt(e.target.value) })}
+              onClick={(e) => e.stopPropagation()}
+            />
+
+            <span className="text-muted-foreground self-center">Height (cm)</span>
+            <Input
+              type="number"
+              value={layer.height ?? ""}
+              className="h-6 text-xs text-right"
+              onChange={(e) => onUpdate({ height: e.target.value === "" ? null : parseInt(e.target.value) })}
+              onClick={(e) => e.stopPropagation()}
+            />
+
+            <span className="text-muted-foreground self-center">Finish</span>
+            <Select
+              value={layer.finishId != null ? String(layer.finishId) : ""}
+              onValueChange={(v) => onUpdate({ finishId: parseInt(v) })}
+            >
+              <SelectTrigger className="h-6 text-xs" onClick={(e) => e.stopPropagation()}>
+                <SelectValue placeholder="Select finish" />
+              </SelectTrigger>
+              <SelectContent>
+                {finishes.map((f) => (
+                  <SelectItem key={f.id} value={String(f.id)}>
+                    {f.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </>
         )}
 
-        {/* Depth */}
-        {isIsland ? (
+        {layer.type === "end_panel" && (
           <>
-            <span className="text-muted-foreground">Depth</span>
-            <span className="text-right font-mono text-card-foreground text-[10px]">
-              {islandDepthCm > 0 ? `${islandDepthCm.toFixed(0)} cm` : "from drawing"}
-            </span>
-          </>
-        ) : (
-          <>
-            <span className="text-muted-foreground self-center">Depth</span>
-            {depthOpts.length === 0 ? (
-              <span className="text-right text-[10px] text-muted-foreground italic">
-                {layer.depth ? `${layer.depth} cm` : "Set in Admin"}
-              </span>
-            ) : (
-              <Select
-                value={depthOpts.some((d) => d.value === layer.depth) ? layer.depth?.toString() : undefined}
-                onValueChange={(v) => onUpdate({ depth: parseInt(v) })}
-              >
-                <SelectTrigger
-                  className="h-6 text-xs"
-                  onClick={(e) => e.stopPropagation()}
+            <span className="text-muted-foreground self-center">Variant</span>
+            <Select
+              value={layer.endPanelVariant ?? "base"}
+              onValueChange={(v) =>
+                onUpdate({ endPanelVariant: v as "base" | "wall" | "decorative" })
+              }
+            >
+              <SelectTrigger className="h-6 text-xs" onClick={(e) => e.stopPropagation()}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="base">Base Cabinet (0.5 m²)</SelectItem>
+                <SelectItem value="wall">Wall Cabinet</SelectItem>
+                <SelectItem value="decorative">Decorative (60 cm × H)</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {layer.endPanelVariant === "wall" && (
+              <>
+                <span className="text-muted-foreground self-center">Area</span>
+                <Select
+                  value={String(layer.endPanelWallArea ?? 0.2)}
+                  onValueChange={(v) => onUpdate({ endPanelWallArea: parseFloat(v) })}
                 >
-                  <SelectValue placeholder="Select depth" />
-                </SelectTrigger>
-                <SelectContent>
-                  {depthOpts.map((d) => (
-                    <SelectItem key={d.id} value={d.value.toString()}>
-                      {d.value} cm
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  <SelectTrigger className="h-6 text-xs" onClick={(e) => e.stopPropagation()}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0.2">0.2 m²</SelectItem>
+                    <SelectItem value="0.3">0.3 m²</SelectItem>
+                    <SelectItem value="0.4">0.4 m²</SelectItem>
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+
+            {layer.endPanelVariant === "decorative" && (
+              <>
+                <span className="text-muted-foreground self-center">Height (cm)</span>
+                <Input
+                  type="number"
+                  value={layer.endPanelDecorHeight ?? ""}
+                  placeholder="260"
+                  className="h-6 text-xs text-right"
+                  onChange={(e) =>
+                    onUpdate({
+                      endPanelDecorHeight: e.target.value === "" ? undefined : parseInt(e.target.value),
+                    })
+                  }
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </>
             )}
           </>
         )}
 
-        {/* Height */}
-        <span className="text-muted-foreground self-center">Height</span>
-        {heightOpts.length === 0 ? (
-          <span className="text-right text-[10px] text-muted-foreground italic">
-            {layer.height ? `${layer.height} cm` : "Set in Admin"}
-          </span>
-        ) : (
-          <Select
-            value={heightOpts.some((h) => h.value === layer.height) ? layer.height?.toString() : undefined}
-            onValueChange={(v) => onUpdate({ height: parseInt(v) })}
-          >
-            <SelectTrigger
-              className="h-6 text-xs"
+        {isCount && (
+          <>
+            <span className="text-muted-foreground self-center">Qty</span>
+            <Input
+              type="number"
+              value={layer.qty ?? 1}
+              min={0}
+              className="h-6 text-xs text-right"
+              onChange={(e) => onUpdate({ qty: parseInt(e.target.value) || 0 })}
               onClick={(e) => e.stopPropagation()}
-            >
-              <SelectValue placeholder="Select height" />
-            </SelectTrigger>
-            <SelectContent>
-              {heightOpts.map((h) => (
-                <SelectItem key={h.id} value={h.value.toString()}>
-                  {h.value} cm
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-
-        {/* Finish */}
-        <span className="text-muted-foreground self-center">Finish</span>
-        {finishingLoading ? (
-          <Skeleton className="h-6 w-full" />
-        ) : finishingOptions.length === 0 ? (
-          <span className="text-right text-[10px] text-muted-foreground italic">Set in Admin</span>
-        ) : (
-          <Select
-            value={finishingOptions.some((f) => f.id.toString() === layer.finishId) ? layer.finishId : undefined}
-            onValueChange={(v) => onUpdate({ finishId: v })}
-          >
-            <SelectTrigger
-              className="h-6 text-xs"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <SelectValue placeholder="Select finish" />
-            </SelectTrigger>
-            <SelectContent>
-              {finishingOptions.map((f) => (
-                <SelectItem key={f.id} value={f.id.toString()}>
-                  {f.label} (x{f.multiplier})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            />
+          </>
         )}
       </div>
 
@@ -381,36 +343,58 @@ function LayerCard({
       <div className="flex justify-between text-xs">
         <span className="font-medium text-card-foreground">Subtotal</span>
         <span className="font-semibold font-mono text-primary">
-          {subtotal > 0 ? `${subtotal.toFixed(0)} AED` : "—"}
+          {result.error ? "—" : `${result.subtotalAED.toFixed(0)} AED`}
         </span>
       </div>
-      {pricePerUnit > 0 && (
-        <p className="text-[9px] text-muted-foreground mt-0.5">
-          {pricePerUnit.toFixed(0)} AED/{isCountType ? "pc" : "m"} × {isCountType ? (layer.count ?? 0) : `${lengthM.toFixed(2)}m`} × {multiplier.toFixed(2)}
+      {result.error ? (
+        <p className="text-[9px] text-red-500 mt-0.5">{result.error}</p>
+      ) : (
+        <p
+          className="text-[9px] text-muted-foreground mt-0.5 break-words"
+          title={result.breakdown}
+        >
+          {result.breakdown}
         </p>
       )}
     </div>
   );
 }
 
-function LayerTotalFooter({
-  layers,
-  cabinets,
-  finishingOptions,
-}: {
+interface TotalFooterProps {
   layers: Layer[];
   cabinets: Cabinet[];
-  finishingOptions?: FinishingOption[];
-}) {
-  const total = layers.reduce((sum, layer) => {
-    const finish = finishingOptions?.find((f) => f.id.toString() === layer.finishId);
-    const multiplier = finish ? parseFloat(finish.multiplier) : 1;
+  walls: Wall[];
+  prices: DreamHomePrice[];
+  tallRows: TallHeight[];
+  settings?: PricingSettings;
+}
 
-    // We can't compute here without price matrix, so we'll just display 0 if needed
-    // The actual calculation happens in each LayerCard — this is a display-only summary
-    // For a proper total, we'd need to also query price matrices here.
-    // For now, return sum (the total is computed by summing LayerCard subtotals via DOM or a shared computation)
-    return sum;
+function TotalFooter({ layers, cabinets, walls, prices, tallRows, settings }: TotalFooterProps) {
+  if (!settings) {
+    return (
+      <div className="p-3 border-t border-sidebar-border bg-sidebar">
+        <p className="text-[10px] text-muted-foreground">Loading pricing…</p>
+      </div>
+    );
+  }
+
+  const getLength = (layer: Layer): number => {
+    if (!DRAWABLE_TYPES.includes(layer.type)) return 0;
+    const cabs = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
+    if (cabs.length === 0) return 0;
+    const eff = computeEffectiveLengths(cabs, walls, layer.depth ?? undefined);
+    return cabs.reduce((sum, c) => sum + pixelsToCm(eff.get(c.id) ?? 0) / 100, 0);
+  };
+
+  const total = layers.reduce((sum, layer) => {
+    const result = calculateLayerPrice({
+      layer: layer as unknown as PricingLayer,
+      lengthM: getLength(layer),
+      settings,
+      dreamHomePrices: prices,
+      tallHeights: tallRows,
+    });
+    return sum + (result.error ? 0 : result.subtotalAED);
   }, 0);
 
   return (
@@ -419,10 +403,10 @@ function LayerTotalFooter({
         <span className="text-xs font-medium text-sidebar-foreground">
           Layers: {layers.length}
         </span>
+        <span className="text-lg font-bold font-mono text-primary" data-testid="text-total-price">
+          {total.toFixed(0)} AED
+        </span>
       </div>
-      <p className="text-[10px] text-muted-foreground mt-0.5">
-        Total shown in each layer card
-      </p>
     </div>
   );
 }

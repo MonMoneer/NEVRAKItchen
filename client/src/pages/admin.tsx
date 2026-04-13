@@ -14,18 +14,15 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Save, Trash2, Plus } from "lucide-react";
-import type { AdminSettings, PricingConfig, FinishingOption, ElementDefinition, PriceMatrix, DepthOption, HeightOption, FinishPriceMatrix } from "@shared/schema";
-
-const FINISH_CABINET_TYPES = [
-  { key: "base_cab",    label: "Base Cabinet" },
-  { key: "wall_cab",   label: "Wall Cabinet" },
-  { key: "tall_cab",   label: "Tall Cabinet" },
-  { key: "island_cab", label: "Island Cabinet" },
-  { key: "panels",     label: "Panels" },
-  { key: "drawer",     label: "Drawer" },
-  { key: "fillers",    label: "Fillers" },
-] as const;
+import { ArrowLeft, Save, Plus } from "lucide-react";
+import type {
+  AdminSettings,
+  ElementDefinition,
+  DreamHomeFinish,
+  DreamHomePrice,
+  TallHeight,
+  PricingSettings,
+} from "@shared/schema";
 
 export default function Admin() {
   const [, navigate] = useLocation();
@@ -33,9 +30,6 @@ export default function Admin() {
 
   const { data: settings, isLoading: settingsLoading } = useQuery<AdminSettings>({
     queryKey: ["/api/admin/settings"],
-  });
-  const { data: finishingOptions, isLoading: finishingLoading } = useQuery<FinishingOption[]>({
-    queryKey: ["/api/finishing-options"],
   });
   const { data: elementDefs, isLoading: elementDefsLoading } = useQuery<ElementDefinition[]>({
     queryKey: ["/api/element-definitions"],
@@ -46,31 +40,6 @@ export default function Admin() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/settings"] });
       toast({ title: "Settings saved" });
-    },
-  });
-
-  const finishingMutation = useMutation({
-    mutationFn: (data: { id: number } & Partial<FinishingOption>) =>
-      apiRequest("PUT", "/api/finishing-options", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/finishing-options"] });
-      toast({ title: "Finishing option saved" });
-    },
-  });
-
-  const addFinishingMutation = useMutation({
-    mutationFn: (data: Partial<FinishingOption>) => apiRequest("POST", "/api/finishing-options", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/finishing-options"] });
-      toast({ title: "Added new finishing option" });
-    },
-  });
-
-  const deleteFinishingMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/finishing-options/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/finishing-options"] });
-      toast({ title: "Finishing option deleted" });
     },
   });
 
@@ -94,7 +63,7 @@ export default function Admin() {
     },
   });
 
-  const isLoading = settingsLoading || finishingLoading;
+  const isLoading = settingsLoading;
 
   return (
     <div className="min-h-screen bg-background" data-testid="admin-page">
@@ -131,49 +100,12 @@ export default function Admin() {
             </TabsList>
 
             <TabsContent value="pricing">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Finish Price Matrix</CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Set price per linear meter (AED/m) for each cabinet type × finish combination.
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <FinishPriceMatrixGrid
-                    finishingOptions={finishingOptions ?? []}
-                    onAddFinish={(data) => addFinishingMutation.mutate(data)}
-                    onDeleteFinish={(id) => deleteFinishingMutation.mutate(id)}
-                    onRenameFinish={(id, label) => finishingMutation.mutate({ id, label })}
-                    isMutating={addFinishingMutation.isPending || deleteFinishingMutation.isPending || finishingMutation.isPending}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="finishing">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Finishing Options</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {finishingOptions?.map((option) => (
-                    <FinishingRow
-                      key={option.id}
-                      option={option}
-                      onSave={(data) =>
-                        finishingMutation.mutate({ id: option.id, ...data })
-                      }
-                      onDelete={() => deleteFinishingMutation.mutate(option.id)}
-                      isPending={finishingMutation.isPending || deleteFinishingMutation.isPending}
-                    />
-                  ))}
-                  <Separator />
-                  <NewFinishingRow
-                    onAdd={(data) => addFinishingMutation.mutate(data)}
-                    isPending={addFinishingMutation.isPending}
-                  />
-                </CardContent>
-              </Card>
+              <div className="space-y-6">
+                <PricingSettingsCard />
+                <DreamHomeMatrixCard />
+                <TallHeightsCard />
+                <FinishesCard />
+              </div>
             </TabsContent>
 
             <TabsContent value="elements">
@@ -227,280 +159,266 @@ export default function Admin() {
   );
 }
 
-function FinishPriceMatrixGrid({
-  finishingOptions,
-  onAddFinish,
-  onDeleteFinish,
-  onRenameFinish,
-  isMutating,
-}: {
-  finishingOptions: FinishingOption[];
-  onAddFinish: (data: { label: string; multiplier: string; sortOrder: number }) => void;
-  onDeleteFinish: (id: number) => void;
-  onRenameFinish: (id: number, label: string) => void;
-  isMutating: boolean;
-}) {
-  const [newFinishName, setNewFinishName] = useState("");
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editingLabel, setEditingLabel] = useState("");
+function PricingSettingsCard() {
+  const { toast } = useToast();
+  const { data: settings } = useQuery<PricingSettings>({ queryKey: ["/api/pricing-settings"] });
 
-  const { data: matrix = [], isLoading } = useQuery<FinishPriceMatrix[]>({
-    queryKey: ["/api/finish-price-matrix"],
+  const mutation = useMutation({
+    mutationFn: (data: Partial<PricingSettings>) => apiRequest("PUT", "/api/pricing-settings", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pricing-settings"] });
+      toast({ title: "Pricing settings saved" });
+    },
   });
 
-  const upsertMutation = useMutation({
-    mutationFn: (data: { cabinetType: string; finishingOptionId: number; pricePerMeter: string }) =>
-      apiRequest("PUT", "/api/finish-price-matrix", { ...data, currency: "AED" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finish-price-matrix"] }),
-  });
+  if (!settings) return <Skeleton className="h-40 w-full" />;
 
-  const getPrice = (cabinetType: string, finishingOptionId: number): string => {
-    const entry = matrix.find(
-      (m) => m.cabinetType === cabinetType && m.finishingOptionId === finishingOptionId
-    );
-    return entry ? String(entry.pricePerMeter) : "";
-  };
-
-  if (isLoading) return <Skeleton className="h-40 w-full" />;
+  const fields: { key: keyof PricingSettings; label: string }[] = [
+    { key: "fxRate", label: "FX Rate (CNY → AED)" },
+    { key: "packingMult", label: "Packing Multiplier" },
+    { key: "shippingMult", label: "Shipping Multiplier" },
+    { key: "marginDiv", label: "Margin Divisor" },
+    { key: "decorativeCnyPerM2", label: "Decorative Panel CNY/m²" },
+    { key: "drawerFlatAed", label: "Drawer Flat AED" },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div className="overflow-x-auto">
-        <table className="border-collapse text-sm">
-          <thead>
-            <tr>
-              <th className="border border-border px-3 py-2 bg-orange-100 text-left font-medium whitespace-nowrap">
-                Cabinet Type
-              </th>
-              {finishingOptions.map((f) => (
-                <th
-                  key={f.id}
-                  className="border border-border px-2 py-1 bg-yellow-100 text-center font-medium min-w-[120px]"
-                >
-                  {editingId === f.id ? (
-                    <div className="flex items-center gap-1">
-                      <Input
-                        autoFocus
-                        value={editingLabel}
-                        onChange={(e) => setEditingLabel(e.target.value)}
-                        className="h-7 text-xs w-20"
-                        onBlur={() => {
-                          if (editingLabel.trim()) onRenameFinish(f.id, editingLabel.trim());
-                          setEditingId(null);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            if (editingLabel.trim()) onRenameFinish(f.id, editingLabel.trim());
-                            setEditingId(null);
-                          }
-                          if (e.key === "Escape") setEditingId(null);
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center gap-1">
-                      <span
-                        className="cursor-pointer hover:underline"
-                        title="Click to rename"
-                        onClick={() => { setEditingId(f.id); setEditingLabel(f.label); }}
-                      >
-                        {f.label}
-                      </span>
-                      <button
-                        onClick={() => onDeleteFinish(f.id)}
-                        className="text-red-400 hover:text-red-600 text-xs ml-1"
-                        title="Remove finish"
-                        disabled={isMutating}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )}
-                </th>
-              ))}
-              {/* Add new finish column */}
-              <th className="border border-border px-2 py-1 bg-yellow-50 min-w-[150px]">
-                <div className="flex items-center gap-1">
-                  <Input
-                    value={newFinishName}
-                    onChange={(e) => setNewFinishName(e.target.value)}
-                    className="h-7 text-xs w-24"
-                    placeholder="New finish"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && newFinishName.trim()) {
-                        onAddFinish({ label: newFinishName.trim(), multiplier: "1.0", sortOrder: finishingOptions.length });
-                        setNewFinishName("");
-                      }
-                    }}
-                  />
-                  <Button
-                    size="sm"
-                    className="h-7 px-2 text-xs"
-                    disabled={!newFinishName.trim() || isMutating}
-                    onClick={() => {
-                      onAddFinish({ label: newFinishName.trim(), multiplier: "1.0", sortOrder: finishingOptions.length });
-                      setNewFinishName("");
-                    }}
-                  >
-                    <Plus className="w-3 h-3" />
-                  </Button>
-                </div>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {FINISH_CABINET_TYPES.map(({ key, label }) => (
-              <tr key={key}>
-                <td className="border border-border px-3 py-2 bg-orange-50 font-medium whitespace-nowrap">
-                  {label}
-                </td>
-                {finishingOptions.map((f) => {
-                  const currentVal = getPrice(key, f.id);
-                  return (
-                    <td key={f.id} className="border border-border px-1 py-1 bg-blue-50">
-                      <Input
-                        type="number"
-                        defaultValue={currentVal}
-                        className="w-full h-8 text-xs text-center"
-                        placeholder="AED/m"
-                        min="0"
-                        step="0.01"
-                        onBlur={(e) => {
-                          const val = e.target.value;
-                          if (val !== "" && val !== currentVal) {
-                            upsertMutation.mutate({
-                              cabinetType: key,
-                              finishingOptionId: f.id,
-                              pricePerMeter: val,
-                            });
-                          }
-                        }}
-                      />
-                    </td>
-                  );
-                })}
-                <td className="border border-border bg-gray-50" />
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Pricing Settings</CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Formula: CNY × FX × packing × shipping ÷ margin = AED
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-4">
+          {fields.map(({ key, label }) => (
+            <div key={String(key)} className="space-y-1">
+              <Label className="text-xs">{label}</Label>
+              <Input
+                type="number"
+                step="0.01"
+                defaultValue={String(settings[key])}
+                onBlur={(e) => {
+                  const val = e.target.value;
+                  if (val !== String(settings[key])) {
+                    mutation.mutate({ [key]: val } as Partial<PricingSettings>);
+                  }
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DreamHomeMatrixCard() {
+  const { data: finishes = [] } = useQuery<DreamHomeFinish[]>({ queryKey: ["/api/dream-home/finishes"] });
+  const { data: prices = [] } = useQuery<DreamHomePrice[]>({ queryKey: ["/api/dream-home/prices"] });
+
+  const upsert = useMutation({
+    mutationFn: (data: { cabinetType: string; finishId: number; priceCnyPerM: string }) =>
+      apiRequest("PUT", "/api/dream-home/prices", data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/dream-home/prices"] }),
+  });
+
+  const getPrice = (type: string, fid: number): string => {
+    const row = prices.find((p) => p.cabinetType === type && p.finishId === fid);
+    return row ? String(row.priceCnyPerM) : "";
+  };
+
+  const rows = [
+    { key: "base", label: "Base Cabinet" },
+    { key: "wall_cabinet", label: "Wall Cabinet" },
+  ];
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Dream Home Prices (CNY / linear meter)</CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Base Cabinet standard: 670×550 mm · Wall Cabinet standard: 700×330 mm · Surcharge: +10% per 100mm over standard
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="border-collapse text-xs">
+            <thead>
+              <tr>
+                <th className="border border-border px-2 py-1 bg-orange-100 text-left sticky left-0 z-10">Cabinet</th>
+                {finishes.map((f) => (
+                  <th key={f.id} className="border border-border px-2 py-1 bg-yellow-100 min-w-[110px] text-center">
+                    {f.name}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Click a finish name to rename it. Use × to remove. Add new finishes with the input above.
-      </p>
-    </div>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.key}>
+                  <td className="border border-border px-2 py-1 bg-orange-50 font-medium sticky left-0 z-10 whitespace-nowrap">
+                    {row.label}
+                  </td>
+                  {finishes.map((f) => {
+                    const current = getPrice(row.key, f.id);
+                    return (
+                      <td key={f.id} className="border border-border bg-blue-50 p-0.5">
+                        <Input
+                          type="number"
+                          defaultValue={current}
+                          className="h-7 text-xs text-center"
+                          onBlur={(e) => {
+                            if (e.target.value && e.target.value !== current) {
+                              upsert.mutate({
+                                cabinetType: row.key,
+                                finishId: f.id,
+                                priceCnyPerM: e.target.value,
+                              });
+                            }
+                          }}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
-function FinishingRow({
-  option,
-  onSave,
-  onDelete,
-  isPending,
-}: {
-  option: FinishingOption;
-  onSave: (data: Partial<FinishingOption>) => void;
-  onDelete: () => void;
-  isPending: boolean;
-}) {
-  const [label, setLabel] = useState(option.label);
-  const [multiplier, setMultiplier] = useState(option.multiplier);
+function TallHeightsCard() {
+  const { data: finishes = [] } = useQuery<DreamHomeFinish[]>({ queryKey: ["/api/dream-home/finishes"] });
+  const { data: tallRows = [] } = useQuery<TallHeight[]>({ queryKey: ["/api/dream-home/tall-heights"] });
 
-  return (
-    <div className="flex items-center gap-4 flex-wrap">
-      <Label className="w-8 text-sm shrink-0">#{option.sortOrder}</Label>
-      <Input
-        value={label}
-        onChange={(e) => setLabel(e.target.value)}
-        className="w-40"
-        placeholder="Label"
-        data-testid={`input-finishing-label-${option.id}`}
-      />
-      <div className="flex items-center gap-1">
-        <span className="text-xs text-muted-foreground">x</span>
-        <Input
-          type="number"
-          value={multiplier}
-          onChange={(e) => setMultiplier(e.target.value)}
-          className="w-24"
-          step="0.1"
-          data-testid={`input-finishing-mult-${option.id}`}
-        />
-      </div>
-      <Button
-        size="sm"
-        onClick={() => onSave({ label, multiplier })}
-        disabled={isPending}
-        data-testid={`button-save-finishing-${option.id}`}
-      >
-        <Save className="w-3 h-3 mr-1" />
-        Save
-      </Button>
-      <Button
-        size="sm"
-        variant="destructive"
-        onClick={onDelete}
-        disabled={isPending}
-        data-testid={`button-delete-finishing-${option.id}`}
-      >
-        <Trash2 className="w-3 h-3" />
-      </Button>
-    </div>
-  );
-}
+  const upsert = useMutation({
+    mutationFn: (data: { source: string; heightMm: number; finishId: number; priceCnyPerM: string }) =>
+      apiRequest("PUT", "/api/dream-home/tall-heights", data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/dream-home/tall-heights"] }),
+  });
 
-function NewFinishingRow({
-  onAdd,
-  isPending,
-}: {
-  onAdd: (data: { label: string; multiplier: string; sortOrder: number }) => void;
-  isPending: boolean;
-}) {
-  const [label, setLabel] = useState("");
-  const [multiplier, setMultiplier] = useState("1.0");
-
-  const handleAdd = () => {
-    if (!label || !multiplier) return;
-    onAdd({
-      label,
-      multiplier,
-      sortOrder: 0
-    });
-    setLabel("");
-    setMultiplier("1.0");
+  const getPrice = (h: number, fid: number): string => {
+    const row = tallRows.find((r) => r.heightMm === h && r.finishId === fid);
+    return row ? String(row.priceCnyPerM) : "";
   };
 
+  const heights = [
+    { mm: 1900, source: "dream_home" as const },
+    { mm: 2000, source: "dream_home" as const },
+    { mm: 2100, source: "dream_home" as const },
+    { mm: 2200, source: "dream_home" as const },
+    { mm: 2400, source: "dream_home" as const },
+    { mm: 2600, source: "dream_home" as const },
+    { mm: 2700, source: "platinum" as const },
+    { mm: 2800, source: "platinum" as const },
+    { mm: 2900, source: "platinum" as const },
+    { mm: 3000, source: "platinum" as const },
+  ];
+
   return (
-    <div className="flex items-center gap-4 flex-wrap pt-2">
-      <Label className="w-8 text-sm shrink-0 text-muted-foreground">New</Label>
-      <Input
-        value={label}
-        onChange={(e) => setLabel(e.target.value)}
-        className="w-40"
-        placeholder="Finish Name"
-        data-testid={`input-new-finishing-label`}
-      />
-      <div className="flex items-center gap-1">
-        <span className="text-xs text-muted-foreground">x</span>
-        <Input
-          type="number"
-          value={multiplier}
-          onChange={(e) => setMultiplier(e.target.value)}
-          className="w-24"
-          step="0.1"
-          data-testid={`input-new-finishing-mult`}
-        />
-      </div>
-      <Button
-        size="sm"
-        onClick={handleAdd}
-        disabled={isPending || !label || !multiplier}
-        data-testid={`button-add-finishing`}
-      >
-        <Plus className="w-3 h-3 mr-1" />
-        Add Finish
-      </Button>
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Tall Cabinet Heights (CNY / linear meter)</CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Dream Home: 1900–2600 mm · Platinum fallback: 2700–3000 mm · User height snaps UP to next listed row
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="border-collapse text-xs">
+            <thead>
+              <tr>
+                <th className="border border-border px-2 py-1 bg-orange-100 sticky left-0 z-10">Source</th>
+                <th className="border border-border px-2 py-1 bg-orange-100">Height</th>
+                {finishes.map((f) => (
+                  <th key={f.id} className="border border-border px-2 py-1 bg-yellow-100 min-w-[100px] text-center">
+                    {f.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {heights.map(({ mm, source }) => {
+                const bg = source === "platinum" ? "bg-purple-50" : "bg-orange-50";
+                return (
+                  <tr key={mm}>
+                    <td className={`border border-border px-2 py-1 ${bg} sticky left-0 z-10 font-medium text-[10px] uppercase`}>
+                      {source === "platinum" ? "Platinum" : "Dream Home"}
+                    </td>
+                    <td className={`border border-border px-2 py-1 ${bg} font-medium whitespace-nowrap`}>
+                      {mm} mm
+                    </td>
+                    {finishes.map((f) => {
+                      const current = getPrice(mm, f.id);
+                      return (
+                        <td key={f.id} className="border border-border bg-blue-50 p-0.5">
+                          <Input
+                            type="number"
+                            defaultValue={current}
+                            className="h-7 text-xs text-center"
+                            onBlur={(e) => {
+                              if (e.target.value && e.target.value !== current) {
+                                upsert.mutate({
+                                  source,
+                                  heightMm: mm,
+                                  finishId: f.id,
+                                  priceCnyPerM: e.target.value,
+                                });
+                              }
+                            }}
+                          />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function FinishesCard() {
+  const { data: finishes = [] } = useQuery<DreamHomeFinish[]>({ queryKey: ["/api/dream-home/finishes"] });
+
+  const mutation = useMutation({
+    mutationFn: (data: { id: number; name: string }) =>
+      apiRequest("PUT", `/api/dream-home/finishes/${data.id}`, { name: data.name }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/dream-home/finishes"] }),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Finishes (11)</CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">Rename only. The 11 Dream Home finishes are fixed.</p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {finishes.map((f) => (
+          <div key={f.id} className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground w-6">#{f.sortOrder}</span>
+            <Input
+              defaultValue={f.name}
+              className="flex-1"
+              onBlur={(e) => {
+                if (e.target.value && e.target.value !== f.name) {
+                  mutation.mutate({ id: f.id, name: e.target.value });
+                }
+              }}
+            />
+            <span className="text-[10px] text-muted-foreground w-40 truncate">{f.system}</span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 

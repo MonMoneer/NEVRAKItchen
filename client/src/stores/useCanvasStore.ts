@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Wall, Cabinet, Opening, DrawingState, Guideline, Layer } from "@/lib/kitchen-engine";
-import { createInitialDrawingState } from "@/lib/kitchen-engine";
+import { createInitialDrawingState, normalizeLayer } from "@/lib/kitchen-engine";
 import {
   type HistoryState,
   createHistory,
@@ -87,7 +87,7 @@ interface CanvasState {
   removeLayer: (id: string) => void;
   updateLayer: (id: string, updates: Partial<Layer>) => void;
   setActiveLayer: (id: string | null) => void;
-  loadFromCanvasData: (data: Partial<DesignData> & { selectedFinishing?: string; layers?: Layer[] }) => void;
+  loadFromCanvasData: (data: any) => void;
   getCanvasData: () => DesignData & { selectedFinishing: string; layers: Layer[] };
 }
 
@@ -453,7 +453,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const elements = data.elements ?? [];
     const wallPoints = data.wallPoints ?? [];
     const guidelines = data.guidelines ?? [];
-    const layers = data.layers ?? [];
+    const layers: Layer[] = Array.isArray(data.layers) ? data.layers.map(normalizeLayer) : [];
     set((state) => ({
       elements,
       wallPoints,

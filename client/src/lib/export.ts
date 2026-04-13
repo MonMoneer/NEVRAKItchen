@@ -9,7 +9,8 @@ const cabinetLabels: Record<string, string> = {
   wall_cabinet: "Wall Cabinet",
   tall: "Tall Cabinet",
   island: "Island",
-  divider: "Divider",
+  end_panel: "End Panel",
+  filler: "Filler",
   drawer: "Drawer",
 };
 
@@ -217,7 +218,7 @@ export async function exportToPDF(
 
   for (let idx = 0; idx < layers.length; idx++) {
     const layer = layers[idx];
-    const isCountType = layer.type === "divider" || layer.type === "drawer";
+    const isCountType = layer.type === "end_panel" || layer.type === "filler" || layer.type === "drawer";
     const isIsland = layer.type === "island";
 
     const layerCabinets = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
@@ -234,10 +235,10 @@ export async function exportToPDF(
     const priceEntry = matrix.find((m: any) => m.depth === effectiveDepth && m.height === (layer.height ?? 0));
     const pricePerUnit = priceEntry ? parseFloat(priceEntry.pricePerUnit) : 0;
 
-    const layerFinish = finishing.find((f: any) => f.id.toString() === layer.finishId);
+    const layerFinish = finishing.find((f: any) => f.id === layer.finishId);
     const multiplier = layerFinish ? parseFloat(layerFinish.multiplier) : 1;
 
-    const qty = isCountType ? (layer.count ?? 0) : lengthM;
+    const qty = isCountType ? (layer.qty ?? 0) : lengthM;
     const subtotal = pricePerUnit * qty * multiplier;
     total += subtotal;
 
@@ -251,7 +252,7 @@ export async function exportToPDF(
     doc.setTextColor(50, 50, 50);
 
     doc.text(cabinetLabels[layer.type] || layer.type, colX[0], y);
-    doc.text(isCountType ? `${layer.count ?? 0} pcs` : `${lengthM.toFixed(2)} m`, colX[1], y);
+    doc.text(isCountType ? `${layer.qty ?? 0} pcs` : `${lengthM.toFixed(2)} m`, colX[1], y);
     doc.text(`${effectiveDepth}×${layer.height ?? 0} cm`, colX[2], y);
     doc.text(layerFinish?.label ?? "—", colX[3], y);
 
