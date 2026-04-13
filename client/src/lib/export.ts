@@ -2,6 +2,8 @@ import jsPDF from "jspdf";
 import { PDFDocument } from "pdf-lib";
 import type { Wall, Cabinet, Opening, Layer } from "./kitchen-engine";
 import { pixelsToCm, OPENING_STYLES, computeEffectiveLengths } from "./kitchen-engine";
+import { calculateLayerPrice, type PricingLayer } from "./dream-home-pricing";
+import type { DreamHomeFinish, DreamHomePrice, TallHeight, PricingSettings } from "@shared/schema";
 import letterheadUrl from "@assets/NIVRA_LETTERHEAD_V1.1_(1)_1772051682721.pdf?url";
 
 const cabinetLabels: Record<string, string> = {
@@ -15,19 +17,20 @@ const cabinetLabels: Record<string, string> = {
 };
 
 async function fetchSettings() {
-  const [settingsRes, finishingRes] = await Promise.all([
+  const [settingsRes, finishesRes, pricesRes, tallRes, pricingSettingsRes] = await Promise.all([
     fetch("/api/admin/settings"),
-    fetch("/api/finishing-options"),
+    fetch("/api/dream-home/finishes"),
+    fetch("/api/dream-home/prices"),
+    fetch("/api/dream-home/tall-heights"),
+    fetch("/api/pricing-settings"),
   ]);
   return {
     settings: await settingsRes.json(),
-    finishing: await finishingRes.json(),
+    finishes: (await finishesRes.json()) as DreamHomeFinish[],
+    dreamHomePrices: (await pricesRes.json()) as DreamHomePrice[],
+    tallHeights: (await tallRes.json()) as TallHeight[],
+    pricingSettings: (await pricingSettingsRes.json()) as PricingSettings,
   };
-}
-
-async function fetchPriceMatrix(type: string) {
-  const res = await fetch(`/api/price-matrix?type=${type}`);
-  return res.json();
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -55,11 +58,8 @@ export async function exportToPDF(
   layoutImageDataUrl?: string,
   layers: Layer[] = [],
 ) {
-  const { finishing } = await fetchSettings();
-
-  const activeFinishing = finishing.find(
-    (f: { id: number }) => f.id.toString() === selectedFinishingId
-  ) || finishing[0];
+  const { finishes, dreamHomePrices, tallHeights, pricingSettings } = await fetchSettings();
+  void selectedFinishingId; // finish is now per-layer, project-level selection unused
   const currency = "AED";
   const quoteNo = generateQuoteNumber();
   const dateStr = new Date().toLocaleDateString("en-GB", {
@@ -210,12 +210,6 @@ export async function exportToPDF(
 
   let total = 0;
 
-  const uniqueTypes = [...new Set(layers.map((l) => l.type))];
-  const priceMatrices: Record<string, any[]> = {};
-  for (const t of uniqueTypes) {
-    priceMatrices[t] = await fetchPriceMatrix(t);
-  }
-
   for (let idx = 0; idx < layers.length; idx++) {
     const layer = layers[idx];
     const isCountType = layer.type === "end_panel" || layer.type === "filler" || layer.type === "drawer";
@@ -231,16 +225,17 @@ export async function exportToPDF(
       ? pixelsToCm(layerCabinets[0].depth)
       : (layer.depth ?? 0);
 
-    const matrix = priceMatrices[layer.type] ?? [];
-    const priceEntry = matrix.find((m: any) => m.depth === effectiveDepth && m.height === (layer.height ?? 0));
-    const pricePerUnit = priceEntry ? parseFloat(priceEntry.pricePerUnit) : 0;
-
-    const layerFinish = finishing.find((f: any) => f.id === layer.finishId);
-    const multiplier = layerFinish ? parseFloat(layerFinish.multiplier) : 1;
-
-    const qty = isCountType ? (layer.qty ?? 0) : lengthM;
-    const subtotal = pricePerUnit * qty * multiplier;
+    const result = calculateLayerPrice({
+      layer: layer as unknown as PricingLayer,
+      lengthM,
+      settings: pricingSettings,
+      dreamHomePrices,
+      tallHeights,
+    });
+    const subtotal = result.error ? 0 : result.subtotalAED;
     total += subtotal;
+
+    const layerFinish = finishes.find((f) => f.id === layer.finishId);
 
     if (idx % 2 === 1) {
       doc.setFillColor(250, 250, 252);
@@ -254,7 +249,7 @@ export async function exportToPDF(
     doc.text(cabinetLabels[layer.type] || layer.type, colX[0], y);
     doc.text(isCountType ? `${layer.qty ?? 0} pcs` : `${lengthM.toFixed(2)} m`, colX[1], y);
     doc.text(`${effectiveDepth}×${layer.height ?? 0} cm`, colX[2], y);
-    doc.text(layerFinish?.label ?? "—", colX[3], y);
+    doc.text(layerFinish?.name ?? "—", colX[3], y);
 
     doc.setFont("helvetica", "bold");
     doc.text(`${subtotal.toFixed(0)} ${currency}`, colX[4], y);
