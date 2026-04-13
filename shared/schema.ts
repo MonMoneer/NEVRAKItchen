@@ -15,20 +15,6 @@ export const adminSettings = pgTable("admin_settings", {
   snapRadius: integer("snap_radius").notNull().default(12),
 });
 
-export const pricingConfig = pgTable("pricing_config", {
-  id: serial("id").primaryKey(),
-  unitType: text("unit_type").notNull(),
-  pricePerMeter: numeric("price_per_meter", { precision: 10, scale: 2 }).notNull(),
-  currency: text("currency").notNull().default("AED"),
-});
-
-export const finishingOptions = pgTable("finishing_options", {
-  id: serial("id").primaryKey(),
-  label: text("label").notNull(),
-  multiplier: numeric("multiplier", { precision: 4, scale: 2 }).notNull(),
-  sortOrder: integer("sort_order").notNull().default(0),
-});
-
 // ─── Projects (extended from saved_projects) ────────────────────────────────
 
 export const savedProjects = pgTable("saved_projects", {
@@ -116,35 +102,6 @@ export const projectAttachments = pgTable("project_attachments", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// ─── Price matrix (depth × height → price per unit, per cabinet type) ────────
-
-export const priceMatrix = pgTable("price_matrix", {
-  id: serial("id").primaryKey(),
-  cabinetType: text("cabinet_type").notNull(), // base | wall_cabinet | tall | island | divider | drawer
-  depth: integer("depth").notNull(),           // cm
-  height: integer("height").notNull(),         // cm
-  pricePerUnit: numeric("price_per_unit", { precision: 10, scale: 2 }).notNull(),
-  currency: text("currency").notNull().default("AED"),
-});
-
-// ─── Depth options (admin-configurable dropdown values per cabinet type) ─────
-
-export const depthOptions = pgTable("depth_options", {
-  id: serial("id").primaryKey(),
-  cabinetType: text("cabinet_type").notNull(),
-  value: integer("value").notNull(),           // cm
-  sortOrder: integer("sort_order").notNull().default(0),
-});
-
-// ─── Height options (admin-configurable dropdown values per cabinet type) ────
-
-export const heightOptions = pgTable("height_options", {
-  id: serial("id").primaryKey(),
-  cabinetType: text("cabinet_type").notNull(),
-  value: integer("value").notNull(),           // cm
-  sortOrder: integer("sort_order").notNull().default(0),
-});
-
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 export const users = pgTable("users", {
@@ -155,21 +112,43 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
-// ─── Finish price matrix (Finish × Cabinet Type → price per linear meter) ────
+// ─── Dream Home Pricing System ──────────────────────────────────────────────
 
-export const finishPriceMatrix = pgTable("finish_price_matrix", {
+export const dreamHomeFinishes = pgTable("dream_home_finishes", {
   id: serial("id").primaryKey(),
-  cabinetType: text("cabinet_type").notNull(), // base_cab | wall_cab | tall_cab | island_cab | panels | drawer | fillers
-  finishingOptionId: integer("finishing_option_id").notNull().references(() => finishingOptions.id, { onDelete: "cascade" }),
-  pricePerMeter: numeric("price_per_meter", { precision: 10, scale: 2 }).notNull().default("0"),
-  currency: text("currency").notNull().default("AED"),
+  name: text("name").notNull(),
+  system: text("system").notNull().default(""),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const dreamHomePrices = pgTable("dream_home_prices", {
+  id: serial("id").primaryKey(),
+  cabinetType: text("cabinet_type").notNull(), // 'base' | 'wall_cabinet'
+  finishId: integer("finish_id").notNull().references(() => dreamHomeFinishes.id, { onDelete: "cascade" }),
+  priceCnyPerM: numeric("price_cny_per_m", { precision: 10, scale: 2 }).notNull().default("0"),
+});
+
+export const tallHeights = pgTable("tall_heights", {
+  id: serial("id").primaryKey(),
+  source: text("source").notNull(), // 'dream_home' | 'platinum'
+  heightMm: integer("height_mm").notNull(),
+  finishId: integer("finish_id").notNull().references(() => dreamHomeFinishes.id, { onDelete: "cascade" }),
+  priceCnyPerM: numeric("price_cny_per_m", { precision: 10, scale: 2 }).notNull().default("0"),
+});
+
+export const pricingSettings = pgTable("pricing_settings", {
+  id: serial("id").primaryKey(),
+  fxRate: numeric("fx_rate", { precision: 10, scale: 4 }).notNull().default("0.51"),
+  packingMult: numeric("packing_mult", { precision: 4, scale: 2 }).notNull().default("1.10"),
+  shippingMult: numeric("shipping_mult", { precision: 4, scale: 2 }).notNull().default("1.10"),
+  marginDiv: numeric("margin_div", { precision: 4, scale: 2 }).notNull().default("0.50"),
+  decorativeCnyPerM2: numeric("decorative_cny_per_m2", { precision: 10, scale: 2 }).notNull().default("880"),
+  drawerFlatAed: numeric("drawer_flat_aed", { precision: 10, scale: 2 }).notNull().default("500"),
 });
 
 // ─── Insert schemas ──────────────────────────────────────────────────────────
 
 export const insertAdminSettingsSchema = createInsertSchema(adminSettings).omit({ id: true });
-export const insertPricingConfigSchema = createInsertSchema(pricingConfig).omit({ id: true });
-export const insertFinishingOptionSchema = createInsertSchema(finishingOptions).omit({ id: true });
 export const insertSavedProjectSchema = createInsertSchema(savedProjects).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertSpaceSchema = createInsertSchema(spaces).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertSpacePhotoSchema = createInsertSchema(spacePhotos).omit({ id: true, createdAt: true });
@@ -177,21 +156,15 @@ export const insertElementDefinitionSchema = createInsertSchema(elementDefinitio
 export const insertWallPointSchema = createInsertSchema(wallPoints).omit({ id: true, createdAt: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export const insertProjectAttachmentSchema = createInsertSchema(projectAttachments).omit({ id: true, createdAt: true });
-export const insertPriceMatrixSchema = createInsertSchema(priceMatrix).omit({ id: true });
-export const insertDepthOptionSchema = createInsertSchema(depthOptions).omit({ id: true });
-export const insertHeightOptionSchema = createInsertSchema(heightOptions).omit({ id: true });
-export const insertFinishPriceMatrixSchema = createInsertSchema(finishPriceMatrix).omit({ id: true });
+export const insertDreamHomeFinishSchema = createInsertSchema(dreamHomeFinishes).omit({ id: true });
+export const insertDreamHomePriceSchema = createInsertSchema(dreamHomePrices).omit({ id: true });
+export const insertTallHeightSchema = createInsertSchema(tallHeights).omit({ id: true });
+export const insertPricingSettingsSchema = createInsertSchema(pricingSettings).omit({ id: true });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type InsertAdminSettings = z.infer<typeof insertAdminSettingsSchema>;
 export type AdminSettings = typeof adminSettings.$inferSelect;
-
-export type InsertPricingConfig = z.infer<typeof insertPricingConfigSchema>;
-export type PricingConfig = typeof pricingConfig.$inferSelect;
-
-export type InsertFinishingOption = z.infer<typeof insertFinishingOptionSchema>;
-export type FinishingOption = typeof finishingOptions.$inferSelect;
 
 export type InsertSavedProject = z.infer<typeof insertSavedProjectSchema>;
 export type SavedProject = typeof savedProjects.$inferSelect;
@@ -214,14 +187,11 @@ export type User = typeof users.$inferSelect;
 export type ProjectAttachment = typeof projectAttachments.$inferSelect;
 export type InsertProjectAttachment = typeof projectAttachments.$inferInsert;
 
-export type InsertPriceMatrix = z.infer<typeof insertPriceMatrixSchema>;
-export type PriceMatrix = typeof priceMatrix.$inferSelect;
-
-export type InsertDepthOption = z.infer<typeof insertDepthOptionSchema>;
-export type DepthOption = typeof depthOptions.$inferSelect;
-
-export type InsertHeightOption = z.infer<typeof insertHeightOptionSchema>;
-export type HeightOption = typeof heightOptions.$inferSelect;
-
-export type InsertFinishPriceMatrix = z.infer<typeof insertFinishPriceMatrixSchema>;
-export type FinishPriceMatrix = typeof finishPriceMatrix.$inferSelect;
+export type DreamHomeFinish = typeof dreamHomeFinishes.$inferSelect;
+export type InsertDreamHomeFinish = z.infer<typeof insertDreamHomeFinishSchema>;
+export type DreamHomePrice = typeof dreamHomePrices.$inferSelect;
+export type InsertDreamHomePrice = z.infer<typeof insertDreamHomePriceSchema>;
+export type TallHeight = typeof tallHeights.$inferSelect;
+export type InsertTallHeight = z.infer<typeof insertTallHeightSchema>;
+export type PricingSettings = typeof pricingSettings.$inferSelect;
+export type InsertPricingSettings = z.infer<typeof insertPricingSettingsSchema>;

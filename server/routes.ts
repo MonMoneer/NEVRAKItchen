@@ -4,18 +4,16 @@ import { storage } from "./storage";
 import { passport, hashPassword } from "./auth";
 import {
   insertAdminSettingsSchema,
-  insertPricingConfigSchema,
-  insertFinishingOptionSchema,
   insertSavedProjectSchema,
   insertSpaceSchema,
   insertSpacePhotoSchema,
   insertElementDefinitionSchema,
   insertUserSchema,
   insertProjectAttachmentSchema,
-  insertPriceMatrixSchema,
-  insertDepthOptionSchema,
-  insertHeightOptionSchema,
-  insertFinishPriceMatrixSchema,
+  insertDreamHomeFinishSchema,
+  insertDreamHomePriceSchema,
+  insertTallHeightSchema,
+  insertPricingSettingsSchema,
 } from "@shared/schema";
 import type { User } from "@shared/schema";
 
@@ -83,70 +81,6 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     const updated = await storage.updateAdminSettings(parsed.data);
     res.json(updated);
-  });
-
-  // ── Pricing ───────────────────────────────────────────────────────────────
-
-  app.get("/api/pricing", async (_req, res) => {
-    const configs = await storage.getPricingConfigs();
-    res.json(configs);
-  });
-
-  app.put("/api/pricing", async (req, res) => {
-    const { id, ...data } = req.body;
-    if (!id) return res.status(400).json({ error: "id is required" });
-    const parsed = insertPricingConfigSchema.partial().safeParse(data);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    const updated = await storage.updatePricingConfig(id, parsed.data);
-    if (!updated) return res.status(404).json({ error: "Pricing config not found" });
-    res.json(updated);
-  });
-
-  app.post("/api/pricing", async (req, res) => {
-    const parsed = insertPricingConfigSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    const created = await storage.createPricingConfig(parsed.data);
-    res.status(201).json(created);
-  });
-
-  app.delete("/api/pricing/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const deleted = await storage.deletePricingConfig(id);
-    if (!deleted) return res.status(404).json({ error: "Pricing config not found" });
-    res.json({ success: true });
-  });
-
-  // ── Finishing options ─────────────────────────────────────────────────────
-
-  app.get("/api/finishing-options", async (_req, res) => {
-    const options = await storage.getFinishingOptions();
-    res.json(options);
-  });
-
-  app.put("/api/finishing-options", async (req, res) => {
-    const { id, ...data } = req.body;
-    if (!id) return res.status(400).json({ error: "id is required" });
-    const parsed = insertFinishingOptionSchema.partial().safeParse(data);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    const updated = await storage.updateFinishingOption(id, parsed.data);
-    if (!updated) return res.status(404).json({ error: "Finishing option not found" });
-    res.json(updated);
-  });
-
-  app.post("/api/finishing-options", async (req, res) => {
-    const parsed = insertFinishingOptionSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    const created = await storage.createFinishingOption(parsed.data);
-    res.status(201).json(created);
-  });
-
-  app.delete("/api/finishing-options/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const deleted = await storage.deleteFinishingOption(id);
-    if (!deleted) return res.status(404).json({ error: "Finishing option not found" });
-    res.json({ success: true });
   });
 
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -386,92 +320,6 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  // ── Price matrix ──────────────────────────────────────────────────────────
-
-  app.get("/api/price-matrix", async (req, res) => {
-    const type = req.query.type as string;
-    if (!type) return res.status(400).json({ error: "type query param is required" });
-    const entries = await storage.getPriceMatrix(type);
-    res.json(entries);
-  });
-
-  app.put("/api/price-matrix", async (req, res) => {
-    const parsed = insertPriceMatrixSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    const entry = await storage.upsertPriceMatrix(parsed.data);
-    res.json(entry);
-  });
-
-  app.delete("/api/price-matrix/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const deleted = await storage.deletePriceMatrix(id);
-    if (!deleted) return res.status(404).json({ error: "Not found" });
-    res.json({ success: true });
-  });
-
-  // ── Depth options ────────────────────────────────────────────────────────
-
-  app.get("/api/depth-options", async (req, res) => {
-    const type = req.query.type as string;
-    if (!type) return res.status(400).json({ error: "type query param is required" });
-    const options = await storage.getDepthOptions(type);
-    res.json(options);
-  });
-
-  app.post("/api/depth-options", async (req, res) => {
-    const parsed = insertDepthOptionSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    const created = await storage.createDepthOption(parsed.data);
-    res.status(201).json(created);
-  });
-
-  app.delete("/api/depth-options/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const deleted = await storage.deleteDepthOption(id);
-    if (!deleted) return res.status(404).json({ error: "Not found" });
-    res.json({ success: true });
-  });
-
-  // ── Height options ───────────────────────────────────────────────────────
-
-  app.get("/api/height-options", async (req, res) => {
-    const type = req.query.type as string;
-    if (!type) return res.status(400).json({ error: "type query param is required" });
-    const options = await storage.getHeightOptions(type);
-    res.json(options);
-  });
-
-  app.post("/api/height-options", async (req, res) => {
-    const parsed = insertHeightOptionSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    const created = await storage.createHeightOption(parsed.data);
-    res.status(201).json(created);
-  });
-
-  app.delete("/api/height-options/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
-    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-    const deleted = await storage.deleteHeightOption(id);
-    if (!deleted) return res.status(404).json({ error: "Not found" });
-    res.json({ success: true });
-  });
-
-  // ── Finish price matrix ───────────────────────────────────────────────────
-
-  app.get("/api/finish-price-matrix", async (_req, res) => {
-    const entries = await storage.getFinishPriceMatrix();
-    res.json(entries);
-  });
-
-  app.put("/api/finish-price-matrix", async (req, res) => {
-    const parsed = insertFinishPriceMatrixSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    const entry = await storage.upsertFinishPriceMatrix(parsed.data);
-    res.json(entry);
-  });
-
   // ── Users (admin only) ────────────────────────────────────────────────────
 
   app.get("/api/users", requireRole("admin"), async (_req, res) => {
@@ -493,6 +341,52 @@ export async function registerRoutes(
     const user = await storage.createUser({ ...parsed.data, passwordHash: hashPassword(password) });
     const { passwordHash: _ph, ...safeUser } = user;
     res.status(201).json(safeUser);
+  });
+
+  // ── Dream Home Pricing ────────────────────────────────────────────────────
+
+  app.get("/api/dream-home/finishes", async (_req, res) => {
+    res.json(await storage.listDreamHomeFinishes());
+  });
+
+  app.put("/api/dream-home/finishes/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+    const parsed = insertDreamHomeFinishSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const updated = await storage.updateDreamHomeFinish(id, parsed.data);
+    if (!updated) return res.status(404).json({ error: "Finish not found" });
+    res.json(updated);
+  });
+
+  app.get("/api/dream-home/prices", async (_req, res) => {
+    res.json(await storage.listDreamHomePrices());
+  });
+
+  app.put("/api/dream-home/prices", async (req, res) => {
+    const parsed = insertDreamHomePriceSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    res.json(await storage.upsertDreamHomePrice(parsed.data));
+  });
+
+  app.get("/api/dream-home/tall-heights", async (_req, res) => {
+    res.json(await storage.listTallHeights());
+  });
+
+  app.put("/api/dream-home/tall-heights", async (req, res) => {
+    const parsed = insertTallHeightSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    res.json(await storage.upsertTallHeight(parsed.data));
+  });
+
+  app.get("/api/pricing-settings", async (_req, res) => {
+    res.json(await storage.getPricingSettings());
+  });
+
+  app.put("/api/pricing-settings", async (req, res) => {
+    const parsed = insertPricingSettingsSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    res.json(await storage.updatePricingSettings(parsed.data));
   });
 
   return httpServer;

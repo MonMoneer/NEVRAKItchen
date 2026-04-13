@@ -6,6 +6,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { passport } from "./auth";
 import { pool } from "./db";
+import { seedDreamHomePricing } from "./seed";
 
 const _origExit = process.exit.bind(process);
 process.exit = ((code?: number) => {
@@ -47,32 +48,17 @@ async function runMigrations() {
       )
     `);
     await pool.query(`UPDATE saved_projects SET stage = 'delivered' WHERE stage = 'final'`);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS price_matrix (
-        id serial PRIMARY KEY,
-        cabinet_type text NOT NULL,
-        depth integer NOT NULL,
-        height integer NOT NULL,
-        price_per_unit numeric(10,2) NOT NULL,
-        currency text DEFAULT 'AED' NOT NULL
-      )
-    `);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS depth_options (
-        id serial PRIMARY KEY,
-        cabinet_type text NOT NULL,
-        value integer NOT NULL,
-        sort_order integer DEFAULT 0 NOT NULL
-      )
-    `);
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS height_options (
-        id serial PRIMARY KEY,
-        cabinet_type text NOT NULL,
-        value integer NOT NULL,
-        sort_order integer DEFAULT 0 NOT NULL
-      )
-    `);
+
+    // Drop old pricing tables (replaced by Dream Home schema)
+    await pool.query(`DROP TABLE IF EXISTS finish_price_matrix CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS price_matrix CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS depth_options CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS height_options CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS pricing_config CASCADE`);
+    await pool.query(`DROP TABLE IF EXISTS finishing_options CASCADE`);
+
+    // Seed new Dream Home pricing tables (idempotent)
+    await seedDreamHomePricing();
   } catch (err: any) {
     console.error("[migration] failed:", err.message);
   }

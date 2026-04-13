@@ -1,7 +1,5 @@
 import {
   type AdminSettings, type InsertAdminSettings,
-  type PricingConfig, type InsertPricingConfig,
-  type FinishingOption, type InsertFinishingOption,
   type SavedProject, type InsertSavedProject,
   type Space, type InsertSpace,
   type SpacePhoto, type InsertSpacePhoto,
@@ -9,13 +7,14 @@ import {
   type WallPoint, type InsertWallPoint,
   type User, type InsertUser,
   type ProjectAttachment, type InsertProjectAttachment,
-  type PriceMatrix, type InsertPriceMatrix,
-  type DepthOption, type InsertDepthOption,
-  type HeightOption, type InsertHeightOption,
-  type FinishPriceMatrix, type InsertFinishPriceMatrix,
-  adminSettings, pricingConfig, finishingOptions, savedProjects,
+  type DreamHomeFinish, type InsertDreamHomeFinish,
+  type DreamHomePrice, type InsertDreamHomePrice,
+  type TallHeight, type InsertTallHeight,
+  type PricingSettings, type InsertPricingSettings,
+  adminSettings, savedProjects,
   spaces, spacePhotos, elementDefinitions, wallPoints, users,
-  projectAttachments, priceMatrix, depthOptions, heightOptions, finishPriceMatrix,
+  projectAttachments,
+  dreamHomeFinishes, dreamHomePrices, tallHeights, pricingSettings,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, desc, and, sql } from "drizzle-orm";
@@ -27,17 +26,18 @@ export interface IStorage {
   getAdminSettings(): Promise<AdminSettings | undefined>;
   updateAdminSettings(settings: Partial<InsertAdminSettings>): Promise<AdminSettings>;
 
-  // Pricing
-  getPricingConfigs(): Promise<PricingConfig[]>;
-  updatePricingConfig(id: number, config: Partial<InsertPricingConfig>): Promise<PricingConfig | undefined>;
-  createPricingConfig(config: InsertPricingConfig): Promise<PricingConfig>;
-  deletePricingConfig(id: number): Promise<boolean>;
+  // Dream Home Pricing
+  listDreamHomeFinishes(): Promise<DreamHomeFinish[]>;
+  updateDreamHomeFinish(id: number, updates: Partial<InsertDreamHomeFinish>): Promise<DreamHomeFinish | undefined>;
 
-  // Finishing options
-  getFinishingOptions(): Promise<FinishingOption[]>;
-  updateFinishingOption(id: number, option: Partial<InsertFinishingOption>): Promise<FinishingOption | undefined>;
-  createFinishingOption(option: InsertFinishingOption): Promise<FinishingOption>;
-  deleteFinishingOption(id: number): Promise<boolean>;
+  listDreamHomePrices(): Promise<DreamHomePrice[]>;
+  upsertDreamHomePrice(entry: InsertDreamHomePrice): Promise<DreamHomePrice>;
+
+  listTallHeights(): Promise<TallHeight[]>;
+  upsertTallHeight(entry: InsertTallHeight): Promise<TallHeight>;
+
+  getPricingSettings(): Promise<PricingSettings>;
+  updatePricingSettings(updates: Partial<InsertPricingSettings>): Promise<PricingSettings>;
 
   // Projects
   getSavedProjects(stage?: string): Promise<(SavedProject & { spaceCount: number })[]>;
@@ -82,24 +82,6 @@ export interface IStorage {
   createAttachment(attachment: InsertProjectAttachment): Promise<ProjectAttachment>;
   deleteAttachment(id: number): Promise<boolean>;
 
-  // Price matrix
-  getPriceMatrix(cabinetType: string): Promise<PriceMatrix[]>;
-  upsertPriceMatrix(entry: InsertPriceMatrix): Promise<PriceMatrix>;
-  deletePriceMatrix(id: number): Promise<boolean>;
-
-  // Depth options
-  getDepthOptions(cabinetType: string): Promise<DepthOption[]>;
-  createDepthOption(option: InsertDepthOption): Promise<DepthOption>;
-  deleteDepthOption(id: number): Promise<boolean>;
-
-  // Height options
-  getHeightOptions(cabinetType: string): Promise<HeightOption[]>;
-  createHeightOption(option: InsertHeightOption): Promise<HeightOption>;
-  deleteHeightOption(id: number): Promise<boolean>;
-
-  // Finish price matrix
-  getFinishPriceMatrix(): Promise<FinishPriceMatrix[]>;
-  upsertFinishPriceMatrix(entry: InsertFinishPriceMatrix): Promise<FinishPriceMatrix>;
 }
 
 // ─── Implementation ──────────────────────────────────────────────────────────
@@ -121,48 +103,6 @@ export class DatabaseStorage implements IStorage {
     }
     const [created] = await db.insert(adminSettings).values(settings as InsertAdminSettings).returning();
     return created;
-  }
-
-  // ── Pricing ────────────────────────────────────────────────────────────────
-
-  async getPricingConfigs(): Promise<PricingConfig[]> {
-    return db.select().from(pricingConfig);
-  }
-
-  async updatePricingConfig(id: number, config: Partial<InsertPricingConfig>): Promise<PricingConfig | undefined> {
-    const [updated] = await db.update(pricingConfig).set(config).where(eq(pricingConfig.id, id)).returning();
-    return updated;
-  }
-
-  async createPricingConfig(config: InsertPricingConfig): Promise<PricingConfig> {
-    const [created] = await db.insert(pricingConfig).values(config).returning();
-    return created;
-  }
-
-  async deletePricingConfig(id: number): Promise<boolean> {
-    const result = await db.delete(pricingConfig).where(eq(pricingConfig.id, id)).returning();
-    return result.length > 0;
-  }
-
-  // ── Finishing options ──────────────────────────────────────────────────────
-
-  async getFinishingOptions(): Promise<FinishingOption[]> {
-    return db.select().from(finishingOptions).orderBy(finishingOptions.sortOrder);
-  }
-
-  async updateFinishingOption(id: number, option: Partial<InsertFinishingOption>): Promise<FinishingOption | undefined> {
-    const [updated] = await db.update(finishingOptions).set(option).where(eq(finishingOptions.id, id)).returning();
-    return updated;
-  }
-
-  async createFinishingOption(option: InsertFinishingOption): Promise<FinishingOption> {
-    const [created] = await db.insert(finishingOptions).values(option).returning();
-    return created;
-  }
-
-  async deleteFinishingOption(id: number): Promise<boolean> {
-    const result = await db.delete(finishingOptions).where(eq(finishingOptions.id, id)).returning();
-    return result.length > 0;
   }
 
   // ── Projects ───────────────────────────────────────────────────────────────
@@ -385,106 +325,84 @@ export class DatabaseStorage implements IStorage {
     return !!deleted;
   }
 
-  // ── Price matrix ──────────────────────────────────────────────────────────
+  // ── Dream Home Pricing ────────────────────────────────────────────────────
 
-  async getPriceMatrix(cabinetType: string): Promise<PriceMatrix[]> {
-    return db.select().from(priceMatrix).where(eq(priceMatrix.cabinetType, cabinetType));
+  async listDreamHomeFinishes(): Promise<DreamHomeFinish[]> {
+    return db.select().from(dreamHomeFinishes).orderBy(dreamHomeFinishes.sortOrder);
   }
 
-  async upsertPriceMatrix(entry: InsertPriceMatrix): Promise<PriceMatrix> {
+  async updateDreamHomeFinish(id: number, updates: Partial<InsertDreamHomeFinish>): Promise<DreamHomeFinish | undefined> {
+    const [updated] = await db
+      .update(dreamHomeFinishes)
+      .set(updates)
+      .where(eq(dreamHomeFinishes.id, id))
+      .returning();
+    return updated;
+  }
+
+  async listDreamHomePrices(): Promise<DreamHomePrice[]> {
+    return db.select().from(dreamHomePrices);
+  }
+
+  async upsertDreamHomePrice(entry: InsertDreamHomePrice): Promise<DreamHomePrice> {
     const [existing] = await db
       .select()
-      .from(priceMatrix)
-      .where(
-        and(
-          eq(priceMatrix.cabinetType, entry.cabinetType),
-          eq(priceMatrix.depth, entry.depth),
-          eq(priceMatrix.height, entry.height),
-        )
-      );
+      .from(dreamHomePrices)
+      .where(and(
+        eq(dreamHomePrices.cabinetType, entry.cabinetType),
+        eq(dreamHomePrices.finishId, entry.finishId),
+      ));
     if (existing) {
-      const [updated] = await db
-        .update(priceMatrix)
-        .set({ pricePerUnit: entry.pricePerUnit, currency: entry.currency })
-        .where(eq(priceMatrix.id, existing.id))
+      const [u] = await db
+        .update(dreamHomePrices)
+        .set({ priceCnyPerM: entry.priceCnyPerM })
+        .where(eq(dreamHomePrices.id, existing.id))
         .returning();
-      return updated;
+      return u;
     }
-    const [created] = await db.insert(priceMatrix).values(entry).returning();
-    return created;
+    const [c] = await db.insert(dreamHomePrices).values(entry).returning();
+    return c;
   }
 
-  async deletePriceMatrix(id: number): Promise<boolean> {
-    const result = await db.delete(priceMatrix).where(eq(priceMatrix.id, id)).returning();
-    return result.length > 0;
+  async listTallHeights(): Promise<TallHeight[]> {
+    return db.select().from(tallHeights).orderBy(tallHeights.heightMm);
   }
 
-  // ── Depth options ─────────────────────────────────────────────────────────
-
-  async getDepthOptions(cabinetType: string): Promise<DepthOption[]> {
-    return db
-      .select()
-      .from(depthOptions)
-      .where(eq(depthOptions.cabinetType, cabinetType))
-      .orderBy(depthOptions.sortOrder);
-  }
-
-  async createDepthOption(option: InsertDepthOption): Promise<DepthOption> {
-    const [created] = await db.insert(depthOptions).values(option).returning();
-    return created;
-  }
-
-  async deleteDepthOption(id: number): Promise<boolean> {
-    const result = await db.delete(depthOptions).where(eq(depthOptions.id, id)).returning();
-    return result.length > 0;
-  }
-
-  // ── Height options ────────────────────────────────────────────────────────
-
-  async getHeightOptions(cabinetType: string): Promise<HeightOption[]> {
-    return db
-      .select()
-      .from(heightOptions)
-      .where(eq(heightOptions.cabinetType, cabinetType))
-      .orderBy(heightOptions.sortOrder);
-  }
-
-  async createHeightOption(option: InsertHeightOption): Promise<HeightOption> {
-    const [created] = await db.insert(heightOptions).values(option).returning();
-    return created;
-  }
-
-  async deleteHeightOption(id: number): Promise<boolean> {
-    const result = await db.delete(heightOptions).where(eq(heightOptions.id, id)).returning();
-    return result.length > 0;
-  }
-
-  // ── Finish price matrix ───────────────────────────────────────────────────
-
-  async getFinishPriceMatrix(): Promise<FinishPriceMatrix[]> {
-    return db.select().from(finishPriceMatrix);
-  }
-
-  async upsertFinishPriceMatrix(entry: InsertFinishPriceMatrix): Promise<FinishPriceMatrix> {
+  async upsertTallHeight(entry: InsertTallHeight): Promise<TallHeight> {
     const [existing] = await db
       .select()
-      .from(finishPriceMatrix)
-      .where(
-        and(
-          eq(finishPriceMatrix.cabinetType, entry.cabinetType),
-          eq(finishPriceMatrix.finishingOptionId, entry.finishingOptionId),
-        )
-      );
+      .from(tallHeights)
+      .where(and(
+        eq(tallHeights.heightMm, entry.heightMm),
+        eq(tallHeights.finishId, entry.finishId),
+      ));
     if (existing) {
-      const [updated] = await db
-        .update(finishPriceMatrix)
-        .set({ pricePerMeter: entry.pricePerMeter, currency: entry.currency })
-        .where(eq(finishPriceMatrix.id, existing.id))
+      const [u] = await db
+        .update(tallHeights)
+        .set({ priceCnyPerM: entry.priceCnyPerM, source: entry.source })
+        .where(eq(tallHeights.id, existing.id))
         .returning();
-      return updated;
+      return u;
     }
-    const [created] = await db.insert(finishPriceMatrix).values(entry).returning();
+    const [c] = await db.insert(tallHeights).values(entry).returning();
+    return c;
+  }
+
+  async getPricingSettings(): Promise<PricingSettings> {
+    const [row] = await db.select().from(pricingSettings).limit(1);
+    if (row) return row;
+    const [created] = await db.insert(pricingSettings).values({}).returning();
     return created;
+  }
+
+  async updatePricingSettings(updates: Partial<InsertPricingSettings>): Promise<PricingSettings> {
+    const current = await this.getPricingSettings();
+    const [updated] = await db
+      .update(pricingSettings)
+      .set(updates)
+      .where(eq(pricingSettings.id, current.id))
+      .returning();
+    return updated;
   }
 }
 
