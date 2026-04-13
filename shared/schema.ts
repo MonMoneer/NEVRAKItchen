@@ -155,6 +155,16 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// ─── Finish price matrix (Finish × Cabinet Type → price per linear meter) ────
+
+export const finishPriceMatrix = pgTable("finish_price_matrix", {
+  id: serial("id").primaryKey(),
+  cabinetType: text("cabinet_type").notNull(), // base_cab | wall_cab | tall_cab | island_cab | panels | drawer | fillers
+  finishingOptionId: integer("finishing_option_id").notNull().references(() => finishingOptions.id, { onDelete: "cascade" }),
+  pricePerMeter: numeric("price_per_meter", { precision: 10, scale: 2 }).notNull().default("0"),
+  currency: text("currency").notNull().default("AED"),
+});
+
 // ─── Insert schemas ──────────────────────────────────────────────────────────
 
 export const insertAdminSettingsSchema = createInsertSchema(adminSettings).omit({ id: true });
@@ -170,6 +180,7 @@ export const insertProjectAttachmentSchema = createInsertSchema(projectAttachmen
 export const insertPriceMatrixSchema = createInsertSchema(priceMatrix).omit({ id: true });
 export const insertDepthOptionSchema = createInsertSchema(depthOptions).omit({ id: true });
 export const insertHeightOptionSchema = createInsertSchema(heightOptions).omit({ id: true });
+export const insertFinishPriceMatrixSchema = createInsertSchema(finishPriceMatrix).omit({ id: true });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -211,3 +222,6 @@ export type DepthOption = typeof depthOptions.$inferSelect;
 
 export type InsertHeightOption = z.infer<typeof insertHeightOptionSchema>;
 export type HeightOption = typeof heightOptions.$inferSelect;
+
+export type InsertFinishPriceMatrix = z.infer<typeof insertFinishPriceMatrixSchema>;
+export type FinishPriceMatrix = typeof finishPriceMatrix.$inferSelect;

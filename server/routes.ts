@@ -15,6 +15,7 @@ import {
   insertPriceMatrixSchema,
   insertDepthOptionSchema,
   insertHeightOptionSchema,
+  insertFinishPriceMatrixSchema,
 } from "@shared/schema";
 import type { User } from "@shared/schema";
 
@@ -455,6 +456,20 @@ export async function registerRoutes(
     const deleted = await storage.deleteHeightOption(id);
     if (!deleted) return res.status(404).json({ error: "Not found" });
     res.json({ success: true });
+  });
+
+  // ── Finish price matrix ───────────────────────────────────────────────────
+
+  app.get("/api/finish-price-matrix", async (_req, res) => {
+    const entries = await storage.getFinishPriceMatrix();
+    res.json(entries);
+  });
+
+  app.put("/api/finish-price-matrix", async (req, res) => {
+    const parsed = insertFinishPriceMatrixSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const entry = await storage.upsertFinishPriceMatrix(parsed.data);
+    res.json(entry);
   });
 
   // ── Users (admin only) ────────────────────────────────────────────────────

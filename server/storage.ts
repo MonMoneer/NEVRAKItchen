@@ -12,9 +12,10 @@ import {
   type PriceMatrix, type InsertPriceMatrix,
   type DepthOption, type InsertDepthOption,
   type HeightOption, type InsertHeightOption,
+  type FinishPriceMatrix, type InsertFinishPriceMatrix,
   adminSettings, pricingConfig, finishingOptions, savedProjects,
   spaces, spacePhotos, elementDefinitions, wallPoints, users,
-  projectAttachments, priceMatrix, depthOptions, heightOptions,
+  projectAttachments, priceMatrix, depthOptions, heightOptions, finishPriceMatrix,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, desc, and, sql } from "drizzle-orm";
@@ -95,6 +96,10 @@ export interface IStorage {
   getHeightOptions(cabinetType: string): Promise<HeightOption[]>;
   createHeightOption(option: InsertHeightOption): Promise<HeightOption>;
   deleteHeightOption(id: number): Promise<boolean>;
+
+  // Finish price matrix
+  getFinishPriceMatrix(): Promise<FinishPriceMatrix[]>;
+  upsertFinishPriceMatrix(entry: InsertFinishPriceMatrix): Promise<FinishPriceMatrix>;
 }
 
 // ─── Implementation ──────────────────────────────────────────────────────────
@@ -452,6 +457,34 @@ export class DatabaseStorage implements IStorage {
   async deleteHeightOption(id: number): Promise<boolean> {
     const result = await db.delete(heightOptions).where(eq(heightOptions.id, id)).returning();
     return result.length > 0;
+  }
+
+  // ── Finish price matrix ───────────────────────────────────────────────────
+
+  async getFinishPriceMatrix(): Promise<FinishPriceMatrix[]> {
+    return db.select().from(finishPriceMatrix);
+  }
+
+  async upsertFinishPriceMatrix(entry: InsertFinishPriceMatrix): Promise<FinishPriceMatrix> {
+    const [existing] = await db
+      .select()
+      .from(finishPriceMatrix)
+      .where(
+        and(
+          eq(finishPriceMatrix.cabinetType, entry.cabinetType),
+          eq(finishPriceMatrix.finishingOptionId, entry.finishingOptionId),
+        )
+      );
+    if (existing) {
+      const [updated] = await db
+        .update(finishPriceMatrix)
+        .set({ pricePerMeter: entry.pricePerMeter, currency: entry.currency })
+        .where(eq(finishPriceMatrix.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(finishPriceMatrix).values(entry).returning();
+    return created;
   }
 }
 

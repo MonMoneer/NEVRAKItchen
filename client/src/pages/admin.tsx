@@ -15,17 +15,17 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Save, Trash2, Plus } from "lucide-react";
-import type { AdminSettings, PricingConfig, FinishingOption, ElementDefinition, PriceMatrix, DepthOption, HeightOption } from "@shared/schema";
+import type { AdminSettings, PricingConfig, FinishingOption, ElementDefinition, PriceMatrix, DepthOption, HeightOption, FinishPriceMatrix } from "@shared/schema";
 
-const CABINET_TYPES = ["base", "wall_cabinet", "tall", "island", "divider", "drawer"] as const;
-const cabinetLabels: Record<string, string> = {
-  base: "Base Cabinet",
-  wall_cabinet: "Wall Cabinet",
-  tall: "Tall Cabinet",
-  island: "Island",
-  divider: "Divider",
-  drawer: "Drawer",
-};
+const FINISH_CABINET_TYPES = [
+  { key: "base_cab",    label: "Base Cabinet" },
+  { key: "wall_cab",   label: "Wall Cabinet" },
+  { key: "tall_cab",   label: "Tall Cabinet" },
+  { key: "island_cab", label: "Island Cabinet" },
+  { key: "panels",     label: "Panels" },
+  { key: "drawer",     label: "Drawer" },
+  { key: "fillers",    label: "Fillers" },
+] as const;
 
 export default function Admin() {
   const [, navigate] = useLocation();
@@ -33,10 +33,6 @@ export default function Admin() {
 
   const { data: settings, isLoading: settingsLoading } = useQuery<AdminSettings>({
     queryKey: ["/api/admin/settings"],
-  });
-  const [matrixType, setMatrixType] = useState<string>("base");
-  const { data: pricing, isLoading: pricingLoading } = useQuery<PricingConfig[]>({
-    queryKey: ["/api/pricing"],
   });
   const { data: finishingOptions, isLoading: finishingLoading } = useQuery<FinishingOption[]>({
     queryKey: ["/api/finishing-options"],
@@ -53,37 +49,12 @@ export default function Admin() {
     },
   });
 
-  const pricingMutation = useMutation({
-    mutationFn: (data: { id: number } & Partial<PricingConfig>) =>
-      apiRequest("PUT", "/api/pricing", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pricing"] });
-      toast({ title: "Pricing saved" });
-    },
-  });
-
   const finishingMutation = useMutation({
     mutationFn: (data: { id: number } & Partial<FinishingOption>) =>
       apiRequest("PUT", "/api/finishing-options", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/finishing-options"] });
       toast({ title: "Finishing option saved" });
-    },
-  });
-
-  const addPricingMutation = useMutation({
-    mutationFn: (data: Partial<PricingConfig>) => apiRequest("POST", "/api/pricing", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pricing"] });
-      toast({ title: "Added new pricing" });
-    },
-  });
-
-  const deletePricingMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/pricing/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pricing"] });
-      toast({ title: "Pricing option deleted" });
     },
   });
 
@@ -123,7 +94,7 @@ export default function Admin() {
     },
   });
 
-  const isLoading = settingsLoading || pricingLoading || finishingLoading;
+  const isLoading = settingsLoading || finishingLoading;
 
   return (
     <div className="min-h-screen bg-background" data-testid="admin-page">
@@ -163,23 +134,13 @@ export default function Admin() {
             <TabsContent value="pricing">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Price Matrix (Depth × Height)</CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">Set price per meter for each depth/height combo. For divider & drawer, price is per piece.</p>
+                  <CardTitle className="text-base">Finish Price Matrix</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Set price per linear meter (AED/m) for each cabinet type × finish combination.
+                  </p>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex gap-2 flex-wrap mb-4">
-                    {CABINET_TYPES.map((t) => (
-                      <Button
-                        key={t}
-                        size="sm"
-                        variant={matrixType === t ? "default" : "outline"}
-                        onClick={() => setMatrixType(t)}
-                      >
-                        {cabinetLabels[t]}
-                      </Button>
-                    ))}
-                  </div>
-                  <PriceMatrixGrid cabinetType={matrixType} />
+                  <FinishPriceMatrixGrid finishingOptions={finishingOptions ?? []} />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -261,201 +222,87 @@ export default function Admin() {
   );
 }
 
-function PriceMatrixGrid({ cabinetType }: { cabinetType: string }) {
-  const { toast } = useToast();
-  const [newDepth, setNewDepth] = useState("");
-  const [newHeight, setNewHeight] = useState("");
-
-  const { data: depthOpts = [] } = useQuery<DepthOption[]>({
-    queryKey: ["/api/depth-options", cabinetType],
-    queryFn: () => fetch(`/api/depth-options?type=${cabinetType}`).then((r) => r.json()),
-  });
-  const { data: heightOpts = [] } = useQuery<HeightOption[]>({
-    queryKey: ["/api/height-options", cabinetType],
-    queryFn: () => fetch(`/api/height-options?type=${cabinetType}`).then((r) => r.json()),
-  });
-  const { data: matrix = [] } = useQuery<PriceMatrix[]>({
-    queryKey: ["/api/price-matrix", cabinetType],
-    queryFn: () => fetch(`/api/price-matrix?type=${cabinetType}`).then((r) => r.json()),
+function FinishPriceMatrixGrid({ finishingOptions }: { finishingOptions: FinishingOption[] }) {
+  const { data: matrix = [], isLoading } = useQuery<FinishPriceMatrix[]>({
+    queryKey: ["/api/finish-price-matrix"],
   });
 
   const upsertMutation = useMutation({
-    mutationFn: (data: { cabinetType: string; depth: number; height: number; pricePerUnit: string }) =>
-      apiRequest("PUT", "/api/price-matrix", { ...data, currency: "AED" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/price-matrix", cabinetType] }),
+    mutationFn: (data: { cabinetType: string; finishingOptionId: number; pricePerMeter: string }) =>
+      apiRequest("PUT", "/api/finish-price-matrix", { ...data, currency: "AED" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finish-price-matrix"] }),
   });
 
-  const addDepthMutation = useMutation({
-    mutationFn: (data: { cabinetType: string; value: number; sortOrder: number }) =>
-      apiRequest("POST", "/api/depth-options", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/depth-options", cabinetType] });
-      toast({ title: "Depth option added" });
-      setNewDepth("");
-    },
-  });
-
-  const addHeightMutation = useMutation({
-    mutationFn: (data: { cabinetType: string; value: number; sortOrder: number }) =>
-      apiRequest("POST", "/api/height-options", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/height-options", cabinetType] });
-      toast({ title: "Height option added" });
-      setNewHeight("");
-    },
-  });
-
-  const deleteDepthMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/depth-options/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/depth-options", cabinetType] }),
-  });
-
-  const deleteHeightMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/height-options/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/height-options", cabinetType] }),
-  });
-
-  const getPrice = (depth: number, height: number): string => {
-    const entry = matrix.find((m) => m.depth === depth && m.height === height);
-    return entry ? String(entry.pricePerUnit) : "";
+  const getPrice = (cabinetType: string, finishingOptionId: number): string => {
+    const entry = matrix.find(
+      (m) => m.cabinetType === cabinetType && m.finishingOptionId === finishingOptionId
+    );
+    return entry ? String(entry.pricePerMeter) : "";
   };
 
-  const depths = depthOpts.map((d) => d.value);
-  const heights = heightOpts.map((h) => h.value);
+  if (isLoading) return <Skeleton className="h-40 w-full" />;
+
+  if (finishingOptions.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No finishing options yet. Add them in the Finishing Options tab first.
+      </p>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="overflow-x-auto">
-        <table className="border-collapse text-sm">
-          <thead>
-            <tr>
-              <th className="border border-border px-3 py-2 bg-orange-100 text-left font-medium">
-                Height \ Depth
+    <div className="overflow-x-auto">
+      <table className="border-collapse text-sm">
+        <thead>
+          <tr>
+            <th className="border border-border px-3 py-2 bg-orange-100 text-left font-medium whitespace-nowrap">
+              Cabinet Type
+            </th>
+            {finishingOptions.map((f) => (
+              <th
+                key={f.id}
+                className="border border-border px-3 py-2 bg-yellow-100 text-center font-medium min-w-[110px] whitespace-nowrap"
+              >
+                {f.label}
               </th>
-              {depths.map((d) => (
-                <th key={d} className="border border-border px-3 py-2 bg-yellow-100 text-center font-medium min-w-[100px]">
-                  <div className="flex items-center justify-center gap-1">
-                    {d} cm
-                    <button
-                      onClick={() => {
-                        const opt = depthOpts.find((o) => o.value === d);
-                        if (opt) deleteDepthMutation.mutate(opt.id);
-                      }}
-                      className="text-red-400 hover:text-red-600 ml-1"
-                      title="Remove depth"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </th>
-              ))}
-              <th className="border border-border px-2 py-2 bg-yellow-50">
-                <div className="flex items-center gap-1">
-                  <Input
-                    type="number"
-                    value={newDepth}
-                    onChange={(e) => setNewDepth(e.target.value)}
-                    className="w-20 h-8 text-xs"
-                    placeholder="New depth"
-                  />
-                  <Button
-                    size="sm"
-                    variant="default"
-                    className="h-8 px-3"
-                    disabled={!newDepth || addDepthMutation.isPending}
-                    onClick={() =>
-                      addDepthMutation.mutate({
-                        cabinetType,
-                        value: parseInt(newDepth),
-                        sortOrder: depths.length,
-                      })
-                    }
-                  >
-                    <Plus className="w-3 h-3 mr-1" />
-                    Add
-                  </Button>
-                </div>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {heights.map((h) => (
-              <tr key={h}>
-                <td className="border border-border px-3 py-2 bg-orange-50 font-medium">
-                  <div className="flex items-center gap-1">
-                    {h} cm
-                    <button
-                      onClick={() => {
-                        const opt = heightOpts.find((o) => o.value === h);
-                        if (opt) deleteHeightMutation.mutate(opt.id);
-                      }}
-                      className="text-red-400 hover:text-red-600 ml-1"
-                      title="Remove height"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </td>
-                {depths.map((d) => (
-                  <td key={`${d}-${h}`} className="border border-border px-1 py-1 bg-blue-50">
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {FINISH_CABINET_TYPES.map(({ key, label }) => (
+            <tr key={key}>
+              <td className="border border-border px-3 py-2 bg-orange-50 font-medium whitespace-nowrap">
+                {label}
+              </td>
+              {finishingOptions.map((f) => {
+                const currentVal = getPrice(key, f.id);
+                return (
+                  <td key={f.id} className="border border-border px-1 py-1 bg-blue-50">
                     <Input
                       type="number"
-                      defaultValue={getPrice(d, h)}
+                      defaultValue={currentVal}
                       className="w-full h-8 text-xs text-center"
-                      placeholder="AED"
+                      placeholder="AED/m"
+                      min="0"
+                      step="0.01"
                       onBlur={(e) => {
                         const val = e.target.value;
-                        if (val && val !== getPrice(d, h)) {
+                        if (val !== "" && val !== currentVal) {
                           upsertMutation.mutate({
-                            cabinetType,
-                            depth: d,
-                            height: h,
-                            pricePerUnit: val,
+                            cabinetType: key,
+                            finishingOptionId: f.id,
+                            pricePerMeter: val,
                           });
                         }
                       }}
                     />
                   </td>
-                ))}
-                <td className="border border-border bg-gray-50" />
-              </tr>
-            ))}
-            <tr>
-              <td className="border border-border px-2 py-2 bg-orange-50">
-                <div className="flex items-center gap-1">
-                  <Input
-                    type="number"
-                    value={newHeight}
-                    onChange={(e) => setNewHeight(e.target.value)}
-                    className="w-20 h-8 text-xs"
-                    placeholder="New height"
-                  />
-                  <Button
-                    size="sm"
-                    variant="default"
-                    className="h-8 px-3"
-                    disabled={!newHeight || addHeightMutation.isPending}
-                    onClick={() =>
-                      addHeightMutation.mutate({
-                        cabinetType,
-                        value: parseInt(newHeight),
-                        sortOrder: heights.length,
-                      })
-                    }
-                  >
-                    <Plus className="w-3 h-3 mr-1" />
-                    Add
-                  </Button>
-                </div>
-              </td>
-              {depths.map((d) => (
-                <td key={d} className="border border-border bg-gray-50" />
-              ))}
-              <td className="border border-border bg-gray-50" />
+                );
+              })}
             </tr>
-          </tbody>
-        </table>
-      </div>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
