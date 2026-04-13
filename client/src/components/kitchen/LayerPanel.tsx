@@ -59,12 +59,26 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
   const { data: settings } = useQuery<PricingSettings>({ queryKey: ["/api/pricing-settings"] });
 
   const handleAddLayer = (type: LayerType) => {
-    const defaultFinish = finishes[0]?.id ?? null;
+    // Default finish: "Solid Matte / Soft Touch" (fall back to first if not found)
+    const defaultFinish =
+      finishes.find((f) => f.name === "Solid Matte / Soft Touch")?.id ??
+      finishes[0]?.id ??
+      null;
+
+    // Defaults per layer type (cm)
+    const DEFAULTS: Record<string, { depth: number; height: number }> = {
+      base:         { depth: 55, height: 77 },
+      wall_cabinet: { depth: 33, height: 70 },
+      tall:         { depth: 55, height: 220 },
+      island:       { depth: 60, height: 77 },
+    };
+    const d = DEFAULTS[type];
+
     const newLayer: Layer = {
       id: generateId(),
       type,
-      depth: COUNT_TYPES.includes(type) ? null : type === "wall_cabinet" ? 35 : 60,
-      height: COUNT_TYPES.includes(type) ? null : type === "tall" ? 210 : type === "wall_cabinet" ? 70 : 90,
+      depth: COUNT_TYPES.includes(type) ? null : d?.depth ?? 60,
+      height: COUNT_TYPES.includes(type) ? null : d?.height ?? 90,
       finishId: DRAWABLE_TYPES.includes(type) ? defaultFinish : null,
       cabinetIds: [],
     };
