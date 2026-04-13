@@ -56,11 +56,18 @@ async function runMigrations() {
     await pool.query(`DROP TABLE IF EXISTS height_options CASCADE`);
     await pool.query(`DROP TABLE IF EXISTS pricing_config CASCADE`);
     await pool.query(`DROP TABLE IF EXISTS finishing_options CASCADE`);
-
-    // Seed new Dream Home pricing tables (idempotent)
-    await seedDreamHomePricing();
+    console.log("[migration] schema migrations OK");
   } catch (err: any) {
-    console.error("[migration] failed:", err.message);
+    console.error("[migration] failed:", err.message, err.stack);
+  }
+
+  // Seed in its own try/catch so a migration failure can't swallow it
+  try {
+    console.log("[seed] starting seedDreamHomePricing...");
+    await seedDreamHomePricing();
+    console.log("[seed] seedDreamHomePricing done");
+  } catch (err: any) {
+    console.error("[seed] failed:", err.message, err.stack);
   }
 }
 
