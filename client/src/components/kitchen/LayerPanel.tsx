@@ -211,13 +211,46 @@ function LayerCard({
       })
     : { subtotalAED: 0, breakdown: "Loading...", error: undefined as string | undefined };
 
+  const subtotalLabel = result.error ? "—" : `${result.subtotalAED.toFixed(0)} AED`;
+  const qtyOrLength = isDrawable
+    ? `${lengthM.toFixed(2)} m`
+    : `${layer.qty ?? 0} pcs`;
+
+  // Collapsed (inactive) card — compact one-line summary
+  if (!isActive) {
+    return (
+      <div
+        className="rounded-md border border-border bg-card hover:border-primary/40 cursor-pointer transition-colors p-2 flex items-center gap-2"
+        onClick={onSelect}
+      >
+        <div
+          className="w-2.5 h-2.5 rounded-sm shrink-0"
+          style={{ backgroundColor: LAYER_COLORS[layer.type] }}
+        />
+        <span className="text-xs font-medium text-card-foreground truncate flex-1">
+          {LAYER_LABELS[layer.type]}
+        </span>
+        <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+          {qtyOrLength}
+        </span>
+        <span className="text-[11px] font-semibold font-mono text-primary shrink-0 min-w-[60px] text-right">
+          {subtotalLabel}
+        </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="text-muted-foreground hover:text-red-500 shrink-0"
+          title="Delete layer"
+        >
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  }
+
+  // Expanded (active) card — full details
   return (
     <div
-      className={`rounded-md border p-2.5 cursor-pointer transition-colors ${
-        isActive
-          ? "border-primary bg-primary/5 ring-1 ring-primary/30"
-          : "border-border bg-card hover:border-primary/40"
-      }`}
+      className="rounded-md border p-2.5 cursor-pointer transition-colors border-primary bg-primary/5 ring-1 ring-primary/30"
       onClick={onSelect}
     >
       <div className="flex items-center gap-1.5 mb-2">
