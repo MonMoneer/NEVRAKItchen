@@ -387,14 +387,19 @@ function LayerCard({
 
       <Separator className="my-1.5" />
 
-      {result.rateLabel && !result.error && (
-        <div className="flex justify-between text-[10px] mb-0.5">
-          <span className="text-muted-foreground">Rate</span>
-          <span className="font-mono text-muted-foreground text-right break-words">
-            {result.rateLabel}
-          </span>
-        </div>
-      )}
+      {!result.error && (() => {
+        const unit = isCount ? "pc" : "m";
+        const denom = isCount ? (layer.qty ?? 0) : lengthM;
+        const ratePerUnit = denom > 0 ? result.subtotalAED / denom : 0;
+        return (
+          <div className="flex justify-between text-[10px] mb-0.5">
+            <span className="text-muted-foreground">Rate</span>
+            <span className="font-mono text-muted-foreground">
+              {ratePerUnit > 0 ? `${ratePerUnit.toFixed(0)} AED / ${unit}` : "—"}
+            </span>
+          </div>
+        );
+      })()}
 
       <div className="flex justify-between text-xs">
         <span className="font-medium text-card-foreground">Subtotal</span>
