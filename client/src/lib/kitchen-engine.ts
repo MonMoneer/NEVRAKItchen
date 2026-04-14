@@ -27,6 +27,21 @@ export interface Cabinet {
   layerId?: string;
 }
 
+// Free-floating island placed via reference wall + offset rail.
+// NOT a subtype of Cabinet — see 2026-04-15 island redesign plan.
+export interface Island {
+  id: string;
+  layerId: string;              // FK to a Layer (type === "island")
+  referenceWallId: string;      // FK to Wall
+  offsetFromWallCm: number;     // perpendicular distance from reference wall
+  depthSide: "near" | "far";    // which side of rail the depth grew toward
+  anchorPoint: Point;           // first corner (click 2) in canvas pixels
+  lengthCm: number;             // along-rail dimension
+  depthCm: number;              // perpendicular-to-rail dimension
+  rotationRad: number;          // wall angle at placement time
+  heightCm: number;             // counter height (typed only, not drawn)
+}
+
 export interface Layer {
   id: string;
   type: LayerType;
@@ -1617,4 +1632,57 @@ function segmentsIntersect(a1: Point, a2: Point, b1: Point, b2: Point): boolean 
 
 function cross(o: Point, a: Point, b: Point): number {
   return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+}
+
+// ─── Island geometry helpers ──────────────────────────────────────────────
+
+/** Angle of a wall in radians, using the standard math convention (CCW from +X axis). */
+export function wallAngleRad(wall: Wall): number {
+  return Math.atan2(wall.end.y - wall.start.y, wall.end.x - wall.start.x);
+}
+
+/** Unit vector perpendicular to a wall direction. */
+export function wallPerpendicular(wall: Wall): { nx: number; ny: number } {
+  const dx = wall.end.x - wall.start.x;
+  const dy = wall.end.y - wall.start.y;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  return { nx: -dy / len, ny: dx / len };
+}
+
+/** Foot of perpendicular from point p onto the infinite line through a-b. */
+export function projectPointOnLine(p: Point, a: Point, b: Point): Point {
+  const ax = b.x - a.x;
+  const ay = b.y - a.y;
+  const lenSq = ax * ax + ay * ay;
+  if (lenSq === 0) return { ...a };
+  const t = ((p.x - a.x) * ax + (p.y - a.y) * ay) / lenSq;
+  return { x: a.x + ax * t, y: a.y + ay * t };
+}
+
+/** Signed perpendicular distance from p to the line through a-b.
+ *  Positive on one side, negative on the other. Sign convention matches wallPerpendicular(). */
+export function signedPerpendicularDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.sqrt(dx * dx + dy * dy) || 1;
+  return ((p.x - a.x) * -dy + (p.y - a.y) * dx) / len;
+}
+
+/** Build the rail segment: parallel to the wall, offset on the given side. */
+export function computeRail(
+  wall: Wall,
+  offsetCm: number,
+  side: "near" | "far"
+): { start: Point; end: Point } {
+  const { nx, ny } = wallPerpendicular(wall);
+  const offsetPx = offsetCm * PIXELS_PER_CM * (side === "near" ? -1 : 1);
+  return {
+    start: { x: wall.start.x + nx * offsetPx, y: wall.start.y + ny * offsetPx },
+    end:   { x: wall.end.x   + nx * offsetPx, y: wall.end.y   + ny * offsetPx },
+  };
+}
+
+/** Normalize an incoming raw island from saved JSON (future-proofing). */
+export function normalizeIsland(raw: any): Island {
+  return { ...raw } as Island;
 }
