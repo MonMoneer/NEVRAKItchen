@@ -2370,6 +2370,8 @@ export function DesignerCanvas({
 				const iPhase = useCanvasStore.getState().islandDrawingState;
 				const inTypeablePhase =
 					iPhase.phase === 'draggingLength' || iPhase.phase === 'draggingDepth';
+				// eslint-disable-next-line no-console
+				console.log('[island-keydown]', { key: e.key, phase: iPhase.phase, typed: islandTypedInput, inTypeablePhase, target: (e.target as HTMLElement)?.tagName });
 
 				// Escape walks back one phase (or cancels typed input if active)
 				if (e.key === 'Escape' && iPhase.phase !== 'idle') {
