@@ -36,11 +36,9 @@ export interface WallPointItem {
 
 export type IslandDrawingState =
   | { phase: "idle" }
-  | { phase: "pickingWall" }
-  | { phase: "typingOffset"; referenceWallId: string }
-  | { phase: "pickingCorner1"; referenceWallId: string; offsetFromWallCm: number; depthSide: "near" | "far" }
-  | { phase: "draggingLength"; referenceWallId: string; offsetFromWallCm: number; depthSide: "near" | "far"; anchor: Point }
-  | { phase: "draggingDepth"; referenceWallId: string; offsetFromWallCm: number; depthSide: "near" | "far"; anchor: Point; lengthCm: number };
+  | { phase: "pickingCorner1" }
+  | { phase: "draggingLength"; anchor: Point }
+  | { phase: "draggingDepth"; anchor: Point; lengthCm: number; axis: "h" | "v" };
 
 interface DesignData {
   walls: Wall[];
@@ -528,7 +526,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   startIslandDraw: () =>
     set((state) => ({
-      islandDrawingState: { phase: "pickingWall" },
+      islandDrawingState: { phase: "pickingCorner1" },
       // Neutralize any in-progress tool drawing so wall/cabinet previews don't show up
       drawingState: {
         ...state.drawingState,

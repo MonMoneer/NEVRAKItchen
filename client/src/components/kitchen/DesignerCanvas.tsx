@@ -1147,76 +1147,55 @@ export function DesignerCanvas({
 		[scale, stagePos]
 	);
 
-	// ── New island flow click handler (4-click reference-wall drawing) ──
+	// ── New island flow click handler (free H/V 3-click drawing, no walls) ──
 	const handleIslandClick = useCallback(
 		(worldPoint: Point) => {
 			const state = useCanvasStore.getState();
 			const phase = state.islandDrawingState;
-			const walls = state.drawingState.walls;
 
 			switch (phase.phase) {
-				case 'pickingWall': {
-					const tolerance = 10; // px, world space
-					const hit = walls.find((w) => {
-						const projected = projectPointOnLine(worldPoint, w.start, w.end);
-						const dx = projected.x - worldPoint.x;
-						const dy = projected.y - worldPoint.y;
-						return Math.sqrt(dx * dx + dy * dy) <= tolerance;
-					});
-					if (!hit) return;
-					setIslandPhase({ phase: 'typingOffset', referenceWallId: hit.id });
-					return;
-				}
 				case 'pickingCorner1': {
-					const wall = walls.find((w) => w.id === phase.referenceWallId);
-					if (!wall) return;
-					const rail = computeRail(wall, phase.offsetFromWallCm, phase.depthSide);
-					const projected = projectPointOnLine(worldPoint, rail.start, rail.end);
 					setIslandPhase({
 						phase: 'draggingLength',
-						referenceWallId: phase.referenceWallId,
-						offsetFromWallCm: phase.offsetFromWallCm,
-						depthSide: phase.depthSide,
-						anchor: projected,
+						anchor: worldPoint,
 					});
 					return;
 				}
 				case 'draggingLength': {
-					const wall = walls.find((w) => w.id === phase.referenceWallId);
-					if (!wall) return;
-					const rail = computeRail(wall, phase.offsetFromWallCm, phase.depthSide);
-					const projected = projectPointOnLine(worldPoint, rail.start, rail.end);
-					const dx = projected.x - phase.anchor.x;
-					const dy = projected.y - phase.anchor.y;
-					const lengthPx = Math.sqrt(dx * dx + dy * dy);
+					// Decide axis from dominant delta
+					const dx = worldPoint.x - phase.anchor.x;
+					const dy = worldPoint.y - phase.anchor.y;
+					if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return; // ignore micro-clicks
+					const axis: 'h' | 'v' = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+					const lengthPx = axis === 'h' ? Math.abs(dx) : Math.abs(dy);
 					const lengthCm = lengthPx / PIXELS_PER_CM;
 					if (lengthCm < 1) return;
 					setIslandPhase({
 						phase: 'draggingDepth',
-						referenceWallId: phase.referenceWallId,
-						offsetFromWallCm: phase.offsetFromWallCm,
-						depthSide: phase.depthSide,
 						anchor: phase.anchor,
 						lengthCm,
+						axis,
 					});
 					return;
 				}
 				case 'draggingDepth': {
-					const wall = walls.find((w) => w.id === phase.referenceWallId);
-					if (!wall || !activeLayerIdFromStore) return;
-					const rail = computeRail(wall, phase.offsetFromWallCm, phase.depthSide);
-					const depthPx = Math.abs(
-						signedPerpendicularDistance(worldPoint, rail.start, rail.end)
-					);
+					if (!activeLayerIdFromStore) return;
+					// Perpendicular distance from cursor to rail axis
+					const depthPx =
+						phase.axis === 'h'
+							? Math.abs(worldPoint.y - phase.anchor.y)
+							: Math.abs(worldPoint.x - phase.anchor.x);
 					const depthCm = depthPx / PIXELS_PER_CM;
 					if (depthCm < 1) return;
-					const rotationRad = wallAngleRad(wall);
+					// axis "h" => length runs left-right => rotation 0
+					// axis "v" => length runs up-down => rotation π/2
+					const rotationRad = phase.axis === 'h' ? 0 : Math.PI / 2;
 					const island: Island = {
 						id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
 						layerId: activeLayerIdFromStore,
-						referenceWallId: phase.referenceWallId,
-						offsetFromWallCm: phase.offsetFromWallCm,
-						depthSide: phase.depthSide,
+						referenceWallId: '',
+						offsetFromWallCm: 0,
+						depthSide: 'far',
 						anchorPoint: phase.anchor,
 						lengthCm: phase.lengthCm,
 						depthCm,
@@ -1261,10 +1240,7 @@ export function DesignerCanvas({
 			// ── New island drawing flow: intercept clicks while drawing ──
 			{
 				const islandPhase = useCanvasStore.getState().islandDrawingState;
-				if (
-					islandPhase.phase !== 'idle' &&
-					islandPhase.phase !== 'typingOffset'
-				) {
+				if (islandPhase.phase !== 'idle') {
 					handleIslandClick(pos);
 					return;
 				}
@@ -2388,32 +2364,15 @@ export function DesignerCanvas({
 				const iPhase = useCanvasStore.getState().islandDrawingState;
 				if (e.key === 'Escape' && iPhase.phase !== 'idle') {
 					switch (iPhase.phase) {
-						case 'pickingWall':
+						case 'pickingCorner1':
 							cancelIslandDraw();
 							break;
-						case 'typingOffset':
-							setIslandPhase({ phase: 'pickingWall' });
-							break;
-						case 'pickingCorner1':
-							setIslandPhase({
-								phase: 'typingOffset',
-								referenceWallId: iPhase.referenceWallId,
-							});
-							break;
 						case 'draggingLength':
-							setIslandPhase({
-								phase: 'pickingCorner1',
-								referenceWallId: iPhase.referenceWallId,
-								offsetFromWallCm: iPhase.offsetFromWallCm,
-								depthSide: iPhase.depthSide,
-							});
+							setIslandPhase({ phase: 'pickingCorner1' });
 							break;
 						case 'draggingDepth':
 							setIslandPhase({
 								phase: 'draggingLength',
-								referenceWallId: iPhase.referenceWallId,
-								offsetFromWallCm: iPhase.offsetFromWallCm,
-								depthSide: iPhase.depthSide,
 								anchor: iPhase.anchor,
 							});
 							break;
@@ -4409,16 +4368,11 @@ export function DesignerCanvas({
 					{renderWallPointRuler()}
 					{renderMeasureTape()}
 					{renderIslandPlacement()}
-					{/* New free-floating islands (Task 5) */}
+					{/* New free-floating islands */}
 					{islands.map((island) => {
-						const wall = drawingState.walls.find(
-							(w) => w.id === island.referenceWallId
-						);
-						if (!wall) return null;
 						const lengthPx = island.lengthCm * PIXELS_PER_CM;
 						const depthPx = island.depthCm * PIXELS_PER_CM;
 						const rotationDeg = (island.rotationRad * 180) / Math.PI;
-						const offsetY = island.depthSide === 'near' ? depthPx : 0;
 						return (
 							<Group key={island.id}>
 								<Rect
@@ -4426,7 +4380,6 @@ export function DesignerCanvas({
 									y={island.anchorPoint.y}
 									width={lengthPx}
 									height={depthPx}
-									offsetY={offsetY}
 									rotation={rotationDeg}
 									fill="#F59E0B"
 									opacity={0.4}
@@ -4434,8 +4387,8 @@ export function DesignerCanvas({
 									strokeWidth={2}
 								/>
 								<Text
-									x={island.anchorPoint.x}
-									y={island.anchorPoint.y}
+									x={island.anchorPoint.x + 4}
+									y={island.anchorPoint.y + 4}
 									text={`Island\n${island.lengthCm.toFixed(0)} × ${island.depthCm.toFixed(0)} cm`}
 									fontSize={10}
 									fill="#78350F"
@@ -4444,119 +4397,125 @@ export function DesignerCanvas({
 							</Group>
 						);
 					})}
-					{/* In-progress island drawing overlays */}
-					{islandDrawingState.phase !== 'idle' && (() => {
+					{/* In-progress island drawing overlay (H/V rubber-band, no walls) */}
+					{islandDrawingState.phase !== 'idle' && cursorWorld && (() => {
 						const phase = islandDrawingState;
-						const refWallId =
-							phase.phase === 'pickingWall'
-								? null
-								: ((phase as { referenceWallId?: string }).referenceWallId ?? null);
-						const refWall = refWallId
-							? drawingState.walls.find((w) => w.id === refWallId)
-							: null;
-						return (
-							<Group listening={false}>
-								{refWall && (
+						if (phase.phase === 'pickingCorner1') {
+							// Crosshair at cursor so the rep knows where the first click will land
+							return (
+								<Group listening={false}>
 									<Line
 										points={[
-											refWall.start.x,
-											refWall.start.y,
-											refWall.end.x,
-											refWall.end.y,
+											cursorWorld.x - 8,
+											cursorWorld.y,
+											cursorWorld.x + 8,
+											cursorWorld.y,
 										]}
 										stroke="#F59E0B"
-										strokeWidth={6}
-										opacity={0.5}
+										strokeWidth={1.5}
 									/>
-								)}
-								{refWall &&
-									phase.phase !== 'pickingWall' &&
-									phase.phase !== 'typingOffset' &&
-									(() => {
-										const p = phase as {
-											offsetFromWallCm: number;
-											depthSide: 'near' | 'far';
-										};
-										const rail = computeRail(
-											refWall,
-											p.offsetFromWallCm,
-											p.depthSide
-										);
-										return (
-											<Line
-												points={[
-													rail.start.x,
-													rail.start.y,
-													rail.end.x,
-													rail.end.y,
-												]}
-												stroke="#F59E0B"
-												strokeWidth={1.5}
-												dash={[6, 4]}
-												opacity={0.7}
-											/>
-										);
-									})()}
-								{(phase.phase === 'draggingLength' ||
-									phase.phase === 'draggingDepth') &&
-									refWall &&
-									cursorWorld &&
-									(() => {
-										const p = phase as {
-											offsetFromWallCm: number;
-											depthSide: 'near' | 'far';
-											anchor: Point;
-											lengthCm?: number;
-										};
-										const rail = computeRail(
-											refWall,
-											p.offsetFromWallCm,
-											p.depthSide
-										);
-										const currentOnRail = projectPointOnLine(
-											cursorWorld,
-											rail.start,
-											rail.end
-										);
-										const lengthPx =
-											phase.phase === 'draggingLength'
-												? Math.sqrt(
-														Math.pow(currentOnRail.x - p.anchor.x, 2) +
-															Math.pow(currentOnRail.y - p.anchor.y, 2)
-													)
-												: (p.lengthCm ?? 0) * PIXELS_PER_CM;
-										const depthPx =
-											phase.phase === 'draggingDepth'
-												? Math.abs(
-														signedPerpendicularDistance(
-															cursorWorld,
-															rail.start,
-															rail.end
-														)
-													)
-												: 0;
-										const rotationDeg =
-											(wallAngleRad(refWall) * 180) / Math.PI;
-										return (
-											<Rect
-												x={p.anchor.x}
-												y={p.anchor.y}
-												width={lengthPx}
-												height={depthPx}
-												offsetY={
-													p.depthSide === 'near' ? depthPx : 0
-												}
-												rotation={rotationDeg}
-												fill="#F59E0B"
-												opacity={0.2}
-												stroke="#F59E0B"
-												strokeWidth={1.5}
-												dash={[4, 4]}
-											/>
-										);
-									})()}
-							</Group>
-						);
+									<Line
+										points={[
+											cursorWorld.x,
+											cursorWorld.y - 8,
+											cursorWorld.x,
+											cursorWorld.y + 8,
+										]}
+										stroke="#F59E0B"
+										strokeWidth={1.5}
+									/>
+								</Group>
+							);
+						}
+						if (phase.phase === 'draggingLength') {
+							const dx = cursorWorld.x - phase.anchor.x;
+							const dy = cursorWorld.y - phase.anchor.y;
+							const axis: 'h' | 'v' =
+								Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+							const lengthPx = axis === 'h' ? Math.abs(dx) : Math.abs(dy);
+							const signedLen = axis === 'h' ? dx : dy;
+							const rectX =
+								axis === 'h'
+									? signedLen >= 0
+										? phase.anchor.x
+										: phase.anchor.x - lengthPx
+									: phase.anchor.x - 1;
+							const rectY =
+								axis === 'v'
+									? signedLen >= 0
+										? phase.anchor.y
+										: phase.anchor.y - lengthPx
+									: phase.anchor.y - 1;
+							return (
+								<Group listening={false}>
+									<Rect
+										x={rectX}
+										y={rectY}
+										width={axis === 'h' ? lengthPx : 2}
+										height={axis === 'v' ? lengthPx : 2}
+										fill="#F59E0B"
+										opacity={0.4}
+										stroke="#F59E0B"
+										strokeWidth={1.5}
+										dash={[4, 4]}
+									/>
+									<Text
+										x={phase.anchor.x + 6}
+										y={phase.anchor.y - 14}
+										text={`${(lengthPx / PIXELS_PER_CM).toFixed(0)} cm`}
+										fontSize={11}
+										fill="#78350F"
+									/>
+								</Group>
+							);
+						}
+						if (phase.phase === 'draggingDepth') {
+							const { anchor, lengthCm, axis } = phase;
+							const lengthPx = lengthCm * PIXELS_PER_CM;
+							const depthPx =
+								axis === 'h'
+									? Math.abs(cursorWorld.y - anchor.y)
+									: Math.abs(cursorWorld.x - anchor.x);
+							// Determine which side the cursor is on
+							const signedDepth =
+								axis === 'h' ? cursorWorld.y - anchor.y : cursorWorld.x - anchor.x;
+							// Commit sign: which direction the rectangle grows
+							const rectX =
+								axis === 'h'
+									? anchor.x
+									: signedDepth >= 0
+										? anchor.x
+										: anchor.x - depthPx;
+							const rectY =
+								axis === 'v'
+									? anchor.y
+									: signedDepth >= 0
+										? anchor.y
+										: anchor.y - depthPx;
+							return (
+								<Group listening={false}>
+									<Rect
+										x={rectX}
+										y={rectY}
+										width={axis === 'h' ? lengthPx : depthPx}
+										height={axis === 'h' ? depthPx : lengthPx}
+										fill="#F59E0B"
+										opacity={0.4}
+										stroke="#F59E0B"
+										strokeWidth={1.5}
+										dash={[4, 4]}
+									/>
+									<Text
+										x={anchor.x + 6}
+										y={anchor.y - 14}
+										text={`${lengthCm.toFixed(0)} × ${(depthPx / PIXELS_PER_CM).toFixed(0)} cm`}
+										fontSize={11}
+										fill="#78350F"
+									/>
+								</Group>
+							);
+						}
+						return null;
 					})()}
 					{renderAnchorMarkers()}
 					{renderWallPlacementRuler()}
@@ -4570,79 +4529,7 @@ export function DesignerCanvas({
 				</Layer>
 			</Stage>
 
-			{/* New island flow: DOM offset input overlay */}
-			{islandDrawingState.phase === 'typingOffset' && cursorWorld && (() => {
-				const konvaStage = stageRef.current;
-				if (!konvaStage) return null;
-				const screen = konvaStage
-					.getAbsoluteTransform()
-					.point(cursorWorld);
-				const refWallId = islandDrawingState.referenceWallId;
-				return (
-					<IslandInputOverlay
-						label="Offset cm"
-						cursorPx={screen}
-						onCommit={(offset) => {
-							setIslandPhase({
-								phase: 'pickingCorner1',
-								referenceWallId: refWallId,
-								offsetFromWallCm: offset,
-								depthSide: 'far',
-							});
-						}}
-						onCancel={() => setIslandPhase({ phase: 'pickingWall' })}
-					/>
-				);
-			})()}
-
-			{/* New island flow: DOM depth input overlay (pre-filled with 55 — standard base depth) */}
-			{islandDrawingState.phase === 'draggingDepth' && cursorWorld && (() => {
-				const konvaStage = stageRef.current;
-				if (!konvaStage) return null;
-				const screen = konvaStage
-					.getAbsoluteTransform()
-					.point(cursorWorld);
-				const phase = islandDrawingState;
-				return (
-					<IslandInputOverlay
-						key="depth-input"
-						label="Depth cm"
-						initialValue="55"
-						cursorPx={screen}
-						onCommit={(depthCm) => {
-							if (!activeLayerIdFromStore) return;
-							const wall = drawingState.walls.find(
-								(w) => w.id === phase.referenceWallId
-							);
-							if (!wall) return;
-							const rotationRad = wallAngleRad(wall);
-							const island: Island = {
-								id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-								layerId: activeLayerIdFromStore,
-								referenceWallId: phase.referenceWallId,
-								offsetFromWallCm: phase.offsetFromWallCm,
-								depthSide: phase.depthSide,
-								anchorPoint: phase.anchor,
-								lengthCm: phase.lengthCm,
-								depthCm,
-								rotationRad,
-								heightCm: 77,
-							};
-							addIslandAction(island);
-							setIslandPhase({ phase: 'idle' });
-						}}
-						onCancel={() =>
-							setIslandPhase({
-								phase: 'draggingLength',
-								referenceWallId: phase.referenceWallId,
-								offsetFromWallCm: phase.offsetFromWallCm,
-								depthSide: phase.depthSide,
-								anchor: phase.anchor,
-							})
-						}
-					/>
-				);
-			})()}
+			{/* Island drawing overlays are rendered inside the Konva stage now */}
 
 			{/* Wall-point corner-locked distance panel */}
 			{wallPointPlacement?.phase === 'cornerLocked' && !showWallPointForm && (

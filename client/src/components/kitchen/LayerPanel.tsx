@@ -64,16 +64,6 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
   const { data: settings } = useQuery<PricingSettings>({ queryKey: ["/api/pricing-settings"] });
 
   const handleAddLayer = (type: LayerType) => {
-    // Island requires at least one wall as a reference.
-    if (type === "island" && walls.length === 0) {
-      toast({
-        title: "Select wall first",
-        description: "Draw at least one wall before placing an island.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     // Default finish: "Solid Matte / Soft Touch" (fall back to first if not found)
     const defaultFinish =
       finishes.find((f) => f.name === "Solid Matte / Soft Touch")?.id ??
@@ -409,19 +399,6 @@ function LayerCard({
               onChange={(e) => {
                 const v = parseFloat(e.target.value);
                 if (Number.isFinite(v) && v > 0) updateIsland(boundIsland.id, { heightCm: v });
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-
-            <span className="text-muted-foreground self-center">Offset (cm)</span>
-            <Input
-              type="number"
-              value={boundIsland.offsetFromWallCm}
-              min={1}
-              className="h-6 text-xs text-right"
-              onChange={(e) => {
-                const v = parseFloat(e.target.value);
-                if (Number.isFinite(v) && v > 0) updateIsland(boundIsland.id, { offsetFromWallCm: v });
               }}
               onClick={(e) => e.stopPropagation()}
             />
