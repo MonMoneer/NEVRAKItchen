@@ -278,6 +278,11 @@ const MIN_DRAW_DISTANCE = 10;
 const HANDLE_RADIUS = 6;
 const HATCH_SPACING = 10;
 
+// Feature flag — legacy wall-anchored island tool
+// Kept in the repo for reversibility but dead at runtime.
+// The new free-floating island flow (reference wall + offset rail) is wired up in later tasks.
+const USE_LEGACY_ISLAND_TOOL = false;
+
 interface DragState {
 	itemId: string;
 	itemType: 'wall' | 'cabinet';
@@ -961,7 +966,7 @@ export function DesignerCanvas({
 		if (activeCustomTool !== 'measure_tape') {
 			setMeasureTape(null);
 		}
-		if (activeCustomTool !== 'island') {
+		if (USE_LEGACY_ISLAND_TOOL && activeCustomTool !== 'island') {
 			setIslandPlacement(null);
 		}
 	}, [activeCustomTool]);
@@ -1180,7 +1185,7 @@ export function DesignerCanvas({
 			}
 
 			// ── Island Cabinet: 4-Phase CAD-Walk ──────────────────────────────
-			if (activeCustomTool === 'island') {
+			if (USE_LEGACY_ISLAND_TOOL && activeCustomTool === 'island') {
 				if (!islandPlacement || islandPlacement.phase === 'pickingAnchor') {
 					// Phase 0: click must land on a visible wall anchor (within 15px)
 					const ANCHOR_HIT_RADIUS = 15;
@@ -1707,7 +1712,7 @@ export function DesignerCanvas({
 
 			const showAnchorHover =
 				(isWallPlacementTool(activeCustomTool || tool) && !wallPlacement) ||
-				(activeCustomTool === 'island' &&
+				(USE_LEGACY_ISLAND_TOOL && activeCustomTool === 'island' &&
 					(!islandPlacement || islandPlacement.phase === 'pickingAnchor'));
 
 			if (showAnchorHover) {
@@ -2236,6 +2241,7 @@ export function DesignerCanvas({
 	}, [drawingState, onUpdateCabinet, onMoveComplete]);
 
 	const placeIsland = useCallback((ip: IslandPlacementState) => {
+		if (!USE_LEGACY_ISLAND_TOOL) return;
 		const walk = computeIslandWalk(ip);
 		if (!walk) return;
 		if (ip.CL_cm <= 0 || ip.CD_cm <= 0) return;
@@ -2263,7 +2269,7 @@ export function DesignerCanvas({
 				return;
 			}
 			if (e.key === 'Escape') {
-				if (islandPlacement) {
+				if (USE_LEGACY_ISLAND_TOOL && islandPlacement) {
 					// Step back one phase, clearing that phase's value
 					setIslandPlacement((prev) => {
 						if (!prev) return null;
@@ -2297,7 +2303,7 @@ export function DesignerCanvas({
 				}
 			}
 			if (e.key === 'f' || e.key === 'F') {
-				if (islandPlacement?.phase === 'settingCD') {
+				if (USE_LEGACY_ISLAND_TOOL && islandPlacement?.phase === 'settingCD') {
 					setIslandPlacement((prev) =>
 						prev ? { ...prev, CD_flipped: !prev.CD_flipped } : null
 					);
@@ -2935,6 +2941,7 @@ export function DesignerCanvas({
 
 	// ── Island Cabinet 4-Phase ghost rendering ──────────────────────────────
 	const renderIslandPlacement = () => {
+		if (!USE_LEGACY_ISLAND_TOOL) return null;
 		if (!islandPlacement) return null;
 		const ip = islandPlacement;
 		if (ip.phase === 'pickingAnchor' || !ip.anchorPoint) return null;
@@ -4292,7 +4299,7 @@ export function DesignerCanvas({
 				/>
 			)}
 
-			{islandPlacement && islandPlacement.phase !== 'pickingAnchor' && (() => {
+			{USE_LEGACY_ISLAND_TOOL && islandPlacement && islandPlacement.phase !== 'pickingAnchor' && (() => {
 				const ip = islandPlacement;
 				// Compute live cm values for the currently-active phase
 				let liveWL = 0, liveDL = 0, liveCL = 0, liveCD = 0;
