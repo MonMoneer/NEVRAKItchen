@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import type { Wall, Cabinet, Opening, DrawingState, Guideline, Layer } from "@/lib/kitchen-engine";
-import { createInitialDrawingState, normalizeLayer } from "@/lib/kitchen-engine";
+import type { Wall, Cabinet, Opening, DrawingState, Guideline, Layer, Island, Point } from "@/lib/kitchen-engine";
+import { createInitialDrawingState, normalizeLayer, normalizeIsland } from "@/lib/kitchen-engine";
 import {
   type HistoryState,
   createHistory,
@@ -34,6 +34,14 @@ export interface WallPointItem {
   wallId?: string;
 }
 
+export type IslandDrawingState =
+  | { phase: "idle" }
+  | { phase: "pickingWall" }
+  | { phase: "typingOffset"; referenceWallId: string }
+  | { phase: "pickingCorner1"; referenceWallId: string; offsetFromWallCm: number; depthSide: "near" | "far" }
+  | { phase: "draggingLength"; referenceWallId: string; offsetFromWallCm: number; depthSide: "near" | "far"; anchor: Point }
+  | { phase: "draggingDepth"; referenceWallId: string; offsetFromWallCm: number; depthSide: "near" | "far"; anchor: Point; lengthCm: number };
+
 interface DesignData {
   walls: Wall[];
   cabinets: Cabinet[];
@@ -42,6 +50,7 @@ interface DesignData {
   wallPoints: WallPointItem[];
   guidelines: Guideline[];
   layers?: Layer[];
+  islands?: Island[];
 }
 
 interface CanvasState {
@@ -51,6 +60,8 @@ interface CanvasState {
   guidelines: Guideline[];
   layers: Layer[];
   activeLayerId: string | null;
+  islands: Island[];
+  islandDrawingState: IslandDrawingState;
   history: HistoryState<DesignData>;
   selectedFinishing: string;
   showReferenceOverlay: boolean;
@@ -87,8 +98,14 @@ interface CanvasState {
   removeLayer: (id: string) => void;
   updateLayer: (id: string, updates: Partial<Layer>) => void;
   setActiveLayer: (id: string | null) => void;
+  addIsland: (island: Island) => void;
+  updateIsland: (id: string, updates: Partial<Island>) => void;
+  removeIsland: (id: string) => void;
+  startIslandDraw: () => void;
+  cancelIslandDraw: () => void;
+  setIslandPhase: (next: IslandDrawingState) => void;
   loadFromCanvasData: (data: any) => void;
-  getCanvasData: () => DesignData & { selectedFinishing: string; layers: Layer[] };
+  getCanvasData: () => DesignData & { selectedFinishing: string; layers: Layer[]; islands: Island[] };
 }
 
 function pushDesignState(
@@ -120,7 +137,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   guidelines: [],
   layers: [],
   activeLayerId: null,
-  history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [] }),
+  islands: [],
+  islandDrawingState: { phase: "idle" },
+  history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [], islands: [] }),
   selectedFinishing: "1",
   showReferenceOverlay: false,
 
@@ -340,13 +359,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
 
   clear: () => {
-    const emptyData: DesignData = { walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [] };
+    const emptyData: DesignData = { walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [], islands: [] };
     set((state) => ({
       elements: [],
       wallPoints: [],
       guidelines: [],
       layers: [],
       activeLayerId: null,
+      islands: [],
+      islandDrawingState: { phase: "idle" },
       history: pushState(state.history, emptyData),
       drawingState: {
         ...state.drawingState,
@@ -408,10 +429,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         (c) => !cabinetIdsToRemove.includes(c.id)
       );
       const newDrawingState = { ...state.drawingState, cabinets: newCabinets, selectedId: null };
+      const newIslands = state.islands.filter((i) => i.layerId !== id);
       return {
         layers: newLayers,
         activeLayerId: state.activeLayerId === id ? (newLayers[0]?.id ?? null) : state.activeLayerId,
         drawingState: newDrawingState,
+        islands: newIslands,
         history: pushState(state.history, {
           walls: newDrawingState.walls,
           cabinets: newDrawingState.cabinets,
@@ -420,6 +443,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           wallPoints: state.wallPoints,
           guidelines: state.guidelines,
           layers: newLayers,
+          islands: newIslands,
         }),
       };
     }),
@@ -446,6 +470,71 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set(update);
   },
 
+  addIsland: (island) =>
+    set((state) => {
+      const newIslands = [...state.islands, island];
+      return {
+        islands: newIslands,
+        history: pushState(state.history, {
+          walls: state.drawingState.walls,
+          cabinets: state.drawingState.cabinets,
+          openings: state.drawingState.openings,
+          elements: state.elements,
+          wallPoints: state.wallPoints,
+          guidelines: state.guidelines,
+          layers: state.layers,
+          islands: newIslands,
+        }),
+      };
+    }),
+
+  updateIsland: (id, updates) =>
+    set((state) => {
+      const newIslands = state.islands.map((i) =>
+        i.id === id ? { ...i, ...updates } : i
+      );
+      return {
+        islands: newIslands,
+        history: pushState(state.history, {
+          walls: state.drawingState.walls,
+          cabinets: state.drawingState.cabinets,
+          openings: state.drawingState.openings,
+          elements: state.elements,
+          wallPoints: state.wallPoints,
+          guidelines: state.guidelines,
+          layers: state.layers,
+          islands: newIslands,
+        }),
+      };
+    }),
+
+  removeIsland: (id) =>
+    set((state) => {
+      const newIslands = state.islands.filter((i) => i.id !== id);
+      return {
+        islands: newIslands,
+        history: pushState(state.history, {
+          walls: state.drawingState.walls,
+          cabinets: state.drawingState.cabinets,
+          openings: state.drawingState.openings,
+          elements: state.elements,
+          wallPoints: state.wallPoints,
+          guidelines: state.guidelines,
+          layers: state.layers,
+          islands: newIslands,
+        }),
+      };
+    }),
+
+  startIslandDraw: () =>
+    set({ islandDrawingState: { phase: "pickingWall" } }),
+
+  cancelIslandDraw: () =>
+    set({ islandDrawingState: { phase: "idle" } }),
+
+  setIslandPhase: (next) =>
+    set({ islandDrawingState: next }),
+
   loadFromCanvasData: (data) => {
     const walls = data.walls ?? [];
     const cabinets = data.cabinets ?? [];
@@ -454,14 +543,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const wallPoints = data.wallPoints ?? [];
     const guidelines = data.guidelines ?? [];
     const layers: Layer[] = Array.isArray(data.layers) ? data.layers.map(normalizeLayer) : [];
+    const islands: Island[] = Array.isArray(data.islands) ? data.islands.map(normalizeIsland) : [];
     set((state) => ({
       elements,
       wallPoints,
       guidelines,
       layers,
+      islands,
       activeLayerId: layers[0]?.id ?? null,
       selectedFinishing: data.selectedFinishing ?? "1",
-      history: createHistory({ walls, cabinets, openings, elements, wallPoints, guidelines, layers }),
+      islandDrawingState: { phase: "idle" },
+      history: createHistory({ walls, cabinets, openings, elements, wallPoints, guidelines, layers, islands }),
       drawingState: {
         ...state.drawingState,
         walls,
@@ -486,6 +578,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       guidelines: state.guidelines,
       selectedFinishing: state.selectedFinishing,
       layers: state.layers,
+      islands: state.islands,
     };
   },
 }));
