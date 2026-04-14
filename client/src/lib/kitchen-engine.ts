@@ -1686,3 +1686,26 @@ export function computeRail(
 export function normalizeIsland(raw: any): Island {
   return { ...raw } as Island;
 }
+
+/** Hit test: is point p inside island's rectangle (accounting for rotation)? */
+export function isPointInIsland(p: Point, island: Island): boolean {
+  const lengthPx = island.lengthCm * PIXELS_PER_CM;
+  const depthPx = island.depthCm * PIXELS_PER_CM;
+  // Transform p into the island's local (unrotated) coordinate space
+  const dx = p.x - island.anchorPoint.x;
+  const dy = p.y - island.anchorPoint.y;
+  const cos = Math.cos(-island.rotationRad);
+  const sin = Math.sin(-island.rotationRad);
+  const localX = dx * cos - dy * sin;
+  const localY = dx * sin + dy * cos;
+  return localX >= 0 && localX <= lengthPx && localY >= 0 && localY <= depthPx;
+}
+
+/** Find the topmost island under point p, if any. */
+export function findIslandHit(p: Point, islands: Island[]): Island | null {
+  // Search in reverse so topmost (last drawn) wins
+  for (let i = islands.length - 1; i >= 0; i--) {
+    if (isPointInIsland(p, islands[i])) return islands[i];
+  }
+  return null;
+}

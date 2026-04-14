@@ -62,6 +62,7 @@ import {
 	projectPointOnLine,
 	signedPerpendicularDistance,
 	computeRail,
+	findIslandHit,
 } from '@/lib/kitchen-engine';
 import { FloatingDimensionInput } from './FloatingDimensionInput';
 import { IslandInputOverlay } from './IslandInputOverlay';
@@ -887,6 +888,12 @@ export function DesignerCanvas({
 	const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
 	// Typed input for length/depth during island draw (null = not typing, mouse drag is live)
 	const [islandTypedInput, setIslandTypedInput] = useState<string | null>(null);
+	// Drag state for moving an already-placed island via the Select tool
+	const [islandDragState, setIslandDragState] = useState<{
+		islandId: string;
+		startMousePos: Point;
+		originalAnchor: Point;
+	} | null>(null);
 	// Reset typed input when phase changes (e.g. click advances the phase)
 	useEffect(() => {
 		setIslandTypedInput(null);
@@ -1509,6 +1516,20 @@ export function DesignerCanvas({
 			}
 
 			if (tool === 'select') {
+				// Check islands first — they sit in canvas space like cabinets
+				const islandsNow = useCanvasStore.getState().islands;
+				const islandHit = findIslandHit(pos, islandsNow);
+				if (islandHit) {
+					setActiveLayerFromStore(islandHit.layerId);
+					onSelectItem(islandHit.id);
+					setIslandDragState({
+						islandId: islandHit.id,
+						startMousePos: { ...pos },
+						originalAnchor: { ...islandHit.anchorPoint },
+					});
+					return;
+				}
+
 				const hit = findHitTarget(
 					pos,
 					walls,
@@ -1751,6 +1772,19 @@ export function DesignerCanvas({
 			}
 			setMousePos(pos);
 			setCursorWorld(pos);
+
+			// Island drag (Select tool move)
+			if (islandDragState) {
+				const dx = pos.x - islandDragState.startMousePos.x;
+				const dy = pos.y - islandDragState.startMousePos.y;
+				updateIslandAction(islandDragState.islandId, {
+					anchorPoint: {
+						x: islandDragState.originalAnchor.x + dx,
+						y: islandDragState.originalAnchor.y + dy,
+					},
+				});
+				return;
+			}
 
 			if (dragState) {
 				const dx = pos.x - dragState.startMousePos.x;
@@ -2109,6 +2143,8 @@ export function DesignerCanvas({
 			constrainToAxis,
 			onDrawingStateChange,
 			dragState,
+			islandDragState,
+			updateIslandAction,
 			onUpdateWall,
 			onUpdateCabinet,
 			wallPlacement,
@@ -2132,6 +2168,10 @@ export function DesignerCanvas({
 				setIsPanning(false);
 				return;
 			}
+			if (islandDragState) {
+				setIslandDragState(null);
+				return;
+			}
 			if (dragState) {
 				const pos = getPointerPos(e);
 				if (pos) {
@@ -2144,7 +2184,7 @@ export function DesignerCanvas({
 				setDragState(null);
 			}
 		},
-		[dragState, getPointerPos, onMoveComplete, isPanning, drawingState.tool]
+		[dragState, islandDragState, getPointerPos, onMoveComplete, isPanning, drawingState.tool]
 	);
 
 	const handleDimensionConfirm = useCallback(
@@ -4460,10 +4500,11 @@ export function DesignerCanvas({
 						const lengthPx = island.lengthCm * PIXELS_PER_CM;
 						const depthPx = island.depthCm * PIXELS_PER_CM;
 						const rotationDeg = (island.rotationRad * 180) / Math.PI;
-						const isSelected = activeLayerIdFromStore === island.layerId;
-						const canInteract = islandDrawingState.phase === 'idle';
+						const isSelected =
+							drawingState.selectedId === island.id ||
+							activeLayerIdFromStore === island.layerId;
 						return (
-							<Group key={island.id}>
+							<Group key={island.id} listening={false}>
 								<Rect
 									x={island.anchorPoint.x}
 									y={island.anchorPoint.y}
@@ -4474,27 +4515,6 @@ export function DesignerCanvas({
 									opacity={isSelected ? 0.55 : 0.4}
 									stroke={isSelected ? '#B45309' : '#F59E0B'}
 									strokeWidth={isSelected ? 3 : 2}
-									listening={canInteract}
-									draggable={canInteract}
-									onClick={(e) => {
-										e.cancelBubble = true;
-										setActiveLayerFromStore(island.layerId);
-									}}
-									onTap={(e) => {
-										e.cancelBubble = true;
-										setActiveLayerFromStore(island.layerId);
-									}}
-									onDragStart={(e) => {
-										e.cancelBubble = true;
-										setActiveLayerFromStore(island.layerId);
-									}}
-									onDragEnd={(e) => {
-										e.cancelBubble = true;
-										const node = e.target;
-										updateIslandAction(island.id, {
-											anchorPoint: { x: node.x(), y: node.y() },
-										});
-									}}
 								/>
 								<Text
 									x={island.anchorPoint.x + 4}
@@ -4502,7 +4522,6 @@ export function DesignerCanvas({
 									text={`Island\n${island.lengthCm.toFixed(0)} × ${island.depthCm.toFixed(0)} cm`}
 									fontSize={10}
 									fill="#78350F"
-									listening={false}
 								/>
 							</Group>
 						);
