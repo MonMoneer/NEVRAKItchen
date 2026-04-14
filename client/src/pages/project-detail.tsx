@@ -483,7 +483,11 @@ export default function ProjectDetail({ id }: { id: number }) {
 						newCabinets.push(result.after);
 					}
 				}
-				newCabinets.push(cabinet);
+				const activeLayerId = canvasStore.activeLayerId;
+				const cabinetWithLayer = activeLayerId
+					? { ...cabinet, layerId: activeLayerId }
+					: cabinet;
+				newCabinets.push(cabinetWithLayer);
 				canvasStore.setDrawingState((prev) => ({
 					...prev,
 					cabinets: newCabinets,
@@ -491,6 +495,19 @@ export default function ProjectDetail({ id }: { id: number }) {
 					previewPoint: null,
 					isDrawing: false,
 				}));
+				if (activeLayerId) {
+					const activeLayer = canvasStore.layers.find(
+						(l) => l.id === activeLayerId
+					);
+					if (activeLayer) {
+						canvasStore.updateLayer(activeLayerId, {
+							cabinetIds: [
+								...activeLayer.cabinetIds,
+								cabinetWithLayer.id,
+							],
+						});
+					}
+				}
 			} else {
 				canvasStore.addCabinet(cabinet);
 			}

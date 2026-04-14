@@ -605,6 +605,7 @@ export function splitCabinetAroundTall(
       length: beforeLen,
       wallId: cabinet.wallId,
       depthFlipped: cabinet.depthFlipped,
+      layerId: cabinet.layerId,
     };
   }
 
@@ -623,6 +624,7 @@ export function splitCabinetAroundTall(
       length: afterLen,
       wallId: cabinet.wallId,
       depthFlipped: cabinet.depthFlipped,
+      layerId: cabinet.layerId,
     };
   }
 
