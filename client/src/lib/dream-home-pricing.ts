@@ -80,6 +80,7 @@ export interface PriceInput {
 export interface PriceResult {
   subtotalAED: number;
   breakdown: string;
+  rateLabel?: string;
   error?: string;
 }
 
@@ -139,7 +140,8 @@ function calcBaseOrWall(input: PriceInput): PriceResult {
   const aed = toAED(cny, settings);
 
   const breakdown = `${base} CNY/m × (${hSur.toFixed(2)} × ${dSur.toFixed(2)}) × ${lengthM.toFixed(2)}m ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`;
-  return { subtotalAED: aed, breakdown };
+  const rateLabel = `${base} CNY/m × ${hSur.toFixed(2)} (H) × ${dSur.toFixed(2)} (D)`;
+  return { subtotalAED: aed, breakdown, rateLabel };
 }
 
 function calcTall(input: PriceInput): PriceResult {
@@ -157,7 +159,8 @@ function calcTall(input: PriceInput): PriceResult {
 
   const sourceLabel = snapped.source === "platinum" ? "Platinum" : "Dream Home";
   const breakdown = `${sourceLabel} ${snapped.heightMm}mm: ${base} CNY/m × ${dSur.toFixed(2)} × ${lengthM.toFixed(2)}m ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`;
-  return { subtotalAED: aed, breakdown };
+  const rateLabel = `${base} CNY/m (${sourceLabel} ${snapped.heightMm}mm) × ${dSur.toFixed(2)} (D)`;
+  return { subtotalAED: aed, breakdown, rateLabel };
 }
 
 function calcIsland(input: PriceInput): PriceResult {
@@ -174,6 +177,7 @@ function calcIsland(input: PriceInput): PriceResult {
 
   let cny: number;
   let breakdown: string;
+  let rateLabel: string;
   const decorativeRate = Number(settings.decorativeCnyPerM2);
 
   if (layer.depth < 75) {
@@ -182,13 +186,15 @@ function calcIsland(input: PriceInput): PriceResult {
     const backCny = backAreaM2 * decorativeRate;
     cny = singleRowCny + backCny;
     breakdown = `(${base} × ${hSur.toFixed(2)} × ${lengthM.toFixed(2)}m) + (${backAreaM2.toFixed(2)}m² × ${decorativeRate}) = ${cny.toFixed(0)} CNY ${settingsSuffix(settings)}`;
+    rateLabel = `${base} CNY/m × ${hSur.toFixed(2)} + back panel ${decorativeRate} CNY/m²`;
   } else {
     // 2 rows, no back panel (2nd row replaces back)
     cny = 2 * singleRowCny;
     breakdown = `2 rows × ${base} × ${hSur.toFixed(2)} × ${lengthM.toFixed(2)}m = ${cny.toFixed(0)} CNY ${settingsSuffix(settings)}`;
+    rateLabel = `2 rows × ${base} CNY/m × ${hSur.toFixed(2)} (H)`;
   }
 
-  return { subtotalAED: toAED(cny, settings), breakdown };
+  return { subtotalAED: toAED(cny, settings), breakdown, rateLabel };
 }
 
 function calcEndPanel(input: PriceInput): PriceResult {
@@ -225,6 +231,7 @@ function calcEndPanel(input: PriceInput): PriceResult {
   return {
     subtotalAED: aed,
     breakdown: `${label} × ${rate} CNY/m² = ${cny.toFixed(0)} CNY ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`,
+    rateLabel: `${rate} CNY/m² × ${areaM2.toFixed(2)}m²`,
   };
 }
 
@@ -238,6 +245,7 @@ function calcFiller(input: PriceInput): PriceResult {
   return {
     subtotalAED: aed,
     breakdown: `${qty} × 0.2m² × ${rate} CNY/m² = ${cny.toFixed(0)} CNY ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`,
+    rateLabel: `${rate} CNY/m² × ${areaM2.toFixed(2)}m²`,
   };
 }
 
@@ -246,5 +254,9 @@ function calcDrawer(input: PriceInput): PriceResult {
   const qty = layer.qty ?? 0;
   const flatAed = Number(settings.drawerFlatAed);
   const aed = qty * flatAed;
-  return { subtotalAED: aed, breakdown: `${qty} × ${flatAed} AED (flat) = ${aed.toFixed(0)} AED` };
+  return {
+    subtotalAED: aed,
+    breakdown: `${qty} × ${flatAed} AED (flat) = ${aed.toFixed(0)} AED`,
+    rateLabel: `${flatAed} AED × ${qty} pcs (flat)`,
+  };
 }

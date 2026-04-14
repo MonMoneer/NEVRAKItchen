@@ -387,6 +387,15 @@ function LayerCard({
 
       <Separator className="my-1.5" />
 
+      {result.rateLabel && !result.error && (
+        <div className="flex justify-between text-[10px] mb-0.5">
+          <span className="text-muted-foreground">Rate</span>
+          <span className="font-mono text-muted-foreground text-right break-words">
+            {result.rateLabel}
+          </span>
+        </div>
+      )}
+
       <div className="flex justify-between text-xs">
         <span className="font-medium text-card-foreground">Subtotal</span>
         <span className="font-semibold font-mono text-primary">
