@@ -486,10 +486,12 @@ export default function ProjectDetail({ id }: { id: number }) {
 				// Read fresh store state (avoid stale closure on activeLayerId)
 				const freshState = useCanvasStore.getState();
 				const activeLayerId = freshState.activeLayerId;
+				console.log("[tall-draw] activeLayerId=", activeLayerId, "layers=", freshState.layers.map((l) => ({ id: l.id, type: l.type })));
 				const cabinetWithLayer = activeLayerId
 					? { ...cabinet, layerId: activeLayerId }
 					: cabinet;
 				newCabinets.push(cabinetWithLayer);
+				console.log("[tall-draw] pushed cabinet with layerId=", cabinetWithLayer.layerId, "cabinet id=", cabinetWithLayer.id);
 				canvasStore.setDrawingState((prev) => ({
 					...prev,
 					cabinets: newCabinets,
@@ -502,13 +504,18 @@ export default function ProjectDetail({ id }: { id: number }) {
 						(l) => l.id === activeLayerId
 					);
 					if (activeLayer) {
+						console.log("[tall-draw] updating layer cabinetIds from", activeLayer.cabinetIds, "adding", cabinetWithLayer.id);
 						canvasStore.updateLayer(activeLayerId, {
 							cabinetIds: [
 								...activeLayer.cabinetIds,
 								cabinetWithLayer.id,
 							],
 						});
+					} else {
+						console.log("[tall-draw] WARNING: activeLayerId set but layer not found in freshState.layers");
 					}
+				} else {
+					console.log("[tall-draw] WARNING: no activeLayerId — cabinet drawn without layer assignment");
 				}
 			} else {
 				canvasStore.addCabinet(cabinet);
