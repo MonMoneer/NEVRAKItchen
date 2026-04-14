@@ -483,7 +483,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 						newCabinets.push(result.after);
 					}
 				}
-				const activeLayerId = canvasStore.activeLayerId;
+				// Read fresh store state (avoid stale closure on activeLayerId)
+				const freshState = useCanvasStore.getState();
+				const activeLayerId = freshState.activeLayerId;
 				const cabinetWithLayer = activeLayerId
 					? { ...cabinet, layerId: activeLayerId }
 					: cabinet;
@@ -496,7 +498,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 					isDrawing: false,
 				}));
 				if (activeLayerId) {
-					const activeLayer = canvasStore.layers.find(
+					const activeLayer = freshState.layers.find(
 						(l) => l.id === activeLayerId
 					);
 					if (activeLayer) {
