@@ -883,6 +883,12 @@ export function DesignerCanvas({
 	const cancelIslandDraw = useCanvasStore((s) => s.cancelIslandDraw);
 	const activeLayerIdFromStore = useCanvasStore((s) => s.activeLayerId);
 	const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
+	// Typed input for length/depth during island draw (null = not typing, mouse drag is live)
+	const [islandTypedInput, setIslandTypedInput] = useState<string | null>(null);
+	// Reset typed input when phase changes (e.g. click advances the phase)
+	useEffect(() => {
+		setIslandTypedInput(null);
+	}, [islandDrawingState.phase]);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 	const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 	const [scale, setScale] = useState(1);
@@ -2359,10 +2365,18 @@ export function DesignerCanvas({
 			) {
 				return;
 			}
-			// ── New island drawing flow — Escape walks back one phase ──
+			// ── New island drawing flow — Escape walks back / typed input ──
 			{
 				const iPhase = useCanvasStore.getState().islandDrawingState;
+				const inTypeablePhase =
+					iPhase.phase === 'draggingLength' || iPhase.phase === 'draggingDepth';
+
+				// Escape walks back one phase (or cancels typed input if active)
 				if (e.key === 'Escape' && iPhase.phase !== 'idle') {
+					if (islandTypedInput !== null) {
+						setIslandTypedInput(null);
+						return;
+					}
 					switch (iPhase.phase) {
 						case 'pickingCorner1':
 							cancelIslandDraw();
@@ -2378,6 +2392,73 @@ export function DesignerCanvas({
 							break;
 					}
 					return;
+				}
+
+				if (inTypeablePhase) {
+					// Start or append to typed input on digit key
+					if (/^[0-9]$/.test(e.key)) {
+						setIslandTypedInput((prev) => (prev ?? '') + e.key);
+						e.preventDefault();
+						return;
+					}
+					// Decimal point
+					if (e.key === '.' && islandTypedInput !== null && !islandTypedInput.includes('.')) {
+						setIslandTypedInput(islandTypedInput + '.');
+						e.preventDefault();
+						return;
+					}
+					// Backspace edits the typed value
+					if (e.key === 'Backspace' && islandTypedInput !== null) {
+						setIslandTypedInput(
+							islandTypedInput.length > 1 ? islandTypedInput.slice(0, -1) : null
+						);
+						e.preventDefault();
+						return;
+					}
+					// Enter commits the typed value
+					if (e.key === 'Enter' && islandTypedInput !== null) {
+						const n = parseFloat(islandTypedInput);
+						if (!Number.isFinite(n) || n <= 0) {
+							setIslandTypedInput(null);
+							return;
+						}
+						if (iPhase.phase === 'draggingLength') {
+							// Need an axis — use dominant cursor axis from anchor
+							let axis: 'h' | 'v' = 'h';
+							if (cursorWorld) {
+								const dx = cursorWorld.x - iPhase.anchor.x;
+								const dy = cursorWorld.y - iPhase.anchor.y;
+								axis = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+							}
+							setIslandPhase({
+								phase: 'draggingDepth',
+								anchor: iPhase.anchor,
+								lengthCm: n,
+								axis,
+							});
+							setIslandTypedInput(null);
+						} else if (iPhase.phase === 'draggingDepth') {
+							if (!activeLayerIdFromStore) return;
+							const rotationRad = iPhase.axis === 'h' ? 0 : Math.PI / 2;
+							const island: Island = {
+								id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+								layerId: activeLayerIdFromStore,
+								referenceWallId: '',
+								offsetFromWallCm: 0,
+								depthSide: 'far',
+								anchorPoint: iPhase.anchor,
+								lengthCm: iPhase.lengthCm,
+								depthCm: n,
+								rotationRad,
+								heightCm: 77,
+							};
+							addIslandAction(island);
+							setIslandPhase({ phase: 'idle' });
+							setIslandTypedInput(null);
+						}
+						e.preventDefault();
+						return;
+					}
 				}
 			}
 			if (e.key === 'Escape') {
@@ -2446,6 +2527,10 @@ export function DesignerCanvas({
 		placeIsland,
 		cancelIslandDraw,
 		setIslandPhase,
+		islandTypedInput,
+		cursorWorld,
+		activeLayerIdFromStore,
+		addIslandAction,
 	]);
 
 	const renderGrid = () => {
@@ -4432,20 +4517,32 @@ export function DesignerCanvas({
 							const dy = cursorWorld.y - phase.anchor.y;
 							const axis: 'h' | 'v' =
 								Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
-							const lengthPx = axis === 'h' ? Math.abs(dx) : Math.abs(dy);
+							// Typed value overrides mouse-derived length
+							const typedCm =
+								islandTypedInput !== null ? parseFloat(islandTypedInput) : NaN;
+							const usingTyped = Number.isFinite(typedCm) && typedCm > 0;
+							const lengthPx = usingTyped
+								? typedCm * PIXELS_PER_CM
+								: axis === 'h'
+									? Math.abs(dx)
+									: Math.abs(dy);
 							const signedLen = axis === 'h' ? dx : dy;
+							const dir = signedLen >= 0 ? 1 : -1;
 							const rectX =
 								axis === 'h'
-									? signedLen >= 0
+									? dir === 1
 										? phase.anchor.x
 										: phase.anchor.x - lengthPx
 									: phase.anchor.x - 1;
 							const rectY =
 								axis === 'v'
-									? signedLen >= 0
+									? dir === 1
 										? phase.anchor.y
 										: phase.anchor.y - lengthPx
 									: phase.anchor.y - 1;
+							const labelCm = usingTyped
+								? typedCm
+								: lengthPx / PIXELS_PER_CM;
 							return (
 								<Group listening={false}>
 									<Rect
@@ -4462,9 +4559,10 @@ export function DesignerCanvas({
 									<Text
 										x={phase.anchor.x + 6}
 										y={phase.anchor.y - 14}
-										text={`${(lengthPx / PIXELS_PER_CM).toFixed(0)} cm`}
+										text={`${labelCm.toFixed(0)} cm${islandTypedInput !== null ? ' ⌨' : ''}`}
 										fontSize={11}
-										fill="#78350F"
+										fill={islandTypedInput !== null ? '#B45309' : '#78350F'}
+										fontStyle={islandTypedInput !== null ? 'bold' : 'normal'}
 									/>
 								</Group>
 							);
@@ -4472,14 +4570,16 @@ export function DesignerCanvas({
 						if (phase.phase === 'draggingDepth') {
 							const { anchor, lengthCm, axis } = phase;
 							const lengthPx = lengthCm * PIXELS_PER_CM;
-							const depthPx =
-								axis === 'h'
+							const typedCm =
+								islandTypedInput !== null ? parseFloat(islandTypedInput) : NaN;
+							const usingTyped = Number.isFinite(typedCm) && typedCm > 0;
+							const depthPx = usingTyped
+								? typedCm * PIXELS_PER_CM
+								: axis === 'h'
 									? Math.abs(cursorWorld.y - anchor.y)
 									: Math.abs(cursorWorld.x - anchor.x);
-							// Determine which side the cursor is on
 							const signedDepth =
 								axis === 'h' ? cursorWorld.y - anchor.y : cursorWorld.x - anchor.x;
-							// Commit sign: which direction the rectangle grows
 							const rectX =
 								axis === 'h'
 									? anchor.x
@@ -4492,6 +4592,9 @@ export function DesignerCanvas({
 									: signedDepth >= 0
 										? anchor.y
 										: anchor.y - depthPx;
+							const labelDepth = usingTyped
+								? typedCm
+								: depthPx / PIXELS_PER_CM;
 							return (
 								<Group listening={false}>
 									<Rect
@@ -4508,9 +4611,10 @@ export function DesignerCanvas({
 									<Text
 										x={anchor.x + 6}
 										y={anchor.y - 14}
-										text={`${lengthCm.toFixed(0)} × ${(depthPx / PIXELS_PER_CM).toFixed(0)} cm`}
+										text={`${lengthCm.toFixed(0)} × ${labelDepth.toFixed(0)} cm${islandTypedInput !== null ? ' ⌨' : ''}`}
 										fontSize={11}
-										fill="#78350F"
+										fill={islandTypedInput !== null ? '#B45309' : '#78350F'}
+										fontStyle={islandTypedInput !== null ? 'bold' : 'normal'}
 									/>
 								</Group>
 							);
