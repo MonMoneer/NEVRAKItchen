@@ -6,6 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Plus, Trash2, Layers } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { useCanvasStore } from "@/stores/useCanvasStore";
 import type {
   DreamHomeFinish,
@@ -51,6 +52,7 @@ interface LayerPanelProps {
 }
 
 export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
+  const { toast } = useToast();
   const { layers, activeLayerId, addLayer, removeLayer, updateLayer, setActiveLayer } = useCanvasStore();
   const islands = useCanvasStore((s) => s.islands);
   const updateIsland = useCanvasStore((s) => s.updateIsland);
@@ -62,6 +64,16 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
   const { data: settings } = useQuery<PricingSettings>({ queryKey: ["/api/pricing-settings"] });
 
   const handleAddLayer = (type: LayerType) => {
+    // Island requires at least one wall as a reference.
+    if (type === "island" && walls.length === 0) {
+      toast({
+        title: "Select wall first",
+        description: "Draw at least one wall before placing an island.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     // Default finish: "Solid Matte / Soft Touch" (fall back to first if not found)
     const defaultFinish =
       finishes.find((f) => f.name === "Solid Matte / Soft Touch")?.id ??
@@ -93,6 +105,11 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
       newLayer.qty = 1;
     }
     addLayer(newLayer);
+
+    // Auto-enter the new island drawing flow so the rep can click a wall immediately
+    if (type === "island") {
+      useCanvasStore.getState().startIslandDraw();
+    }
   };
 
   const getLayerCabinets = (layer: Layer): Cabinet[] =>
