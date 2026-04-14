@@ -57,9 +57,15 @@ import {
 	CLEARANCE_DEPTHS,
 	PIXELS_PER_CM,
 	SNAP_RADIUS,
+	type Island,
+	wallAngleRad,
+	projectPointOnLine,
+	signedPerpendicularDistance,
+	computeRail,
 } from '@/lib/kitchen-engine';
 import { FloatingDimensionInput } from './FloatingDimensionInput';
-import type { WallPointItem } from '@/stores/useCanvasStore';
+import { IslandInputOverlay } from './IslandInputOverlay';
+import { useCanvasStore, type WallPointItem } from '@/stores/useCanvasStore';
 import type { CustomTool } from './Toolbar';
 
 // Wall-point placement state
@@ -869,6 +875,14 @@ export function DesignerCanvas({
 }: DesignerCanvasProps) {
 	const stageRef = useRef<Konva.Stage>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
+	// ── New island drawing flow (2026-04-15 redesign) ──────────────────
+	const islands = useCanvasStore((s) => s.islands);
+	const islandDrawingState = useCanvasStore((s) => s.islandDrawingState);
+	const setIslandPhase = useCanvasStore((s) => s.setIslandPhase);
+	const addIslandAction = useCanvasStore((s) => s.addIsland);
+	const cancelIslandDraw = useCanvasStore((s) => s.cancelIslandDraw);
+	const activeLayerIdFromStore = useCanvasStore((s) => s.activeLayerId);
+	const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
 	const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 	const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 	const [scale, setScale] = useState(1);
@@ -1133,6 +1147,93 @@ export function DesignerCanvas({
 		[scale, stagePos]
 	);
 
+	// ── New island flow click handler (4-click reference-wall drawing) ──
+	const handleIslandClick = useCallback(
+		(worldPoint: Point) => {
+			const state = useCanvasStore.getState();
+			const phase = state.islandDrawingState;
+			const walls = state.drawingState.walls;
+
+			switch (phase.phase) {
+				case 'pickingWall': {
+					const tolerance = 10; // px, world space
+					const hit = walls.find((w) => {
+						const projected = projectPointOnLine(worldPoint, w.start, w.end);
+						const dx = projected.x - worldPoint.x;
+						const dy = projected.y - worldPoint.y;
+						return Math.sqrt(dx * dx + dy * dy) <= tolerance;
+					});
+					if (!hit) return;
+					setIslandPhase({ phase: 'typingOffset', referenceWallId: hit.id });
+					return;
+				}
+				case 'pickingCorner1': {
+					const wall = walls.find((w) => w.id === phase.referenceWallId);
+					if (!wall) return;
+					const rail = computeRail(wall, phase.offsetFromWallCm, phase.depthSide);
+					const projected = projectPointOnLine(worldPoint, rail.start, rail.end);
+					setIslandPhase({
+						phase: 'draggingLength',
+						referenceWallId: phase.referenceWallId,
+						offsetFromWallCm: phase.offsetFromWallCm,
+						depthSide: phase.depthSide,
+						anchor: projected,
+					});
+					return;
+				}
+				case 'draggingLength': {
+					const wall = walls.find((w) => w.id === phase.referenceWallId);
+					if (!wall) return;
+					const rail = computeRail(wall, phase.offsetFromWallCm, phase.depthSide);
+					const projected = projectPointOnLine(worldPoint, rail.start, rail.end);
+					const dx = projected.x - phase.anchor.x;
+					const dy = projected.y - phase.anchor.y;
+					const lengthPx = Math.sqrt(dx * dx + dy * dy);
+					const lengthCm = lengthPx / PIXELS_PER_CM;
+					if (lengthCm < 1) return;
+					setIslandPhase({
+						phase: 'draggingDepth',
+						referenceWallId: phase.referenceWallId,
+						offsetFromWallCm: phase.offsetFromWallCm,
+						depthSide: phase.depthSide,
+						anchor: phase.anchor,
+						lengthCm,
+					});
+					return;
+				}
+				case 'draggingDepth': {
+					const wall = walls.find((w) => w.id === phase.referenceWallId);
+					if (!wall || !activeLayerIdFromStore) return;
+					const rail = computeRail(wall, phase.offsetFromWallCm, phase.depthSide);
+					const depthPx = Math.abs(
+						signedPerpendicularDistance(worldPoint, rail.start, rail.end)
+					);
+					const depthCm = depthPx / PIXELS_PER_CM;
+					if (depthCm < 1) return;
+					const rotationRad = wallAngleRad(wall);
+					const island: Island = {
+						id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+						layerId: activeLayerIdFromStore,
+						referenceWallId: phase.referenceWallId,
+						offsetFromWallCm: phase.offsetFromWallCm,
+						depthSide: phase.depthSide,
+						anchorPoint: phase.anchor,
+						lengthCm: phase.lengthCm,
+						depthCm,
+						rotationRad,
+						heightCm: 77,
+					};
+					addIslandAction(island);
+					setIslandPhase({ phase: 'idle' });
+					return;
+				}
+				default:
+					return;
+			}
+		},
+		[setIslandPhase, addIslandAction, activeLayerIdFromStore]
+	);
+
 	const handleMouseDown = useCallback(
 		(e: KonvaEventObject<MouseEvent>) => {
 			if (e.evt.button === 1) {
@@ -1155,6 +1256,18 @@ export function DesignerCanvas({
 			const pos = getPointerPos(e);
 			if (!pos) {
 				return;
+			}
+
+			// ── New island drawing flow: intercept clicks while drawing ──
+			{
+				const islandPhase = useCanvasStore.getState().islandDrawingState;
+				if (
+					islandPhase.phase !== 'idle' &&
+					islandPhase.phase !== 'typingOffset'
+				) {
+					handleIslandClick(pos);
+					return;
+				}
 			}
 
 			const {
@@ -1634,6 +1747,7 @@ export function DesignerCanvas({
 			hoveredWallId,
 			snapToWallOrtho,
 			onAddCabinet,
+			handleIslandClick,
 		]
 	);
 
@@ -1652,6 +1766,7 @@ export function DesignerCanvas({
 				return;
 			}
 			setMousePos(pos);
+			setCursorWorld(pos);
 
 			if (dragState) {
 				const dx = pos.x - dragState.startMousePos.x;
@@ -2268,6 +2383,44 @@ export function DesignerCanvas({
 			) {
 				return;
 			}
+			// ── New island drawing flow — Escape walks back one phase ──
+			{
+				const iPhase = useCanvasStore.getState().islandDrawingState;
+				if (e.key === 'Escape' && iPhase.phase !== 'idle') {
+					switch (iPhase.phase) {
+						case 'pickingWall':
+							cancelIslandDraw();
+							break;
+						case 'typingOffset':
+							setIslandPhase({ phase: 'pickingWall' });
+							break;
+						case 'pickingCorner1':
+							setIslandPhase({
+								phase: 'typingOffset',
+								referenceWallId: iPhase.referenceWallId,
+							});
+							break;
+						case 'draggingLength':
+							setIslandPhase({
+								phase: 'pickingCorner1',
+								referenceWallId: iPhase.referenceWallId,
+								offsetFromWallCm: iPhase.offsetFromWallCm,
+								depthSide: iPhase.depthSide,
+							});
+							break;
+						case 'draggingDepth':
+							setIslandPhase({
+								phase: 'draggingLength',
+								referenceWallId: iPhase.referenceWallId,
+								offsetFromWallCm: iPhase.offsetFromWallCm,
+								depthSide: iPhase.depthSide,
+								anchor: iPhase.anchor,
+							});
+							break;
+					}
+					return;
+				}
+			}
 			if (e.key === 'Escape') {
 				if (USE_LEGACY_ISLAND_TOOL && islandPlacement) {
 					// Step back one phase, clearing that phase's value
@@ -2332,6 +2485,8 @@ export function DesignerCanvas({
 		measureTape,
 		islandPlacement,
 		placeIsland,
+		cancelIslandDraw,
+		setIslandPhase,
 	]);
 
 	const renderGrid = () => {
@@ -4254,6 +4409,155 @@ export function DesignerCanvas({
 					{renderWallPointRuler()}
 					{renderMeasureTape()}
 					{renderIslandPlacement()}
+					{/* New free-floating islands (Task 5) */}
+					{islands.map((island) => {
+						const wall = drawingState.walls.find(
+							(w) => w.id === island.referenceWallId
+						);
+						if (!wall) return null;
+						const lengthPx = island.lengthCm * PIXELS_PER_CM;
+						const depthPx = island.depthCm * PIXELS_PER_CM;
+						const rotationDeg = (island.rotationRad * 180) / Math.PI;
+						const offsetY = island.depthSide === 'near' ? depthPx : 0;
+						return (
+							<Group key={island.id}>
+								<Rect
+									x={island.anchorPoint.x}
+									y={island.anchorPoint.y}
+									width={lengthPx}
+									height={depthPx}
+									offsetY={offsetY}
+									rotation={rotationDeg}
+									fill="#F59E0B"
+									opacity={0.4}
+									stroke="#F59E0B"
+									strokeWidth={2}
+								/>
+								<Text
+									x={island.anchorPoint.x}
+									y={island.anchorPoint.y}
+									text={`Island\n${island.lengthCm.toFixed(0)} × ${island.depthCm.toFixed(0)} cm`}
+									fontSize={10}
+									fill="#78350F"
+									listening={false}
+								/>
+							</Group>
+						);
+					})}
+					{/* In-progress island drawing overlays */}
+					{islandDrawingState.phase !== 'idle' && (() => {
+						const phase = islandDrawingState;
+						const refWallId =
+							phase.phase === 'pickingWall'
+								? null
+								: ((phase as { referenceWallId?: string }).referenceWallId ?? null);
+						const refWall = refWallId
+							? drawingState.walls.find((w) => w.id === refWallId)
+							: null;
+						return (
+							<Group listening={false}>
+								{refWall && (
+									<Line
+										points={[
+											refWall.start.x,
+											refWall.start.y,
+											refWall.end.x,
+											refWall.end.y,
+										]}
+										stroke="#F59E0B"
+										strokeWidth={6}
+										opacity={0.5}
+									/>
+								)}
+								{refWall &&
+									phase.phase !== 'pickingWall' &&
+									phase.phase !== 'typingOffset' &&
+									(() => {
+										const p = phase as {
+											offsetFromWallCm: number;
+											depthSide: 'near' | 'far';
+										};
+										const rail = computeRail(
+											refWall,
+											p.offsetFromWallCm,
+											p.depthSide
+										);
+										return (
+											<Line
+												points={[
+													rail.start.x,
+													rail.start.y,
+													rail.end.x,
+													rail.end.y,
+												]}
+												stroke="#F59E0B"
+												strokeWidth={1.5}
+												dash={[6, 4]}
+												opacity={0.7}
+											/>
+										);
+									})()}
+								{(phase.phase === 'draggingLength' ||
+									phase.phase === 'draggingDepth') &&
+									refWall &&
+									cursorWorld &&
+									(() => {
+										const p = phase as {
+											offsetFromWallCm: number;
+											depthSide: 'near' | 'far';
+											anchor: Point;
+											lengthCm?: number;
+										};
+										const rail = computeRail(
+											refWall,
+											p.offsetFromWallCm,
+											p.depthSide
+										);
+										const currentOnRail = projectPointOnLine(
+											cursorWorld,
+											rail.start,
+											rail.end
+										);
+										const lengthPx =
+											phase.phase === 'draggingLength'
+												? Math.sqrt(
+														Math.pow(currentOnRail.x - p.anchor.x, 2) +
+															Math.pow(currentOnRail.y - p.anchor.y, 2)
+													)
+												: (p.lengthCm ?? 0) * PIXELS_PER_CM;
+										const depthPx =
+											phase.phase === 'draggingDepth'
+												? Math.abs(
+														signedPerpendicularDistance(
+															cursorWorld,
+															rail.start,
+															rail.end
+														)
+													)
+												: 0;
+										const rotationDeg =
+											(wallAngleRad(refWall) * 180) / Math.PI;
+										return (
+											<Rect
+												x={p.anchor.x}
+												y={p.anchor.y}
+												width={lengthPx}
+												height={depthPx}
+												offsetY={
+													p.depthSide === 'near' ? depthPx : 0
+												}
+												rotation={rotationDeg}
+												fill="#F59E0B"
+												opacity={0.2}
+												stroke="#F59E0B"
+												strokeWidth={1.5}
+												dash={[4, 4]}
+											/>
+										);
+									})()}
+							</Group>
+						);
+					})()}
 					{renderAnchorMarkers()}
 					{renderWallPlacementRuler()}
 					{renderPreview()}
@@ -4265,6 +4569,31 @@ export function DesignerCanvas({
 					{renderElements()}
 				</Layer>
 			</Stage>
+
+			{/* New island flow: DOM offset input overlay */}
+			{islandDrawingState.phase === 'typingOffset' && cursorWorld && (() => {
+				const konvaStage = stageRef.current;
+				if (!konvaStage) return null;
+				const screen = konvaStage
+					.getAbsoluteTransform()
+					.point(cursorWorld);
+				const refWallId = islandDrawingState.referenceWallId;
+				return (
+					<IslandInputOverlay
+						label="Offset cm"
+						cursorPx={screen}
+						onCommit={(offset) => {
+							setIslandPhase({
+								phase: 'pickingCorner1',
+								referenceWallId: refWallId,
+								offsetFromWallCm: offset,
+								depthSide: 'far',
+							});
+						}}
+						onCancel={() => setIslandPhase({ phase: 'pickingWall' })}
+					/>
+				);
+			})()}
 
 			{/* Wall-point corner-locked distance panel */}
 			{wallPointPlacement?.phase === 'cornerLocked' && !showWallPointForm && (
