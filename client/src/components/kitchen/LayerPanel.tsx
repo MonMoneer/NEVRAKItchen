@@ -85,7 +85,7 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
       base:         { depth: 55, height: 77 },
       wall_cabinet: { depth: 33, height: 70 },
       tall:         { depth: 55, height: 220 },
-      island:       { depth: 60, height: 77 },
+      island:       { depth: 55, height: 77 },
     };
     const d = DEFAULTS[type];
 

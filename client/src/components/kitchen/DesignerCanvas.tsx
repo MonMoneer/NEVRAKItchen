@@ -4595,6 +4595,55 @@ export function DesignerCanvas({
 				);
 			})()}
 
+			{/* New island flow: DOM depth input overlay (pre-filled with 55 — standard base depth) */}
+			{islandDrawingState.phase === 'draggingDepth' && cursorWorld && (() => {
+				const konvaStage = stageRef.current;
+				if (!konvaStage) return null;
+				const screen = konvaStage
+					.getAbsoluteTransform()
+					.point(cursorWorld);
+				const phase = islandDrawingState;
+				return (
+					<IslandInputOverlay
+						key="depth-input"
+						label="Depth cm"
+						initialValue="55"
+						cursorPx={screen}
+						onCommit={(depthCm) => {
+							if (!activeLayerIdFromStore) return;
+							const wall = drawingState.walls.find(
+								(w) => w.id === phase.referenceWallId
+							);
+							if (!wall) return;
+							const rotationRad = wallAngleRad(wall);
+							const island: Island = {
+								id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+								layerId: activeLayerIdFromStore,
+								referenceWallId: phase.referenceWallId,
+								offsetFromWallCm: phase.offsetFromWallCm,
+								depthSide: phase.depthSide,
+								anchorPoint: phase.anchor,
+								lengthCm: phase.lengthCm,
+								depthCm,
+								rotationRad,
+								heightCm: 77,
+							};
+							addIslandAction(island);
+							setIslandPhase({ phase: 'idle' });
+						}}
+						onCancel={() =>
+							setIslandPhase({
+								phase: 'draggingLength',
+								referenceWallId: phase.referenceWallId,
+								offsetFromWallCm: phase.offsetFromWallCm,
+								depthSide: phase.depthSide,
+								anchor: phase.anchor,
+							})
+						}
+					/>
+				);
+			})()}
+
 			{/* Wall-point corner-locked distance panel */}
 			{wallPointPlacement?.phase === 'cornerLocked' && !showWallPointForm && (
 				<WallPointDistancePanel
