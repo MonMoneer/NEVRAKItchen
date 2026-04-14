@@ -13,7 +13,7 @@ import type {
   TallHeight,
   PricingSettings,
 } from "@shared/schema";
-import type { Layer, LayerType, Cabinet, Wall } from "@/lib/kitchen-engine";
+import type { Layer, LayerType, Cabinet, Wall, Island } from "@/lib/kitchen-engine";
 import { pixelsToCm, computeEffectiveLengths } from "@/lib/kitchen-engine";
 import { calculateLayerPrice, type PricingLayer } from "@/lib/dream-home-pricing";
 
@@ -52,6 +52,9 @@ interface LayerPanelProps {
 
 export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
   const { layers, activeLayerId, addLayer, removeLayer, updateLayer, setActiveLayer } = useCanvasStore();
+  const islands = useCanvasStore((s) => s.islands);
+  const updateIsland = useCanvasStore((s) => s.updateIsland);
+  const removeIsland = useCanvasStore((s) => s.removeIsland);
 
   const { data: finishes = [] } = useQuery<DreamHomeFinish[]>({ queryKey: ["/api/dream-home/finishes"] });
   const { data: prices = [] } = useQuery<DreamHomePrice[]>({ queryKey: ["/api/dream-home/prices"] });
@@ -154,6 +157,9 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
               onSelect={() => setActiveLayer(layer.id)}
               onUpdate={(updates) => updateLayer(layer.id, updates)}
               onDelete={() => removeLayer(layer.id)}
+              islands={islands}
+              updateIsland={updateIsland}
+              removeIsland={removeIsland}
             />
           ))
         )}
@@ -183,6 +189,9 @@ interface LayerCardProps {
   onSelect: () => void;
   onUpdate: (u: Partial<Layer>) => void;
   onDelete: () => void;
+  islands: Island[];
+  updateIsland: (id: string, updates: Partial<Island>) => void;
+  removeIsland: (id: string) => void;
 }
 
 function LayerCard({
@@ -197,14 +206,32 @@ function LayerCard({
   onSelect,
   onUpdate,
   onDelete,
+  islands,
+  updateIsland,
+  removeIsland,
 }: LayerCardProps) {
   const isDrawable = DRAWABLE_TYPES.includes(layer.type);
   const isCount = COUNT_TYPES.includes(layer.type);
 
+  const boundIsland =
+    layer.type === "island"
+      ? islands.find((i) => i.layerId === layer.id) ?? null
+      : null;
+
+  const pricingLayerInput =
+    layer.type === "island" && boundIsland
+      ? { ...layer, depth: boundIsland.depthCm, height: boundIsland.heightCm }
+      : layer;
+
+  const pricingLengthM =
+    layer.type === "island" && boundIsland
+      ? boundIsland.lengthCm / 100
+      : lengthM;
+
   const result = settings
     ? calculateLayerPrice({
-        layer: layer as unknown as PricingLayer,
-        lengthM,
+        layer: pricingLayerInput as unknown as PricingLayer,
+        lengthM: pricingLengthM,
         settings,
         dreamHomePrices: prices,
         tallHeights: tallRows,
@@ -212,9 +239,12 @@ function LayerCard({
     : { subtotalAED: 0, breakdown: "Loading...", error: undefined as string | undefined };
 
   const subtotalLabel = result.error ? "—" : `${result.subtotalAED.toFixed(0)} AED`;
-  const qtyOrLength = isDrawable
-    ? `${lengthM.toFixed(2)} m`
-    : `${layer.qty ?? 0} pcs`;
+  const qtyOrLength =
+    layer.type === "island" && boundIsland
+      ? `${(boundIsland.lengthCm / 100).toFixed(2)} m`
+      : isDrawable
+      ? `${lengthM.toFixed(2)} m`
+      : `${layer.qty ?? 0} pcs`;
 
   // Collapsed (inactive) card — compact one-line summary
   if (!isActive) {
@@ -237,7 +267,13 @@ function LayerCard({
           {subtotalLabel}
         </span>
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (layer.type === "island" && boundIsland) {
+              removeIsland(boundIsland.id);
+            }
+            onDelete();
+          }}
           className="text-muted-foreground hover:text-red-500 shrink-0"
           title="Delete layer"
         >
@@ -261,7 +297,13 @@ function LayerCard({
         <span className="text-xs font-medium text-card-foreground">{LAYER_LABELS[layer.type]}</span>
         <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0">#{index + 1}</Badge>
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (layer.type === "island" && boundIsland) {
+              removeIsland(boundIsland.id);
+            }
+            onDelete();
+          }}
           className="text-muted-foreground hover:text-red-500 ml-1"
           title="Delete layer"
         >
@@ -270,7 +312,7 @@ function LayerCard({
       </div>
 
       <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10px]">
-        {isDrawable && (
+        {isDrawable && layer.type !== "island" && (
           <>
             <span className="text-muted-foreground">Length</span>
             <span className="text-right font-mono text-card-foreground">{lengthM.toFixed(2)} m</span>
@@ -310,6 +352,84 @@ function LayerCard({
               </SelectContent>
             </Select>
           </>
+        )}
+
+        {layer.type === "island" && boundIsland && (
+          <>
+            <span className="text-muted-foreground self-center">Length (cm)</span>
+            <Input
+              type="number"
+              value={boundIsland.lengthCm}
+              min={1}
+              className="h-6 text-xs text-right"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v) && v > 0) updateIsland(boundIsland.id, { lengthCm: v });
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+
+            <span className="text-muted-foreground self-center">Depth (cm)</span>
+            <Input
+              type="number"
+              value={boundIsland.depthCm}
+              min={1}
+              max={110}
+              className="h-6 text-xs text-right"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v) && v > 0 && v <= 110) updateIsland(boundIsland.id, { depthCm: v });
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+
+            <span className="text-muted-foreground self-center">Height (cm)</span>
+            <Input
+              type="number"
+              value={boundIsland.heightCm}
+              min={1}
+              className="h-6 text-xs text-right"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v) && v > 0) updateIsland(boundIsland.id, { heightCm: v });
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+
+            <span className="text-muted-foreground self-center">Offset (cm)</span>
+            <Input
+              type="number"
+              value={boundIsland.offsetFromWallCm}
+              min={1}
+              className="h-6 text-xs text-right"
+              onChange={(e) => {
+                const v = parseFloat(e.target.value);
+                if (Number.isFinite(v) && v > 0) updateIsland(boundIsland.id, { offsetFromWallCm: v });
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+
+            <span className="text-muted-foreground self-center">Finish</span>
+            <Select
+              value={layer.finishId != null ? String(layer.finishId) : ""}
+              onValueChange={(v) => onUpdate({ finishId: parseInt(v) })}
+            >
+              <SelectTrigger className="h-6 text-xs" onClick={(e) => e.stopPropagation()}>
+                <SelectValue placeholder="Select finish" />
+              </SelectTrigger>
+              <SelectContent>
+                {finishes.map((f) => (
+                  <SelectItem key={f.id} value={String(f.id)}>{f.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
+        )}
+
+        {layer.type === "island" && !boundIsland && (
+          <p className="text-[10px] text-muted-foreground col-span-2 italic">
+            Click a wall on the canvas to place this island.
+          </p>
         )}
 
         {layer.type === "end_panel" && (
