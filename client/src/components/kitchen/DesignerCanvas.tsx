@@ -880,8 +880,10 @@ export function DesignerCanvas({
 	const islandDrawingState = useCanvasStore((s) => s.islandDrawingState);
 	const setIslandPhase = useCanvasStore((s) => s.setIslandPhase);
 	const addIslandAction = useCanvasStore((s) => s.addIsland);
+	const updateIslandAction = useCanvasStore((s) => s.updateIsland);
 	const cancelIslandDraw = useCanvasStore((s) => s.cancelIslandDraw);
 	const activeLayerIdFromStore = useCanvasStore((s) => s.activeLayerId);
+	const setActiveLayerFromStore = useCanvasStore((s) => s.setActiveLayer);
 	const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
 	// Typed input for length/depth during island draw (null = not typing, mouse drag is live)
 	const [islandTypedInput, setIslandTypedInput] = useState<string | null>(null);
@@ -2370,8 +2372,6 @@ export function DesignerCanvas({
 				const iPhase = useCanvasStore.getState().islandDrawingState;
 				const inTypeablePhase =
 					iPhase.phase === 'draggingLength' || iPhase.phase === 'draggingDepth';
-				// eslint-disable-next-line no-console
-				console.log('[island-keydown]', { key: e.key, phase: iPhase.phase, typed: islandTypedInput, inTypeablePhase, target: (e.target as HTMLElement)?.tagName });
 
 				// Escape walks back one phase (or cancels typed input if active)
 				if (e.key === 'Escape' && iPhase.phase !== 'idle') {
@@ -4460,6 +4460,8 @@ export function DesignerCanvas({
 						const lengthPx = island.lengthCm * PIXELS_PER_CM;
 						const depthPx = island.depthCm * PIXELS_PER_CM;
 						const rotationDeg = (island.rotationRad * 180) / Math.PI;
+						const isSelected = activeLayerIdFromStore === island.layerId;
+						const canInteract = islandDrawingState.phase === 'idle';
 						return (
 							<Group key={island.id}>
 								<Rect
@@ -4469,9 +4471,30 @@ export function DesignerCanvas({
 									height={depthPx}
 									rotation={rotationDeg}
 									fill="#F59E0B"
-									opacity={0.4}
-									stroke="#F59E0B"
-									strokeWidth={2}
+									opacity={isSelected ? 0.55 : 0.4}
+									stroke={isSelected ? '#B45309' : '#F59E0B'}
+									strokeWidth={isSelected ? 3 : 2}
+									listening={canInteract}
+									draggable={canInteract}
+									onClick={(e) => {
+										e.cancelBubble = true;
+										setActiveLayerFromStore(island.layerId);
+									}}
+									onTap={(e) => {
+										e.cancelBubble = true;
+										setActiveLayerFromStore(island.layerId);
+									}}
+									onDragStart={(e) => {
+										e.cancelBubble = true;
+										setActiveLayerFromStore(island.layerId);
+									}}
+									onDragEnd={(e) => {
+										e.cancelBubble = true;
+										const node = e.target;
+										updateIslandAction(island.id, {
+											anchorPoint: { x: node.x(), y: node.y() },
+										});
+									}}
 								/>
 								<Text
 									x={island.anchorPoint.x + 4}
