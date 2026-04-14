@@ -4822,6 +4822,7 @@ export function DesignerCanvas({
 
 			{showDimensionInput &&
 				!wallPlacement &&
+				islandDrawingState.phase === 'idle' &&
 				drawingState.startPoint && (
 					<FloatingDimensionInput
 						x={drawingState.startPoint.x}

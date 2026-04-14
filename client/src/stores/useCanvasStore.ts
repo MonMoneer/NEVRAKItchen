@@ -527,7 +527,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }),
 
   startIslandDraw: () =>
-    set({ islandDrawingState: { phase: "pickingWall" } }),
+    set((state) => ({
+      islandDrawingState: { phase: "pickingWall" },
+      // Neutralize any in-progress tool drawing so wall/cabinet previews don't show up
+      drawingState: {
+        ...state.drawingState,
+        tool: "select",
+        isDrawing: false,
+        startPoint: null,
+        previewPoint: null,
+      },
+    })),
 
   cancelIslandDraw: () =>
     set({ islandDrawingState: { phase: "idle" } }),
