@@ -1182,7 +1182,7 @@ export function DesignerCanvas({
 					if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
 					const axis: 'h' | 'v' = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
 					const lengthPx = axis === 'h' ? Math.abs(dx) : Math.abs(dy);
-					const lengthCm = lengthPx / PIXELS_PER_CM;
+					const lengthCm = Math.round(lengthPx / PIXELS_PER_CM);
 					if (lengthCm < 1) return;
 					const lengthSign = axis === 'h' ? dx : dy;
 					setIslandPhase({
@@ -1200,7 +1200,7 @@ export function DesignerCanvas({
 						phase.axis === 'h'
 							? Math.abs(worldPoint.y - phase.anchor.y)
 							: Math.abs(worldPoint.x - phase.anchor.x);
-					const depthCm = depthPx / PIXELS_PER_CM;
+					const depthCm = Math.round(depthPx / PIXELS_PER_CM);
 					if (depthCm < 1) return;
 					const depthSign =
 						phase.axis === 'h'
