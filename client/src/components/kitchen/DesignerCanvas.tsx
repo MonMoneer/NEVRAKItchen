@@ -1177,7 +1177,6 @@ export function DesignerCanvas({
 					return;
 				}
 				case 'draggingLength': {
-					// Decide axis from dominant delta
 					const dx = worldPoint.x - phase.anchor.x;
 					const dy = worldPoint.y - phase.anchor.y;
 					if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
@@ -1185,14 +1184,13 @@ export function DesignerCanvas({
 					const lengthPx = axis === 'h' ? Math.abs(dx) : Math.abs(dy);
 					const lengthCm = lengthPx / PIXELS_PER_CM;
 					if (lengthCm < 1) return;
-					const lengthDir: 1 | -1 = (axis === 'h' ? dx : dy) >= 0 ? 1 : -1;
+					const lengthSign = axis === 'h' ? dx : dy;
 					setIslandPhase({
 						phase: 'draggingDepth',
 						anchor: phase.anchor,
 						lengthCm,
 						axis,
-						lengthDir,
-						depthDir: 1, // default; updated on commit based on cursor
+						lengthSign,
 					});
 					return;
 				}
@@ -1204,37 +1202,27 @@ export function DesignerCanvas({
 							: Math.abs(worldPoint.x - phase.anchor.x);
 					const depthCm = depthPx / PIXELS_PER_CM;
 					if (depthCm < 1) return;
-					// Determine depth direction from cursor
 					const depthSign =
 						phase.axis === 'h'
 							? worldPoint.y - phase.anchor.y
 							: worldPoint.x - phase.anchor.x;
-					const depthDir: 1 | -1 = depthSign >= 0 ? 1 : -1;
-					// Compute the top-left corner of the rectangle
+					// Top-left corner = min of anchor and drawn endpoint on each axis
 					const lengthPx = phase.lengthCm * PIXELS_PER_CM;
-					const anchorX =
+					const rectX =
 						phase.axis === 'h'
-							? phase.lengthDir === -1
-								? phase.anchor.x - lengthPx
-								: phase.anchor.x
-							: depthDir === -1
-								? phase.anchor.x - depthPx
-								: phase.anchor.x;
-					const anchorY =
+							? Math.min(phase.anchor.x, phase.anchor.x + (phase.lengthSign >= 0 ? 0 : -lengthPx))
+							: Math.min(phase.anchor.x, phase.anchor.x + (depthSign >= 0 ? 0 : -depthPx));
+					const rectY =
 						phase.axis === 'v'
-							? phase.lengthDir === -1
-								? phase.anchor.y - lengthPx
-								: phase.anchor.y
-							: depthDir === -1
-								? phase.anchor.y - depthPx
-								: phase.anchor.y;
+							? Math.min(phase.anchor.y, phase.anchor.y + (phase.lengthSign >= 0 ? 0 : -lengthPx))
+							: Math.min(phase.anchor.y, phase.anchor.y + (depthSign >= 0 ? 0 : -depthPx));
 					const island: Island = {
 						id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
 						layerId: activeLayerIdFromStore,
 						referenceWallId: '',
 						offsetFromWallCm: 0,
 						depthSide: 'far',
-						anchorPoint: { x: anchorX, y: anchorY },
+						anchorPoint: { x: rectX, y: rectY },
 						lengthCm: phase.lengthCm,
 						depthCm,
 						rotationRad: 0,
@@ -2489,42 +2477,44 @@ export function DesignerCanvas({
 						}
 						if (iPhase.phase === 'draggingLength') {
 							let axis: 'h' | 'v' = 'h';
-							let lengthDir: 1 | -1 = 1;
+							let lengthSign = 1;
 							if (cursorWorld) {
 								const dx = cursorWorld.x - iPhase.anchor.x;
 								const dy = cursorWorld.y - iPhase.anchor.y;
 								axis = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
-								lengthDir = (axis === 'h' ? dx : dy) >= 0 ? 1 : -1;
+								lengthSign = axis === 'h' ? dx : dy;
 							}
 							setIslandPhase({
 								phase: 'draggingDepth',
 								anchor: iPhase.anchor,
 								lengthCm: n,
 								axis,
-								lengthDir,
-								depthDir: 1,
+								lengthSign,
 							});
 							setIslandTypedInput(null);
 						} else if (iPhase.phase === 'draggingDepth') {
 							if (!activeLayerIdFromStore) return;
-							const depthDir = iPhase.depthDir;
 							const lengthPx = iPhase.lengthCm * PIXELS_PER_CM;
 							const depthPx = n * PIXELS_PER_CM;
-							const anchorX =
+							// Determine depth direction from cursor
+							const depthSign = cursorWorld
+								? (iPhase.axis === 'h' ? cursorWorld.y - iPhase.anchor.y : cursorWorld.x - iPhase.anchor.x)
+								: 1;
+							const rectX =
 								iPhase.axis === 'h'
-									? iPhase.lengthDir === -1 ? iPhase.anchor.x - lengthPx : iPhase.anchor.x
-									: depthDir === -1 ? iPhase.anchor.x - depthPx : iPhase.anchor.x;
-							const anchorY =
+									? Math.min(iPhase.anchor.x, iPhase.anchor.x + (iPhase.lengthSign >= 0 ? 0 : -lengthPx))
+									: Math.min(iPhase.anchor.x, iPhase.anchor.x + (depthSign >= 0 ? 0 : -depthPx));
+							const rectY =
 								iPhase.axis === 'v'
-									? iPhase.lengthDir === -1 ? iPhase.anchor.y - lengthPx : iPhase.anchor.y
-									: depthDir === -1 ? iPhase.anchor.y - depthPx : iPhase.anchor.y;
+									? Math.min(iPhase.anchor.y, iPhase.anchor.y + (iPhase.lengthSign >= 0 ? 0 : -lengthPx))
+									: Math.min(iPhase.anchor.y, iPhase.anchor.y + (depthSign >= 0 ? 0 : -depthPx));
 							const island: Island = {
 								id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
 								layerId: activeLayerIdFromStore,
 								referenceWallId: '',
 								offsetFromWallCm: 0,
 								depthSide: 'far',
-								anchorPoint: { x: anchorX, y: anchorY },
+								anchorPoint: { x: rectX, y: rectY },
 								lengthCm: iPhase.lengthCm,
 								depthCm: n,
 								rotationRad: 0,
@@ -4648,7 +4638,7 @@ export function DesignerCanvas({
 							);
 						}
 						if (phase.phase === 'draggingDepth') {
-							const { anchor, lengthCm, axis } = phase;
+							const { anchor, lengthCm, axis, lengthSign } = phase;
 							const lengthPx = lengthCm * PIXELS_PER_CM;
 							const typedCm =
 								islandTypedInput !== null ? parseFloat(islandTypedInput) : NaN;
@@ -4658,20 +4648,17 @@ export function DesignerCanvas({
 								: axis === 'h'
 									? Math.abs(cursorWorld.y - anchor.y)
 									: Math.abs(cursorWorld.x - anchor.x);
-							const signedDepth =
+							const depthSign =
 								axis === 'h' ? cursorWorld.y - anchor.y : cursorWorld.x - anchor.x;
+							// Rectangle origin = top-left corner
 							const rectX =
 								axis === 'h'
-									? anchor.x
-									: signedDepth >= 0
-										? anchor.x
-										: anchor.x - depthPx;
+									? (lengthSign >= 0 ? anchor.x : anchor.x - lengthPx)
+									: (depthSign >= 0 ? anchor.x : anchor.x - depthPx);
 							const rectY =
 								axis === 'v'
-									? anchor.y
-									: signedDepth >= 0
-										? anchor.y
-										: anchor.y - depthPx;
+									? (lengthSign >= 0 ? anchor.y : anchor.y - lengthPx)
+									: (depthSign >= 0 ? anchor.y : anchor.y - depthPx);
 							const labelDepth = usingTyped
 								? typedCm
 								: depthPx / PIXELS_PER_CM;
@@ -4892,6 +4879,146 @@ export function DesignerCanvas({
 					onCancel={handleDimensionCancel}
 				/>
 			)}
+
+			{/* Island drawing bottom bar */}
+			{(islandDrawingState.phase === 'draggingLength' || islandDrawingState.phase === 'draggingDepth') && (() => {
+				const phase = islandDrawingState;
+				const liveLengthCm = (() => {
+					if (phase.phase === 'draggingLength' && cursorWorld) {
+						const dx = cursorWorld.x - phase.anchor.x;
+						const dy = cursorWorld.y - phase.anchor.y;
+						const axis = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+						return Math.round((axis === 'h' ? Math.abs(dx) : Math.abs(dy)) / PIXELS_PER_CM);
+					}
+					if (phase.phase === 'draggingDepth') return Math.round(phase.lengthCm);
+					return 0;
+				})();
+				const liveDepthCm = (() => {
+					if (phase.phase === 'draggingDepth' && cursorWorld) {
+						return Math.round(
+							(phase.axis === 'h'
+								? Math.abs(cursorWorld.y - phase.anchor.y)
+								: Math.abs(cursorWorld.x - phase.anchor.x)) / PIXELS_PER_CM
+						);
+					}
+					return 0;
+				})();
+				return (
+					<div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
+						<div className="bg-card border border-border rounded-lg shadow-lg px-4 py-3 flex items-center gap-4 backdrop-blur-sm">
+							<div className="text-xs font-semibold text-primary whitespace-nowrap">
+								Island
+							</div>
+							<div className="w-px h-8 bg-border" />
+							<div className="flex items-center gap-1.5">
+								<label className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+									Length
+								</label>
+								<div className="flex items-center bg-muted/50 border border-border rounded-md overflow-hidden">
+									<input
+										type="number"
+										value={islandTypedInput !== null && phase.phase === 'draggingLength' ? islandTypedInput : liveLengthCm || ''}
+										onChange={(e) => setIslandTypedInput(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter') {
+												e.preventDefault();
+												const n = parseFloat(e.currentTarget.value);
+												if (Number.isFinite(n) && n > 0) {
+													if (phase.phase === 'draggingLength') {
+														let axis: 'h' | 'v' = 'h';
+														let lengthSign = 1;
+														if (cursorWorld) {
+															const dx = cursorWorld.x - phase.anchor.x;
+															const dy = cursorWorld.y - phase.anchor.y;
+															axis = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+															lengthSign = axis === 'h' ? dx : dy;
+														}
+														setIslandPhase({
+															phase: 'draggingDepth',
+															anchor: phase.anchor,
+															lengthCm: n,
+															axis,
+															lengthSign,
+														});
+														setIslandTypedInput(null);
+													}
+												}
+											} else if (e.key === 'Escape') {
+												e.preventDefault();
+												setIslandTypedInput(null);
+											}
+										}}
+										disabled={phase.phase !== 'draggingLength'}
+										className="w-16 h-7 px-2 text-sm font-mono bg-transparent text-foreground outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+										step="any"
+										min="0"
+									/>
+									<span className="text-[10px] text-muted-foreground font-medium pr-2 select-none">cm</span>
+								</div>
+							</div>
+							<div className="flex items-center gap-1.5">
+								<label className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+									Depth
+								</label>
+								<div className="flex items-center bg-muted/50 border border-border rounded-md overflow-hidden">
+									<input
+										type="number"
+										value={islandTypedInput !== null && phase.phase === 'draggingDepth' ? islandTypedInput : liveDepthCm || ''}
+										onChange={(e) => setIslandTypedInput(e.target.value)}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter') {
+												e.preventDefault();
+												const n = parseFloat(e.currentTarget.value);
+												if (Number.isFinite(n) && n > 0 && phase.phase === 'draggingDepth' && activeLayerIdFromStore) {
+													const lengthPx = phase.lengthCm * PIXELS_PER_CM;
+													const depthPx = n * PIXELS_PER_CM;
+													const depthSign = cursorWorld
+														? (phase.axis === 'h' ? cursorWorld.y - phase.anchor.y : cursorWorld.x - phase.anchor.x)
+														: 1;
+													const rectX =
+														phase.axis === 'h'
+															? Math.min(phase.anchor.x, phase.anchor.x + (phase.lengthSign >= 0 ? 0 : -lengthPx))
+															: Math.min(phase.anchor.x, phase.anchor.x + (depthSign >= 0 ? 0 : -depthPx));
+													const rectY =
+														phase.axis === 'v'
+															? Math.min(phase.anchor.y, phase.anchor.y + (phase.lengthSign >= 0 ? 0 : -lengthPx))
+															: Math.min(phase.anchor.y, phase.anchor.y + (depthSign >= 0 ? 0 : -depthPx));
+													addIslandAction({
+														id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+														layerId: activeLayerIdFromStore,
+														referenceWallId: '',
+														offsetFromWallCm: 0,
+														depthSide: 'far',
+														anchorPoint: { x: rectX, y: rectY },
+														lengthCm: phase.lengthCm,
+														depthCm: n,
+														rotationRad: 0,
+														heightCm: 77,
+													});
+													setIslandPhase({ phase: 'idle' });
+													setIslandTypedInput(null);
+												}
+											} else if (e.key === 'Escape') {
+												e.preventDefault();
+												setIslandTypedInput(null);
+											}
+										}}
+										disabled={phase.phase !== 'draggingDepth'}
+										className="w-16 h-7 px-2 text-sm font-mono bg-transparent text-foreground outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:opacity-50"
+										step="any"
+										min="0"
+									/>
+									<span className="text-[10px] text-muted-foreground font-medium pr-2 select-none">cm</span>
+								</div>
+							</div>
+							<div className="w-px h-8 bg-border" />
+							<div className="text-[10px] text-muted-foreground whitespace-nowrap">
+								Enter to confirm · Esc to cancel
+							</div>
+						</div>
+					</div>
+				);
+			})()}
 
 			{/* Wall-point form modal */}
 			{showWallPointForm && wallPointPlacement?.position && (
