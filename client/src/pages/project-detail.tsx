@@ -706,27 +706,28 @@ export default function ProjectDetail({ id }: { id: number }) {
 				stage === 'site_measurement' ? 'siteMeasurementData' : 'canvasData';
 			saveCanvasNow(activeSpaceId, currentField);
 
-			// 3. If switching TO measurement, capture reference image if not already captured
+			// 3. If switching TO measurement, always capture a fresh reference image
+			//    (captures the estimation canvas with cabinets visible BEFORE stage changes)
 			if (targetStage === 'site_measurement') {
-				const currentSpace = spaces.find((s) => s.id === activeSpaceId);
-				if (currentSpace && !currentSpace.referenceImage) {
-					try {
-						const image = captureCanvasImage();
-						if (image) {
-							await fetch(`/api/spaces/${activeSpaceId}/reference`, {
-								method: 'PUT',
-								headers: { 'Content-Type': 'application/json' },
-								body: JSON.stringify({ referenceImage: image }),
-							});
-							updateSpace(activeSpaceId, { referenceImage: image });
-						}
-					} catch (err) {
-						console.error('[stage-switch] failed to capture reference image:', err);
+				try {
+					const image = captureCanvasImage();
+					if (image) {
+						await fetch(`/api/spaces/${activeSpaceId}/reference`, {
+							method: 'PUT',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ referenceImage: image }),
+						});
+						updateSpace(activeSpaceId, { referenceImage: image });
 					}
+				} catch (err) {
+					console.error('[stage-switch] failed to capture reference image:', err);
 				}
 			}
 
-			// 4. Update project stage on server
+			// 4. Clear the canvas immediately so the old stage's drawing disappears
+			canvasStore.clear();
+
+			// 5. Update project stage on server
 			try {
 				const res = await fetch(`/api/projects/${currentProject!.id}`, {
 					method: 'PUT',
@@ -735,6 +736,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 				});
 				if (res.ok) {
 					updateCurrentProject({ stage: targetStage });
+					// The useEffect on [activeSpaceId, canvasSourceField] will reactively
+					// load the correct data (siteMeasurementData or canvasData) for the new stage.
+					// If null, the canvas stays clear (blank board for measurement).
 					toast({
 						title: `Switched to ${targetStage === 'site_measurement' ? 'Site Measurement' : 'Estimation'}`,
 					});
