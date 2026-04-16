@@ -886,6 +886,7 @@ export function DesignerCanvas({
 	const cancelIslandDraw = useCanvasStore((s) => s.cancelIslandDraw);
 	const activeLayerIdFromStore = useCanvasStore((s) => s.activeLayerId);
 	const setActiveLayerFromStore = useCanvasStore((s) => s.setActiveLayer);
+	const showReferenceOverlay = useCanvasStore((s) => s.showReferenceOverlay);
 	const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
 	// Typed input for length/depth during island draw (null = not typing, mouse drag is live)
 	const [islandTypedInput, setIslandTypedInput] = useState<string | null>(null);
@@ -4500,7 +4501,7 @@ export function DesignerCanvas({
 				onMouseUp={handleMouseUp}
 			>
 				<Layer name="grid">{renderGrid()}</Layer>
-				{refImg && (
+				{refImg && showReferenceOverlay && (
 					<Layer listening={false}>
 						<KonvaImage
 							image={refImg}
@@ -4513,10 +4514,10 @@ export function DesignerCanvas({
 					</Layer>
 				)}
 				<Layer>
-					{stage !== 'site_measurement' && renderClearanceZones()}
-					{stage !== 'site_measurement' && renderWalls()}
-					{stage !== 'site_measurement' && renderWallCornerJoints()}
-					{stage !== 'site_measurement' && renderOpenings()}
+					{renderClearanceZones()}
+					{renderWalls()}
+					{renderWallCornerJoints()}
+					{renderOpenings()}
 					{stage !== 'site_measurement' && renderCabinets()}
 					{renderWallPoints()}
 					{renderWallPointRuler()}
