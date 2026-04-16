@@ -384,7 +384,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 		}
 		setSpaceNotes(activeSpace.notes ?? '');
 
-		const data = (activeSpace[canvasSourceField] ?? activeSpace.canvasData) as any;
+		// Load the correct field — NO fallback to canvasData in measurement mode
+		// (measurement starts with a blank canvas)
+		const data = activeSpace[canvasSourceField] as any;
 		if (data) {
 			if (data.wallPoints && data.walls) {
 				const wallIds = new Set((data.walls as any[]).map((w: any) => w.id));
