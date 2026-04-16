@@ -38,7 +38,7 @@ export type IslandDrawingState =
   | { phase: "idle" }
   | { phase: "pickingCorner1" }
   | { phase: "draggingLength"; anchor: Point }
-  | { phase: "draggingDepth"; anchor: Point; lengthCm: number; axis: "h" | "v" };
+  | { phase: "draggingDepth"; anchor: Point; lengthCm: number; axis: "h" | "v"; lengthDir: 1 | -1; depthDir: 1 | -1 };
 
 interface DesignData {
   walls: Wall[];

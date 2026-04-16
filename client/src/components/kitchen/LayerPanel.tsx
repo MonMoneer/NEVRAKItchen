@@ -176,6 +176,7 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
         layers={layers}
         cabinets={cabinets}
         walls={walls}
+        islands={islands}
         prices={prices}
         tallRows={tallRows}
         settings={settings}
@@ -539,12 +540,13 @@ interface TotalFooterProps {
   layers: Layer[];
   cabinets: Cabinet[];
   walls: Wall[];
+  islands: Island[];
   prices: DreamHomePrice[];
   tallRows: TallHeight[];
   settings?: PricingSettings;
 }
 
-function TotalFooter({ layers, cabinets, walls, prices, tallRows, settings }: TotalFooterProps) {
+function TotalFooter({ layers, cabinets, walls, islands, prices, tallRows, settings }: TotalFooterProps) {
   if (!settings) {
     return (
       <div className="p-3 border-t border-sidebar-border bg-sidebar">
@@ -554,6 +556,11 @@ function TotalFooter({ layers, cabinets, walls, prices, tallRows, settings }: To
   }
 
   const getLength = (layer: Layer): number => {
+    // Island layers: get length from the bound Island record
+    if (layer.type === "island") {
+      const bound = islands.find((i) => i.layerId === layer.id);
+      return bound ? bound.lengthCm / 100 : 0;
+    }
     if (!DRAWABLE_TYPES.includes(layer.type)) return 0;
     const cabs = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
     if (cabs.length === 0) return 0;
@@ -562,8 +569,12 @@ function TotalFooter({ layers, cabinets, walls, prices, tallRows, settings }: To
   };
 
   const total = layers.reduce((sum, layer) => {
+    const bound = layer.type === "island" ? islands.find((i) => i.layerId === layer.id) : null;
+    const pricingLayerInput = bound
+      ? { ...layer, depth: bound.depthCm, height: bound.heightCm }
+      : layer;
     const result = calculateLayerPrice({
-      layer: layer as unknown as PricingLayer,
+      layer: pricingLayerInput as unknown as PricingLayer,
       lengthM: getLength(layer),
       settings,
       dreamHomePrices: prices,

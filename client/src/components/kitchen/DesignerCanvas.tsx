@@ -1180,41 +1180,64 @@ export function DesignerCanvas({
 					// Decide axis from dominant delta
 					const dx = worldPoint.x - phase.anchor.x;
 					const dy = worldPoint.y - phase.anchor.y;
-					if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return; // ignore micro-clicks
+					if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return;
 					const axis: 'h' | 'v' = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
 					const lengthPx = axis === 'h' ? Math.abs(dx) : Math.abs(dy);
 					const lengthCm = lengthPx / PIXELS_PER_CM;
 					if (lengthCm < 1) return;
+					const lengthDir: 1 | -1 = (axis === 'h' ? dx : dy) >= 0 ? 1 : -1;
 					setIslandPhase({
 						phase: 'draggingDepth',
 						anchor: phase.anchor,
 						lengthCm,
 						axis,
+						lengthDir,
+						depthDir: 1, // default; updated on commit based on cursor
 					});
 					return;
 				}
 				case 'draggingDepth': {
 					if (!activeLayerIdFromStore) return;
-					// Perpendicular distance from cursor to rail axis
 					const depthPx =
 						phase.axis === 'h'
 							? Math.abs(worldPoint.y - phase.anchor.y)
 							: Math.abs(worldPoint.x - phase.anchor.x);
 					const depthCm = depthPx / PIXELS_PER_CM;
 					if (depthCm < 1) return;
-					// axis "h" => length runs left-right => rotation 0
-					// axis "v" => length runs up-down => rotation π/2
-					const rotationRad = phase.axis === 'h' ? 0 : Math.PI / 2;
+					// Determine depth direction from cursor
+					const depthSign =
+						phase.axis === 'h'
+							? worldPoint.y - phase.anchor.y
+							: worldPoint.x - phase.anchor.x;
+					const depthDir: 1 | -1 = depthSign >= 0 ? 1 : -1;
+					// Compute the top-left corner of the rectangle
+					const lengthPx = phase.lengthCm * PIXELS_PER_CM;
+					const anchorX =
+						phase.axis === 'h'
+							? phase.lengthDir === -1
+								? phase.anchor.x - lengthPx
+								: phase.anchor.x
+							: depthDir === -1
+								? phase.anchor.x - depthPx
+								: phase.anchor.x;
+					const anchorY =
+						phase.axis === 'v'
+							? phase.lengthDir === -1
+								? phase.anchor.y - lengthPx
+								: phase.anchor.y
+							: depthDir === -1
+								? phase.anchor.y - depthPx
+								: phase.anchor.y;
 					const island: Island = {
 						id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
 						layerId: activeLayerIdFromStore,
 						referenceWallId: '',
 						offsetFromWallCm: 0,
 						depthSide: 'far',
-						anchorPoint: phase.anchor,
+						anchorPoint: { x: anchorX, y: anchorY },
 						lengthCm: phase.lengthCm,
 						depthCm,
-						rotationRad,
+						rotationRad: 0,
 						heightCm: 77,
 					};
 					addIslandAction(island);
@@ -2465,33 +2488,46 @@ export function DesignerCanvas({
 							return;
 						}
 						if (iPhase.phase === 'draggingLength') {
-							// Need an axis — use dominant cursor axis from anchor
 							let axis: 'h' | 'v' = 'h';
+							let lengthDir: 1 | -1 = 1;
 							if (cursorWorld) {
 								const dx = cursorWorld.x - iPhase.anchor.x;
 								const dy = cursorWorld.y - iPhase.anchor.y;
 								axis = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+								lengthDir = (axis === 'h' ? dx : dy) >= 0 ? 1 : -1;
 							}
 							setIslandPhase({
 								phase: 'draggingDepth',
 								anchor: iPhase.anchor,
 								lengthCm: n,
 								axis,
+								lengthDir,
+								depthDir: 1,
 							});
 							setIslandTypedInput(null);
 						} else if (iPhase.phase === 'draggingDepth') {
 							if (!activeLayerIdFromStore) return;
-							const rotationRad = iPhase.axis === 'h' ? 0 : Math.PI / 2;
+							const depthDir = iPhase.depthDir;
+							const lengthPx = iPhase.lengthCm * PIXELS_PER_CM;
+							const depthPx = n * PIXELS_PER_CM;
+							const anchorX =
+								iPhase.axis === 'h'
+									? iPhase.lengthDir === -1 ? iPhase.anchor.x - lengthPx : iPhase.anchor.x
+									: depthDir === -1 ? iPhase.anchor.x - depthPx : iPhase.anchor.x;
+							const anchorY =
+								iPhase.axis === 'v'
+									? iPhase.lengthDir === -1 ? iPhase.anchor.y - lengthPx : iPhase.anchor.y
+									: depthDir === -1 ? iPhase.anchor.y - depthPx : iPhase.anchor.y;
 							const island: Island = {
 								id: `island_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
 								layerId: activeLayerIdFromStore,
 								referenceWallId: '',
 								offsetFromWallCm: 0,
 								depthSide: 'far',
-								anchorPoint: iPhase.anchor,
+								anchorPoint: { x: anchorX, y: anchorY },
 								lengthCm: iPhase.lengthCm,
 								depthCm: n,
-								rotationRad,
+								rotationRad: 0,
 								heightCm: 77,
 							};
 							addIslandAction(island);
