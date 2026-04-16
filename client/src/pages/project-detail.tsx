@@ -16,7 +16,9 @@ import {
 } from '@/components/kitchen/Toolbar';
 import { DesignerCanvas } from '@/components/kitchen/DesignerCanvas';
 import { LayerPanel } from '@/components/kitchen/LayerPanel';
-import { SiteMeasurementPanel } from '@/components/kitchen/SiteMeasurementPanel';
+// DEPRECATED: SiteMeasurementPanel replaced by SpacesPreviewPanel + WallPointPopup (2026-04-16)
+// import { SiteMeasurementPanel } from '@/components/kitchen/SiteMeasurementPanel';
+import { SpacesPreviewPanel } from '@/components/kitchen/SpacesPreviewPanel';
 import {
 	type Wall,
 	type Cabinet,
@@ -1125,20 +1127,12 @@ export default function ProjectDetail({ id }: { id: number }) {
 					</div>
 				)}
 
-				{/* Site measurement panel (right sidebar during site_measurement) */}
+				{/* Spaces preview panel (right sidebar during site_measurement) */}
 				{stage === 'site_measurement' && (
-					<SiteMeasurementPanel
-						referenceImage={referenceImage}
-						wallPoints={canvasStore.wallPoints}
-						walls={drawingState.walls}
-						onUpdateWallPoint={(wpId, updates) => {
-							canvasStore.updateWallPoint(wpId, updates);
-							scheduleCanvasSave();
-						}}
-						onDeleteWallPoint={(wpId) => {
-							canvasStore.deleteWallPoint(wpId);
-							scheduleCanvasSave();
-						}}
+					<SpacesPreviewPanel
+						spaces={spaces}
+						activeSpaceId={activeSpaceId}
+						onSelectSpace={(id) => setActiveSpaceId(id)}
 					/>
 				)}
 

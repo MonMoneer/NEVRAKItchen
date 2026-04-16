@@ -66,6 +66,7 @@ import {
 } from '@/lib/kitchen-engine';
 import { FloatingDimensionInput } from './FloatingDimensionInput';
 import { IslandInputOverlay } from './IslandInputOverlay';
+import { WallPointPopup } from './WallPointPopup';
 import { useCanvasStore, type WallPointItem } from '@/stores/useCanvasStore';
 import type { CustomTool } from './Toolbar';
 
@@ -5160,86 +5161,29 @@ export function DesignerCanvas({
 					)}
 			</div>
 
-			{/* Wall point detail panel — shown when a wall point is selected */}
-			{selectedWallPoint && (
-				<div className="absolute top-4 right-4 z-50 bg-white border-2 border-gray-200 rounded-xl shadow-xl w-72 p-4">
-					<div className="flex items-center justify-between mb-3">
-						<div className="flex items-center gap-2">
-							<span className="text-lg">
-								{selectedWallPoint.type === 'electrical'
-									? '⚡'
-									: '💧'}
-							</span>
-							<h3 className="text-sm font-bold text-gray-800">
-								{selectedWallPoint.type === 'electrical'
-									? 'Electrical Point'
-									: 'Plumbing Point'}
-							</h3>
-						</div>
-						<button
-							onClick={() => setSelectedWallPoint(null)}
-							className="text-gray-400 hover:text-gray-600 text-lg leading-none"
-						>
-							×
-						</button>
-					</div>
-					<div className="space-y-2 text-sm text-gray-700">
-						<div className="flex justify-between">
-							<span className="text-gray-500">
-								Height from floor
-							</span>
-							<span className="font-semibold">
-								{selectedWallPoint.heightCm} cm
-							</span>
-						</div>
-						<div className="flex justify-between">
-							<span className="text-gray-500">
-								Distance from corner
-							</span>
-							<span className="font-semibold">
-								{selectedWallPoint.distanceCm} cm
-							</span>
-						</div>
-						{selectedWallPoint.note && (
-							<div>
-								<span className="text-gray-500 block">
-									Note
-								</span>
-								<span className="text-gray-800">
-									{selectedWallPoint.note}
-								</span>
-							</div>
-						)}
-						{selectedWallPoint.photo && (
-							<img
-								src={selectedWallPoint.photo}
-								alt="wall point photo"
-								className="w-full h-28 object-cover rounded-lg border border-gray-200 mt-1"
-							/>
-						)}
-					</div>
-					<div className="mt-3 flex gap-2">
-						<button
-							onClick={() => {
-								setEditingWallPoint(selectedWallPoint);
-								setSelectedWallPoint(null);
-							}}
-							className="flex-1 text-xs font-medium text-blue-600 border border-blue-200 rounded-lg py-1.5 hover:bg-blue-50 transition-colors"
-						>
-							Edit
-						</button>
-						<button
-							onClick={() => {
-								onDeleteWallPoint?.(selectedWallPoint.id);
-								setSelectedWallPoint(null);
-							}}
-							className="flex-1 text-xs font-medium text-red-600 border border-red-200 rounded-lg py-1.5 hover:bg-red-50 transition-colors"
-						>
-							Delete
-						</button>
-					</div>
-				</div>
-			)}
+			{/* Wall point floating popup — positioned near the selected point */}
+			{selectedWallPoint && (() => {
+				const screenX = selectedWallPoint.posX * scale + stagePos.x;
+				const screenY = selectedWallPoint.posY * scale + stagePos.y;
+				return (
+					<WallPointPopup
+						point={selectedWallPoint}
+						screenX={screenX}
+						screenY={screenY}
+						containerWidth={dimensions.width}
+						containerHeight={dimensions.height}
+						onEdit={() => {
+							setEditingWallPoint(selectedWallPoint);
+							setSelectedWallPoint(null);
+						}}
+						onDelete={() => {
+							onDeleteWallPoint?.(selectedWallPoint.id);
+							setSelectedWallPoint(null);
+						}}
+						onClose={() => setSelectedWallPoint(null)}
+					/>
+				);
+			})()}
 		</div>
 	);
 }

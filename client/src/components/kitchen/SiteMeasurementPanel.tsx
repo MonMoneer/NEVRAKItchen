@@ -1,3 +1,5 @@
+// DEPRECATED: Replaced by SpacesPreviewPanel + WallPointPopup (2026-04-16)
+// This component is no longer imported. Kept for reference during testing.
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Trash2, Zap, Droplets, ImageOff } from "lucide-react";
 import type { WallPointItem } from "@/stores/useCanvasStore";
