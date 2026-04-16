@@ -305,6 +305,10 @@ export default function ProjectDetail({ id }: { id: number }) {
 		null
 	);
 	const [activeCustomTool, setActiveCustomTool] = useState<CustomTool>(null);
+	const [switchConfirmDialog, setSwitchConfirmDialog] = useState<{
+		open: boolean;
+		targetStage: 'estimated_price' | 'site_measurement';
+	}>({ open: false, targetStage: 'estimated_price' });
 	const konvaStageRef = useRef<Konva.Stage | null>(null);
 	const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -683,70 +687,76 @@ export default function ProjectDetail({ id }: { id: number }) {
 
 	// ── Stage transitions ───────────────────────────────────────────────────────
 
-	const handleAdvanceToMeasurement = useCallback(async () => {
-		if (
-			!confirm(
-				'Send to Site Measurement? This will save and capture the current design as reference.'
-			)
-		) {
-			return;
-		}
-		setIsSaving(true);
+	const handleStageSwitch = useCallback(
+		async (targetStage: 'estimated_price' | 'site_measurement') => {
+			if (targetStage === stage || !activeSpaceId) return;
 
-		try {
-			// Flush any pending auto-save for the active space first
+			// 1. Flush any pending auto-save
 			if (saveTimeout.current) {
 				clearTimeout(saveTimeout.current);
 				saveTimeout.current = null;
 			}
-			if (activeSpaceId) {
-				const data = canvasStore.getCanvasData();
-				await fetch(`/api/spaces/${activeSpaceId}`, {
-					method: 'PUT',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						canvasData: data,
-						finishing: data.selectedFinishing,
-					}),
-				});
-			}
 
-			// Capture and save reference image for the active space
-			if (activeSpaceId) {
-				const image = captureCanvasImage();
-				if (image) {
-					await fetch(`/api/spaces/${activeSpaceId}/reference`, {
-						method: 'PUT',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ referenceImage: image }),
-					});
-					// Update local space state so the right sidebar thumbnail
-					// picks up the newly-captured reference immediately.
-					updateSpace(activeSpaceId, { referenceImage: image });
+			// 2. Save current canvas data to the current stage's field
+			const currentField =
+				stage === 'site_measurement' ? 'siteMeasurementData' : 'canvasData';
+			saveCanvasNow(activeSpaceId, currentField);
+
+			// 3. If switching TO measurement, capture reference image if not already captured
+			if (targetStage === 'site_measurement') {
+				const currentSpace = spaces.find((s) => s.id === activeSpaceId);
+				if (currentSpace && !currentSpace.referenceImage) {
+					try {
+						const image = captureCanvasImage();
+						if (image) {
+							await fetch(`/api/spaces/${activeSpaceId}/reference`, {
+								method: 'PUT',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ referenceImage: image }),
+							});
+							updateSpace(activeSpaceId, { referenceImage: image });
+						}
+					} catch (err) {
+						console.error('[stage-switch] failed to capture reference image:', err);
+					}
 				}
 			}
 
-			const res = await fetch(`/api/projects/${id}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ stage: 'site_measurement' }),
-			});
-
-			if (res.ok) {
-				updateCurrentProject({ stage: 'site_measurement' });
-				toast({ title: 'Project sent to Site Measurement' });
+			// 4. Update project stage on server
+			try {
+				const res = await fetch(`/api/projects/${currentProject!.id}`, {
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ stage: targetStage }),
+				});
+				if (res.ok) {
+					updateCurrentProject({ stage: targetStage });
+					toast({
+						title: `Switched to ${targetStage === 'site_measurement' ? 'Site Measurement' : 'Estimation'}`,
+					});
+				}
+			} catch (err: any) {
+				toast({
+					title: 'Failed to switch stage',
+					description: err.message,
+					variant: 'destructive',
+				});
 			}
-		} finally {
-			setIsSaving(false);
-		}
-	}, [
-		id,
-		spaces,
-		activeSpaceId,
-		captureCanvasImage,
-		updateCurrentProject,
-		toast,
-	]);
+
+			setSwitchConfirmDialog({ open: false, targetStage: 'estimated_price' });
+		},
+		[
+			stage,
+			activeSpaceId,
+			saveCanvasNow,
+			captureCanvasImage,
+			spaces,
+			updateSpace,
+			currentProject,
+			updateCurrentProject,
+			toast,
+		]
+	);
 
 	// ── Add / delete spaces ────────────────────────────────────────────────────
 
@@ -895,11 +905,39 @@ export default function ProjectDetail({ id }: { id: number }) {
 					)}
 				</div>
 
-				{/* Stage badge + advance button */}
+				{/* Stage toggle + controls */}
 				<div className="flex items-center gap-2 shrink-0">
-					<span className="text-xs text-muted-foreground">
-						{STAGE_LABELS[stage]}
-					</span>
+					{/* Stage toggle */}
+					<div className="flex items-center bg-muted rounded-lg p-0.5">
+						<button
+							onClick={() => {
+								if (stage !== 'estimated_price') {
+									setSwitchConfirmDialog({ open: true, targetStage: 'estimated_price' });
+								}
+							}}
+							className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+								stage === 'estimated_price'
+									? 'bg-background shadow-sm text-foreground'
+									: 'text-muted-foreground hover:text-foreground'
+							}`}
+						>
+							Estimation
+						</button>
+						<button
+							onClick={() => {
+								if (stage !== 'site_measurement') {
+									setSwitchConfirmDialog({ open: true, targetStage: 'site_measurement' });
+								}
+							}}
+							className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+								stage === 'site_measurement'
+									? 'bg-background shadow-sm text-foreground'
+									: 'text-muted-foreground hover:text-foreground'
+							}`}
+						>
+							Measurement
+						</button>
+					</div>
 
 					{/* Reference overlay toggle (technician in measurement stage) */}
 					{stage === 'site_measurement' && referenceImage && (
@@ -1123,6 +1161,45 @@ export default function ProjectDetail({ id }: { id: number }) {
 				onOpenChange={setAddSpaceOpen}
 				onAdd={handleAddSpace}
 			/>
+
+			{/* Stage switch confirmation dialog */}
+			<Dialog
+				open={switchConfirmDialog.open}
+				onOpenChange={(open) => {
+					if (!open) setSwitchConfirmDialog((prev) => ({ ...prev, open: false }));
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>
+							Switch to{' '}
+							{switchConfirmDialog.targetStage === 'site_measurement'
+								? 'Site Measurement'
+								: 'Estimation'}
+							?
+						</DialogTitle>
+					</DialogHeader>
+					<p className="text-sm text-muted-foreground">
+						Your current work will be saved automatically. You can switch back
+						anytime.
+					</p>
+					<DialogFooter>
+						<Button
+							variant="outline"
+							onClick={() =>
+								setSwitchConfirmDialog((prev) => ({ ...prev, open: false }))
+							}
+						>
+							Cancel
+						</Button>
+						<Button
+							onClick={() => handleStageSwitch(switchConfirmDialog.targetStage)}
+						>
+							Switch
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }
