@@ -1338,6 +1338,60 @@ export function getWallOuterFace(
   };
 }
 
+/**
+ * Find the existing wall whose INNER face (line wall.start → wall.end)
+ * the given point lies on (within snap radius). Returns the closest match,
+ * or null if no wall's inner face contains the point.
+ *
+ * Used when starting to draw the next wall — the start point reveals which
+ * existing wall's room interior the new wall must extend.
+ */
+export function findAnchorWallByInnerFace(
+  point: Point,
+  walls: Wall[],
+  snapRadius: number = SNAP_RADIUS,
+): Wall | null {
+  let best: Wall | null = null;
+  let bestDist = snapRadius;
+  for (const w of walls) {
+    // Check distance from point to the inner-face line (wall.start → wall.end).
+    const lat = lateralDistanceToLine(point, w.start, w.end);
+    // Also require the projection to fall within the segment (not past either end).
+    const t = projectPointOnSegment(point, w.start, w.end);
+    if (lat <= bestDist && t >= -0.05 && t <= 1.05) {
+      bestDist = lat;
+      best = w;
+    }
+  }
+  return best;
+}
+
+/**
+ * Given a new wall (newStart, newEnd) being created where newStart sits on
+ * the inner face of `anchorWall`, decide whether to swap newStart ↔ newEnd
+ * so the new wall's outward normal is on the same half-plane as the anchor's.
+ *
+ * Returns the (possibly swapped) {start, end} pair.
+ *
+ * Rule: wall 2's interior must be on the same side as wall 1's interior. So
+ * wall 2's outward normal must NOT point into wall 1's interior. We check
+ * dot(outwardNormal_new, outwardNormal_anchor) >= 0 — if negative, swap.
+ */
+export function orientNewWallFromAnchor(
+  newStart: Point,
+  newEnd: Point,
+  anchorWall: Wall,
+  walls: Wall[],
+): { start: Point; end: Point } {
+  const outAnchor = computeOutwardNormal(anchorWall.start, anchorWall.end, walls);
+  const outNew = computeOutwardNormal(newStart, newEnd, walls);
+  const dot = outNew.nx * outAnchor.nx + outNew.ny * outAnchor.ny;
+  if (dot < 0) {
+    return { start: newEnd, end: newStart };
+  }
+  return { start: newStart, end: newEnd };
+}
+
 export function getWallCornerJoints(walls: Wall[]): WallCornerJoint[] {
   const joints: WallCornerJoint[] = [];
   const seen = new Set<string>();

@@ -49,6 +49,8 @@ import {
 	computeOutwardNormal,
 	getWallPolygon,
 	getWallInnerFace,
+	findAnchorWallByInnerFace,
+	orientNewWallFromAnchor,
 	getWallAnchorPoints,
 	checkClearanceViolation,
 	calculateRemainingWallSpace,
@@ -1090,10 +1092,18 @@ export function DesignerCanvas({
 			const finalEnd = connection.point;
 
 			if (tool === 'wall') {
+				// If the start point lies on an existing wall's inner face,
+				// orient the new wall so its outward normal matches that wall's
+				// (same room interior on both walls). Without this, drawing wall 2
+				// in certain directions would put its thickness INTO the room.
+				const anchor = findAnchorWallByInnerFace(startPoint, walls);
+				const oriented = anchor
+					? orientNewWallFromAnchor(startPoint, finalEnd, anchor, walls)
+					: { start: startPoint, end: finalEnd };
 				const wall: Wall = {
 					id: generateId(),
-					start: { ...startPoint },
-					end: { ...finalEnd },
+					start: { ...oriented.start },
+					end: { ...oriented.end },
 					thickness: WALL_THICKNESS,
 				};
 				onAddWall(wall);
