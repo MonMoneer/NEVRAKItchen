@@ -96,6 +96,20 @@ async function runMigrations() {
         drawer_flat_aed numeric(10,2) NOT NULL DEFAULT '500'
       )
     `);
+    // ─── 2026-04-21: Inner-face wall model migration ─────────────────────
+    // Wipe all canvas data so users start fresh under the new wall model.
+    // Project shells (CRM cards, client info, stage, notes, attachments,
+    // reference images) survive. Use a sentinel column to make this run ONCE.
+    const sentinel = await pool.query(`
+      SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'spaces'
+         AND column_name = 'inner_face_migration_done'
+    `);
+    if (sentinel.rowCount === 0) {
+      await pool.query(`UPDATE spaces SET canvas_data = NULL, site_measurement_data = NULL`);
+      await pool.query(`ALTER TABLE spaces ADD COLUMN inner_face_migration_done boolean NOT NULL DEFAULT true`);
+      console.log("[migration] inner-face wall model: wiped canvas_data + site_measurement_data");
+    }
     console.log("[migration] schema migrations OK");
   } catch (err: any) {
     console.error("[migration] failed:", err.message, err.stack);
