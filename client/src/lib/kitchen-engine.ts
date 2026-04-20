@@ -311,20 +311,25 @@ function getWallCorners(walls: Wall[]): SnapTarget[] {
 }
 
 function getWallEndpoints(walls: Wall[]): SnapTarget[] {
-  // All 4 corners of each wall's polygon are snappable so the user can branch
-  // a new wall from inner OR outer corners. Polygon order from getWallPolygon:
-  // [innerStart, innerEnd, outerEnd, outerStart].
+  // Only inner-face endpoints are snappable. The user explicitly said the
+  // start point of the next wall must be an interior point/corner of the room
+  // — so outer corners (start/end + outwardNormal × thickness) are NOT
+  // included here. This also ensures `findAnchorWallByInnerFace` will detect
+  // the anchor wall and apply the inner-face orientation rule.
   const endpoints: SnapTarget[] = [];
   for (const wall of walls) {
-    const polygon = getWallPolygon(wall, walls);
-    for (const p of polygon) {
-      endpoints.push({
-        point: p,
-        type: "endpoint",
-        targetId: wall.id,
-        distance: 0,
-      });
-    }
+    endpoints.push({
+      point: wall.start,
+      type: "endpoint",
+      targetId: wall.id,
+      distance: 0,
+    });
+    endpoints.push({
+      point: wall.end,
+      type: "endpoint",
+      targetId: wall.id,
+      distance: 0,
+    });
   }
   return endpoints;
 }

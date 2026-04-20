@@ -3870,12 +3870,12 @@ export function DesignerCanvas({
 			!!wallPlacement;
 		if (!isWallSnapTool) return null;
 
-		// Collect ALL 4 polygon corners of every wall (inner + outer).
-		// User can branch a new wall from any of them.
+		// Show ONLY inner-face corners as snap targets. Outer corners are
+		// rendered but not snappable — the user said the start point of the
+		// next wall must be an interior point/corner of the room.
 		const corners: Point[] = [];
 		for (const w of drawingState.walls) {
-			const polygon = getWallPolygon(w, drawingState.walls);
-			for (const p of polygon) {
+			for (const p of [w.start, w.end]) {
 				if (!corners.some((c) => distanceBetween(c, p) < SNAP_RADIUS)) corners.push(p);
 			}
 		}
