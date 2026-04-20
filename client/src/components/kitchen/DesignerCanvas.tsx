@@ -3596,32 +3596,16 @@ export function DesignerCanvas({
 		const length = distanceBetween(cabinet.start, cabinet.end);
 		const depthPx = cmToPixels(cabinet.depth);
 		const deg = (angle * 180) / Math.PI;
-		const halfWall = WALL_THICKNESS / 2;
 
-		// Cabinet back edge sits flush against the inner wall face.
-		// depthFlipped=false → depth extends toward +y (angle+PI/2 direction)
-		// depthFlipped=true → depth extends toward -y (angle-PI/2 direction)
-		const yOffset = cabinet.depthFlipped ? -(halfWall + depthPx) : halfWall;
+		// Cabinet back edge sits ON the inner-face line — no halfWall offset.
+		// depthFlipped=false → depth extends INTO room (toward +y in cabinet local frame)
+		// depthFlipped=true  → depth extends OUT (toward -y) — kept for legacy data only
+		const yOffset = cabinet.depthFlipped ? -depthPx : 0;
 
-		// At wall corners, inset the cabinet start/end by halfWall so it doesn't
-		// overlap the perpendicular wall. Check if start or end is at a wall corner.
-		let xInsetStart = 0;
-		let xInsetEnd = 0;
-		if (cabinet.type !== 'island') {
-			for (const w of drawingState.walls) {
-				if (w.id === cabinet.wallId) continue; // skip own wall
-				// Check if cabinet start is at a corner with this wall
-				if (distanceBetween(cabinet.start, w.start) < SNAP_RADIUS ||
-					distanceBetween(cabinet.start, w.end) < SNAP_RADIUS) {
-					xInsetStart = halfWall;
-				}
-				// Check if cabinet end is at a corner with this wall
-				if (distanceBetween(cabinet.end, w.start) < SNAP_RADIUS ||
-					distanceBetween(cabinet.end, w.end) < SNAP_RADIUS) {
-					xInsetEnd = halfWall;
-				}
-			}
-		}
+		// Inner-face corners are clean polygon corners; perpendicular cabinets meet
+		// exactly without overlap. No inset needed.
+		const xInsetStart = 0;
+		const xInsetEnd = 0;
 
 		const points = [
 			xInsetStart,
