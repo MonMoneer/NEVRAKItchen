@@ -1369,13 +1369,19 @@ export function findAnchorWallByInnerFace(
 /**
  * Given a new wall (newStart, newEnd) being created where newStart sits on
  * the inner face of `anchorWall`, decide whether to swap newStart ↔ newEnd
- * so the new wall's outward normal is on the same half-plane as the anchor's.
+ * so the new wall's INNER face faces the same room interior as the anchor.
  *
  * Returns the (possibly swapped) {start, end} pair.
  *
- * Rule: wall 2's interior must be on the same side as wall 1's interior. So
- * wall 2's outward normal must NOT point into wall 1's interior. We check
- * dot(outwardNormal_new, outwardNormal_anchor) >= 0 — if negative, swap.
+ * Algorithm: build a probe point inside wall 1's room interior. Then check
+ * which side of wall 2's line that probe lands on:
+ *   - If probe is on wall 2's OUTWARD side → outward2 points INTO the room → swap
+ *   - Otherwise → correct, no swap
+ *
+ * The probe is shifted slightly into wall 1's interior (away from outward1)
+ * AND slightly along wall 1's length (so it's not collinear with wall 2 when
+ * the two walls are perpendicular — the case where a naive dot-product check
+ * returns zero and fails to detect the wrong orientation).
  */
 export function orientNewWallFromAnchor(
   newStart: Point,
@@ -1384,9 +1390,30 @@ export function orientNewWallFromAnchor(
   walls: Wall[],
 ): { start: Point; end: Point } {
   const outAnchor = computeOutwardNormal(anchorWall.start, anchorWall.end, walls);
+
+  // Unit vector along the anchor wall (start → end).
+  const adx = anchorWall.end.x - anchorWall.start.x;
+  const ady = anchorWall.end.y - anchorWall.start.y;
+  const aLen = Math.hypot(adx, ady);
+  const alongAnchor = aLen > 1e-6
+    ? { x: adx / aLen, y: ady / aLen }
+    : { x: 1, y: 0 };
+
+  // Probe = newStart shifted (away from anchor outward) + (along anchor) by half thickness.
+  // This lands clearly inside wall 1's interior AND off the new wall's line for any non-degenerate angle.
+  const offset = (anchorWall.thickness || WALL_THICKNESS) * 0.5;
+  const probe = {
+    x: newStart.x - outAnchor.nx * offset + alongAnchor.x * offset,
+    y: newStart.y - outAnchor.ny * offset + alongAnchor.y * offset,
+  };
+
+  // Check which side of the new wall's inner-face line the probe lands on.
+  // Signed distance along outward2: positive = probe is on outward side (wrong).
   const outNew = computeOutwardNormal(newStart, newEnd, walls);
-  const dot = outNew.nx * outAnchor.nx + outNew.ny * outAnchor.ny;
-  if (dot < 0) {
+  const signedDist =
+    (probe.x - newStart.x) * outNew.nx + (probe.y - newStart.y) * outNew.ny;
+
+  if (signedDist > 0) {
     return { start: newEnd, end: newStart };
   }
   return { start: newStart, end: newEnd };
