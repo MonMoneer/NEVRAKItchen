@@ -132,9 +132,14 @@ export function normalizeLayer(raw: any): Layer {
   return out as Layer;
 }
 
-export const WALL_THICKNESS = 15;
-export const SNAP_RADIUS = 12;
 export const PIXELS_PER_CM = 2;
+
+/** Default wall thickness in cm. */
+export const WALL_THICKNESS_CM = 15;
+/** Default wall thickness in canvas pixels. 15 cm × 2 px/cm = 30 px. */
+export const WALL_THICKNESS = WALL_THICKNESS_CM * PIXELS_PER_CM;
+
+export const SNAP_RADIUS = 12;
 
 export interface CabinetStyle {
   fill: string;

@@ -1,3 +1,19 @@
+/**
+ * ─── Inner-Face Wall Model (since 2026-04-21) ──────────────────────────────
+ *
+ * Walls and wall-bound cabinets/openings store COORDINATES OF THE INNER FACE
+ * of the room (the visible inside surface of the wall). Wall thickness extends
+ * OUTWARD from this inner face by `wall.thickness` pixels.
+ *
+ * - Wall.start / Wall.end       : inner-face corner points
+ * - Cabinet.start / Cabinet.end : back-corner points ON the inner-face line
+ * - Opening.start / Opening.end : edge points ON the inner-face line; opening
+ *                                 depth is derived from the host wall's thickness
+ *
+ * Outer face is computed at render time as: inner + outwardNormal × thickness.
+ * outwardNormal is reoriented by reorientWalls() so closed rooms have walls
+ * with thickness pointing AWAY from the polygon interior.
+ */
 import { pgTable, text, serial, numeric, integer, jsonb, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
