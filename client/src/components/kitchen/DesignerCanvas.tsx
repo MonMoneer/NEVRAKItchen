@@ -2980,9 +2980,9 @@ export function DesignerCanvas({
 						wall.end,
 						drawingState.walls
 					);
-					const halfW = WALL_THICKNESS / 2;
-					const ghostYTop = interiorFlipped ? -(halfW + depthPx) : halfW;
-					const ghostYMid = interiorFlipped ? -(halfW + depthPx / 2) : halfW + depthPx / 2;
+					// No halfWall offset — back edge sits on inner face (y=0 in cabinet local frame)
+					const ghostYTop = interiorFlipped ? -depthPx : 0;
+					const ghostYMid = interiorFlipped ? -(depthPx / 2) : depthPx / 2;
 					elements.push(
 						<Group
 							key="cabinet-ghost"
