@@ -538,35 +538,80 @@ function lateralDistanceToLine(
   return Math.abs((p.x - lineStart.x) * dy - (p.y - lineStart.y) * dx) / len;
 }
 
+/**
+ * Returns true if two rotated rectangles (4 corner points each) overlap.
+ * Uses Separating Axis Theorem with the 4 unique edge axes (2 per rect).
+ * 0.5 px tolerance so cabinets that just touch corners aren't considered overlapping.
+ */
+function rectanglesOverlap(rectA: Point[], rectB: Point[]): boolean {
+  const axes = [
+    { x: rectA[1].x - rectA[0].x, y: rectA[1].y - rectA[0].y },
+    { x: rectA[3].x - rectA[0].x, y: rectA[3].y - rectA[0].y },
+    { x: rectB[1].x - rectB[0].x, y: rectB[1].y - rectB[0].y },
+    { x: rectB[3].x - rectB[0].x, y: rectB[3].y - rectB[0].y },
+  ];
+  for (const a of axes) {
+    const len = Math.hypot(a.x, a.y);
+    if (len < 1e-6) continue;
+    const nx = a.x / len;
+    const ny = a.y / len;
+    let aMin = Infinity, aMax = -Infinity, bMin = Infinity, bMax = -Infinity;
+    for (const p of rectA) {
+      const proj = p.x * nx + p.y * ny;
+      if (proj < aMin) aMin = proj;
+      if (proj > aMax) aMax = proj;
+    }
+    for (const p of rectB) {
+      const proj = p.x * nx + p.y * ny;
+      if (proj < bMin) bMin = proj;
+      if (proj > bMax) bMax = proj;
+    }
+    if (aMax < bMin + 0.5 || bMax < aMin + 0.5) return false;
+  }
+  return true;
+}
+
 export function findOverlappingCabinets(
   tallStart: Point,
   tallEnd: Point,
   cabinets: Cabinet[],
   types: CabinetType[] = ["base", "wall_cabinet"],
+  // Optional: when provided, also detects perpendicular 2D corner overlap
+  // (e.g. corner TC's rectangle intersecting a BC on an adjacent wall).
+  cutterCabinet?: Cabinet,
 ): Cabinet[] {
   return cabinets.filter((c) => {
     if (!types.includes(c.type)) return false;
+    if (cutterCabinet && c.id === cutterCabinet.id) return false;
 
     const cabLen = distanceBetween(c.start, c.end);
     if (cabLen < 1) return false;
 
-    if (!areSegmentsParallel(tallStart, tallEnd, c.start, c.end)) return false;
+    // ── Existing: parallel same-wall overlap ────────────────────────────
+    if (areSegmentsParallel(tallStart, tallEnd, c.start, c.end)) {
+      const lateralDist = Math.min(
+        lateralDistanceToLine(tallStart, c.start, c.end),
+        lateralDistanceToLine(tallEnd, c.start, c.end),
+      );
+      if (lateralDist <= 15) {
+        const tTallStart = projectPointOnSegment(tallStart, c.start, c.end);
+        const tTallEnd = projectPointOnSegment(tallEnd, c.start, c.end);
+        const tMin = Math.min(tTallStart, tTallEnd);
+        const tMax = Math.max(tTallStart, tTallEnd);
+        const overlapStart = Math.max(0, tMin);
+        const overlapEnd = Math.min(1, tMax);
+        if (overlapEnd - overlapStart > 0.001) return true;
+      }
+    }
 
-    const lateralDist = Math.min(
-      lateralDistanceToLine(tallStart, c.start, c.end),
-      lateralDistanceToLine(tallEnd, c.start, c.end),
-    );
-    const lateralThreshold = 15;
-    if (lateralDist > lateralThreshold) return false;
+    // ── New: 2D rectangle overlap (catches perpendicular corner case) ──
+    if (cutterCabinet) {
+      const cutterRect = getCabinetRect(cutterCabinet, getDepthAngle(cutterCabinet));
+      const targetRect = getCabinetRect(c, getDepthAngle(c));
+      if (rectanglesOverlap(cutterRect, targetRect)) return true;
+    }
 
-    const tTallStart = projectPointOnSegment(tallStart, c.start, c.end);
-    const tTallEnd = projectPointOnSegment(tallEnd, c.start, c.end);
-    const tMin = Math.min(tTallStart, tTallEnd);
-    const tMax = Math.max(tTallStart, tTallEnd);
-
-    const overlapStart = Math.max(0, tMin);
-    const overlapEnd = Math.min(1, tMax);
-    return overlapEnd - overlapStart > 0.001;
+    return false;
   });
 }
 
@@ -582,14 +627,38 @@ export function splitCabinetAroundTall(
   cabinet: Cabinet,
   tallStart: Point,
   tallEnd: Point,
+  // Optional: when provided, the cutter's full 2D rectangle is projected onto
+  // the cabinet's axis — this enables PERPENDICULAR corner cuts (TC at corner
+  // shortens a BC on the adjacent wall by the TC's depth).
+  cutterCabinet?: Cabinet,
 ): SplitResult {
   const cabLen = distanceBetween(cabinet.start, cabinet.end);
   if (cabLen < 1) return { before: null, after: null, consumed: true };
 
-  const tTallStart = projectPointOnSegment(tallStart, cabinet.start, cabinet.end);
-  const tTallEnd = projectPointOnSegment(tallEnd, cabinet.start, cabinet.end);
-  const tMin = Math.min(tTallStart, tTallEnd);
-  const tMax = Math.max(tTallStart, tTallEnd);
+  // Default: project the cutter's start/end (works for parallel same-wall case)
+  let tMin: number;
+  let tMax: number;
+
+  if (cutterCabinet) {
+    // Project ALL 4 corners of the cutter's rectangle onto the cabinet's axis.
+    // For perpendicular corner cuts, this yields a clip range equal to the
+    // cutter's depth, instead of a near-zero range from endpoint projection.
+    const cutterRect = getCabinetRect(cutterCabinet, getDepthAngle(cutterCabinet));
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const corner of cutterRect) {
+      const t = projectPointOnSegment(corner, cabinet.start, cabinet.end);
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+    tMin = lo;
+    tMax = hi;
+  } else {
+    const tTallStart = projectPointOnSegment(tallStart, cabinet.start, cabinet.end);
+    const tTallEnd = projectPointOnSegment(tallEnd, cabinet.start, cabinet.end);
+    tMin = Math.min(tTallStart, tTallEnd);
+    tMax = Math.max(tTallStart, tTallEnd);
+  }
 
   const clipStart = Math.max(0, tMin);
   const clipEnd = Math.min(1, tMax);
@@ -654,14 +723,31 @@ export function computeSplitPoints(
   cabinet: Cabinet,
   tallStart: Point,
   tallEnd: Point,
+  cutterCabinet?: Cabinet,
 ): { splitStart: Point | null; splitEnd: Point | null; consumed: boolean } {
   const cabLen = distanceBetween(cabinet.start, cabinet.end);
   if (cabLen < 1) return { splitStart: null, splitEnd: null, consumed: true };
 
-  const tTallStart = projectPointOnSegment(tallStart, cabinet.start, cabinet.end);
-  const tTallEnd = projectPointOnSegment(tallEnd, cabinet.start, cabinet.end);
-  const tMin = Math.min(tTallStart, tTallEnd);
-  const tMax = Math.max(tTallStart, tTallEnd);
+  let tMin: number;
+  let tMax: number;
+
+  if (cutterCabinet) {
+    const cutterRect = getCabinetRect(cutterCabinet, getDepthAngle(cutterCabinet));
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const corner of cutterRect) {
+      const t = projectPointOnSegment(corner, cabinet.start, cabinet.end);
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+    tMin = lo;
+    tMax = hi;
+  } else {
+    const tTallStart = projectPointOnSegment(tallStart, cabinet.start, cabinet.end);
+    const tTallEnd = projectPointOnSegment(tallEnd, cabinet.start, cabinet.end);
+    tMin = Math.min(tTallStart, tTallEnd);
+    tMax = Math.max(tTallStart, tTallEnd);
+  }
 
   const clipStart = Math.max(0, tMin);
   const clipEnd = Math.min(1, tMax);

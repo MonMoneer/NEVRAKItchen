@@ -473,13 +473,15 @@ export default function ProjectDetail({ id }: { id: number }) {
 					cabinet.start,
 					cabinet.end,
 					newCabinets,
-					['base', 'wall_cabinet']
+					['base', 'wall_cabinet'],
+					cabinet,
 				);
 				for (const existing of overlapping) {
 					const result = splitCabinetAroundTall(
 						existing,
 						cabinet.start,
-						cabinet.end
+						cabinet.end,
+						cabinet,
 					);
 					newCabinets = newCabinets.filter(
 						(c) => c.id !== existing.id

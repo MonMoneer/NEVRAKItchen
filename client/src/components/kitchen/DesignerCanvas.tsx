@@ -4049,17 +4049,31 @@ export function DesignerCanvas({
 	};
 
 	const renderSplitPreview = () => {
-		const { isDrawing, startPoint, previewPoint, tool, cabinets } =
+		const { isDrawing, startPoint, previewPoint, tool, cabinets, walls } =
 			drawingState;
 		if (!isDrawing || !startPoint || !previewPoint || tool !== 'tall') {
 			return null;
 		}
 
+		// Build a synthetic preview cabinet so findOverlappingCabinets can
+		// detect perpendicular corner overlap (in addition to same-wall).
+		const previewFlipped = calculateDepthDirection(startPoint, previewPoint, walls);
+		const cutterPreview: Cabinet = {
+			id: '__preview_tall__',
+			type: 'tall',
+			start: startPoint,
+			end: previewPoint,
+			depth: CABINET_DEPTHS.tall,
+			length: distanceBetween(startPoint, previewPoint),
+			depthFlipped: previewFlipped,
+		};
+
 		const overlapping = findOverlappingCabinets(
 			startPoint,
 			previewPoint,
 			cabinets,
-			['base', 'wall_cabinet']
+			['base', 'wall_cabinet'],
+			cutterPreview,
 		);
 		if (overlapping.length === 0) {
 			return null;
@@ -4069,7 +4083,7 @@ export function DesignerCanvas({
 			<Group listening={false}>
 				{overlapping.map((cab) => {
 					const { splitStart, splitEnd, consumed } =
-						computeSplitPoints(cab, startPoint, previewPoint);
+						computeSplitPoints(cab, startPoint, previewPoint, cutterPreview);
 
 					const depthPx = cmToPixels(cab.depth);
 					const angle = angleBetween(cab.start, cab.end);

@@ -85,11 +85,12 @@ export default function Designer() {
             cabinet.start,
             cabinet.end,
             newCabinets,
-            ["base", "wall_cabinet"]
+            ["base", "wall_cabinet"],
+            cabinet,
           );
 
           for (const existingCab of overlapping) {
-            const result = splitCabinetAroundTall(existingCab, cabinet.start, cabinet.end);
+            const result = splitCabinetAroundTall(existingCab, cabinet.start, cabinet.end, cabinet);
             newCabinets = newCabinets.filter((c) => c.id !== existingCab.id);
             if (result.before) newCabinets.push(result.before);
             if (result.after) newCabinets.push(result.after);
