@@ -882,50 +882,41 @@ function pointInPolygon(point: Point, polygon: Point[]): boolean {
   return inside;
 }
 
+/**
+ * Returns the unit vector pointing FROM inner face OUTWARD (away from room interior).
+ *
+ * Convention (after `reorientWalls` has run): outward = right of `start → end` direction
+ * = rotate (end - start) by +90° clockwise and normalize → `{nx: dy/len, ny: -dx/len}`.
+ *
+ * Deterministic and O(1). The polygon-orientation logic that establishes
+ * the convention lives in `reorientWalls`, not here.
+ */
+export function computeOutwardNormal(
+  wallStart: Point,
+  wallEnd: Point,
+  _walls: Wall[],
+): { nx: number; ny: number } {
+  const dx = wallEnd.x - wallStart.x;
+  const dy = wallEnd.y - wallStart.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return { nx: 0, ny: 0 };
+  return { nx: dy / len, ny: -dx / len };
+}
+
+/**
+ * Returns the unit vector pointing FROM the wall line INTO the room interior.
+ * Negation of `computeOutwardNormal`.
+ *
+ * Kept for back-compat with older callers (`calculateDepthDirection`, etc.).
+ * New code should prefer `computeOutwardNormal` directly.
+ */
 export function computeInteriorNormal(
   wallStart: Point,
   wallEnd: Point,
   walls: Wall[],
 ): { nx: number; ny: number } {
-  const wallAngle = angleBetween(wallStart, wallEnd);
-  const perp1 = { nx: Math.cos(wallAngle + Math.PI / 2), ny: Math.sin(wallAngle + Math.PI / 2) };
-  const perp2 = { nx: Math.cos(wallAngle - Math.PI / 2), ny: Math.sin(wallAngle - Math.PI / 2) };
-
-  // Primary method: compute room centroid from all wall endpoints, then check
-  // which perpendicular direction points TOWARD the centroid (= interior)
-  const roomPoly = buildRoomPolygon(walls);
-  if (roomPoly && roomPoly.length >= 3) {
-    // Centroid of the room polygon — always reliably inside the room
-    let cx = 0, cy = 0;
-    for (const p of roomPoly) { cx += p.x; cy += p.y; }
-    cx /= roomPoly.length;
-    cy /= roomPoly.length;
-
-    const wallMid = midpoint(wallStart, wallEnd);
-    const toCentroid = { x: cx - wallMid.x, y: cy - wallMid.y };
-    const dot1 = perp1.nx * toCentroid.x + perp1.ny * toCentroid.y;
-    // If perp1 points toward centroid, it's the interior direction
-    return dot1 > 0 ? perp1 : perp2;
-  }
-
-  // Fallback: use centroid of all wall midpoints (works even without closed polygon)
-  if (walls.length >= 2) {
-    let cx = 0, cy = 0;
-    for (const w of walls) {
-      const m = midpoint(w.start, w.end);
-      cx += m.x;
-      cy += m.y;
-    }
-    cx /= walls.length;
-    cy /= walls.length;
-
-    const wallMid = midpoint(wallStart, wallEnd);
-    const toCentroid = { x: cx - wallMid.x, y: cy - wallMid.y };
-    const dot1 = perp1.nx * toCentroid.x + perp1.ny * toCentroid.y;
-    return dot1 > 0 ? perp1 : perp2;
-  }
-
-  return perp1;
+  const out = computeOutwardNormal(wallStart, wallEnd, walls);
+  return { nx: -out.nx, ny: -out.ny };
 }
 
 export function calculateDepthDirection(
