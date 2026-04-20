@@ -950,15 +950,19 @@ export function reorientWalls(walls: Wall[]): Wall[] {
   const result = walls.map((w) => ({ ...w }));
   const near = (a: Point, b: Point) => distanceBetween(a, b) < SNAP_RADIUS;
 
+  // Each cycle: ordered list of { idx, reversed } describing how to traverse the polygon.
+  // `reversed = true` means we walk wall.end → wall.start instead of start → end.
+  type CycleStep = { idx: number; reversed: boolean };
   const visited = new Set<number>();
-  const cycles: number[][] = [];
+  const cycles: CycleStep[][] = [];
 
   for (let startIdx = 0; startIdx < result.length; startIdx++) {
     if (visited.has(startIdx)) continue;
 
-    const path: number[] = [startIdx];
+    const path: CycleStep[] = [{ idx: startIdx, reversed: false }];
+    const inPath = new Set<number>([startIdx]);
     let currentIdx = startIdx;
-    let currentEnd = result[startIdx].end;
+    let currentEnd = result[startIdx].end; // tip of the path so far
     let closed = false;
 
     while (true) {
@@ -966,7 +970,8 @@ export function reorientWalls(walls: Wall[]): Wall[] {
       let nextStartsAtCurrent = true;
       for (let j = 0; j < result.length; j++) {
         if (j === currentIdx) continue;
-        if (path.includes(j)) {
+        if (inPath.has(j)) {
+          // Closure check: did we wrap back to the very first wall's start?
           if (j === startIdx && near(currentEnd, result[startIdx].start)) {
             closed = true;
           }
@@ -979,32 +984,44 @@ export function reorientWalls(walls: Wall[]): Wall[] {
       if (closed) break;
       if (nextIdx === -1) break;
 
-      if (!nextStartsAtCurrent) {
-        const tmp = result[nextIdx].start;
-        result[nextIdx].start = result[nextIdx].end;
-        result[nextIdx].end = tmp;
-      }
-      path.push(nextIdx);
+      const reversed = !nextStartsAtCurrent;
+      path.push({ idx: nextIdx, reversed });
+      inPath.add(nextIdx);
       currentIdx = nextIdx;
-      currentEnd = result[nextIdx].end;
+      // Tip of the path = the "end" of the next wall in traversal direction
+      currentEnd = reversed ? result[nextIdx].start : result[nextIdx].end;
 
       if (path.length > result.length) break;
     }
 
     if (closed && path.length >= 3) {
       cycles.push(path);
-      path.forEach((i) => visited.add(i));
+      path.forEach((step) => visited.add(step.idx));
     }
   }
 
+  // Warn if the only walls present don't form any closed loop — useful in dev.
+  if (cycles.length === 0 && walls.length >= 3) {
+    console.warn('[reorientWalls] no closed cycle found among', walls.length, 'walls');
+  }
+
+  // For each cycle, compute the polygon (in traversal order) and decide whether to flip.
+  // Traversal-direction polygon points: start of each wall in traversal order.
   for (const cycle of cycles) {
-    const polygonPoints = cycle.map((i) => result[i].start);
+    const polygonPoints = cycle.map((step) =>
+      step.reversed ? result[step.idx].end : result[step.idx].start,
+    );
     const area = signedPolygonArea(polygonPoints);
-    if (area > 0) {
-      for (const idx of cycle) {
-        const tmp = result[idx].start;
-        result[idx].start = result[idx].end;
-        result[idx].end = tmp;
+    const cycleNeedsFlip = area > 0; // > 0 in screen coords (y-down) means we want to reverse
+
+    // Apply swaps in ONE pass. A wall ends up swapped iff it was reversed during
+    // traversal XOR the cycle as a whole needs flipping.
+    for (const step of cycle) {
+      const shouldSwap = step.reversed !== cycleNeedsFlip;
+      if (shouldSwap) {
+        const tmp = result[step.idx].start;
+        result[step.idx].start = result[step.idx].end;
+        result[step.idx].end = tmp;
       }
     }
   }
