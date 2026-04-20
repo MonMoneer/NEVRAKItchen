@@ -1274,23 +1274,51 @@ export interface WallCornerJoint {
  * Order: [innerStart, innerEnd, outerEnd, outerStart] — inner edge is the first two.
  * Uses computeInteriorNormal so the inner face matches what cabinets snap to.
  */
+/**
+ * Returns the 4 corners of a wall as a thick rectangle.
+ *
+ * Order: [innerStart, innerEnd, outerEnd, outerStart].
+ *
+ * Inner face is `wall.start → wall.end` EXACTLY (no offset).
+ * Outer face is offset OUTWARD by `wall.thickness` along `computeOutwardNormal`.
+ */
 export function getWallPolygon(wall: Wall, walls: Wall[]): Point[] {
-  const half = wall.thickness / 2;
-  const interior = computeInteriorNormal(wall.start, wall.end, walls);
-  const ix = interior.nx * half;
-  const iy = interior.ny * half;
+  const out = computeOutwardNormal(wall.start, wall.end, walls);
+  const ox = out.nx * wall.thickness;
+  const oy = out.ny * wall.thickness;
   return [
-    { x: wall.start.x + ix, y: wall.start.y + iy }, // inner start
-    { x: wall.end.x + ix, y: wall.end.y + iy },     // inner end
-    { x: wall.end.x - ix, y: wall.end.y - iy },     // outer end
-    { x: wall.start.x - ix, y: wall.start.y - iy }, // outer start
+    { x: wall.start.x,        y: wall.start.y        }, // innerStart
+    { x: wall.end.x,          y: wall.end.y          }, // innerEnd
+    { x: wall.end.x   + ox,   y: wall.end.y   + oy   }, // outerEnd
+    { x: wall.start.x + ox,   y: wall.start.y + oy   }, // outerStart
   ];
 }
 
-/** Returns just the inner face line (start → end) of a wall — for snap targets. */
-export function getWallInnerFace(wall: Wall, walls: Wall[]): { start: Point; end: Point } {
-  const poly = getWallPolygon(wall, walls);
-  return { start: poly[0], end: poly[1] };
+/**
+ * Returns the inner face line (start → end) of a wall.
+ * In the new model these are exactly wall.start and wall.end.
+ */
+export function getWallInnerFace(
+  wall: Wall,
+  _walls: Wall[],
+): { start: Point; end: Point } {
+  return { start: wall.start, end: wall.end };
+}
+
+/**
+ * Returns the outer face line (start → end) of a wall: inner + outwardNormal × thickness.
+ */
+export function getWallOuterFace(
+  wall: Wall,
+  walls: Wall[],
+): { start: Point; end: Point } {
+  const out = computeOutwardNormal(wall.start, wall.end, walls);
+  const ox = out.nx * wall.thickness;
+  const oy = out.ny * wall.thickness;
+  return {
+    start: { x: wall.start.x + ox, y: wall.start.y + oy },
+    end:   { x: wall.end.x   + ox, y: wall.end.y   + oy },
+  };
 }
 
 export function getWallCornerJoints(walls: Wall[]): WallCornerJoint[] {
