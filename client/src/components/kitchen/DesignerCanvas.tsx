@@ -3854,15 +3854,18 @@ export function DesignerCanvas({
 			tool === 'base' ||
 			tool === 'wall_cabinet' ||
 			tool === 'tall' ||
+			tool === 'wall' ||
 			activeCustomTool === 'electrical' ||
 			activeCustomTool === 'plumbing' ||
 			!!wallPlacement;
 		if (!isWallSnapTool) return null;
 
-		// Collect all unique wall endpoints (inner-face corners).
+		// Collect ALL 4 polygon corners of every wall (inner + outer).
+		// User can branch a new wall from any of them.
 		const corners: Point[] = [];
 		for (const w of drawingState.walls) {
-			for (const p of [w.start, w.end]) {
+			const polygon = getWallPolygon(w, drawingState.walls);
+			for (const p of polygon) {
 				if (!corners.some((c) => distanceBetween(c, p) < SNAP_RADIUS)) corners.push(p);
 			}
 		}
