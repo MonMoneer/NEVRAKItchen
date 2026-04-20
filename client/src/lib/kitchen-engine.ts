@@ -919,6 +919,99 @@ export function computeInteriorNormal(
   return { nx: -out.nx, ny: -out.ny };
 }
 
+/**
+ * Signed area of a polygon given its ordered vertices.
+ * Positive = clockwise, Negative = counter-clockwise (in standard math coords).
+ * In Konva/screen coords (y-down), the sign convention is inverted, but we
+ * just need RELATIVE sign to decide whether to flip.
+ */
+function signedPolygonArea(points: Point[]): number {
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  return area / 2;
+}
+
+/**
+ * Detects closed wall cycles and ensures each cycle is traversed COUNTER-CLOCKWISE
+ * (signed area > 0 in screen coords, where y is inverted from math coords).
+ * For any cycle that is currently clockwise, swap wall.start ↔ wall.end on every
+ * wall in the cycle so `computeOutwardNormal` consistently points away from the
+ * room interior.
+ *
+ * Walls not part of any cycle are returned unchanged.
+ */
+export function reorientWalls(walls: Wall[]): Wall[] {
+  if (walls.length < 3) return walls.slice();
+
+  const result = walls.map((w) => ({ ...w }));
+  const near = (a: Point, b: Point) => distanceBetween(a, b) < SNAP_RADIUS;
+
+  const visited = new Set<number>();
+  const cycles: number[][] = [];
+
+  for (let startIdx = 0; startIdx < result.length; startIdx++) {
+    if (visited.has(startIdx)) continue;
+
+    const path: number[] = [startIdx];
+    let currentIdx = startIdx;
+    let currentEnd = result[startIdx].end;
+    let closed = false;
+
+    while (true) {
+      let nextIdx = -1;
+      let nextStartsAtCurrent = true;
+      for (let j = 0; j < result.length; j++) {
+        if (j === currentIdx) continue;
+        if (path.includes(j)) {
+          if (j === startIdx && near(currentEnd, result[startIdx].start)) {
+            closed = true;
+          }
+          continue;
+        }
+        if (near(result[j].start, currentEnd)) { nextIdx = j; nextStartsAtCurrent = true; break; }
+        if (near(result[j].end,   currentEnd)) { nextIdx = j; nextStartsAtCurrent = false; break; }
+      }
+
+      if (closed) break;
+      if (nextIdx === -1) break;
+
+      if (!nextStartsAtCurrent) {
+        const tmp = result[nextIdx].start;
+        result[nextIdx].start = result[nextIdx].end;
+        result[nextIdx].end = tmp;
+      }
+      path.push(nextIdx);
+      currentIdx = nextIdx;
+      currentEnd = result[nextIdx].end;
+
+      if (path.length > result.length) break;
+    }
+
+    if (closed && path.length >= 3) {
+      cycles.push(path);
+      path.forEach((i) => visited.add(i));
+    }
+  }
+
+  for (const cycle of cycles) {
+    const polygonPoints = cycle.map((i) => result[i].start);
+    const area = signedPolygonArea(polygonPoints);
+    if (area > 0) {
+      for (const idx of cycle) {
+        const tmp = result[idx].start;
+        result[idx].start = result[idx].end;
+        result[idx].end = tmp;
+      }
+    }
+  }
+
+  return result;
+}
+
 export function calculateDepthDirection(
   cabinetStart: Point,
   cabinetEnd: Point,
