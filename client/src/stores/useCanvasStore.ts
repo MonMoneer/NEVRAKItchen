@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Wall, Cabinet, Opening, DrawingState, Guideline, Layer, Island, Point } from "@/lib/kitchen-engine";
-import { createInitialDrawingState, normalizeLayer, normalizeIsland } from "@/lib/kitchen-engine";
+import { createInitialDrawingState, normalizeLayer, normalizeIsland, reorientWalls } from "@/lib/kitchen-engine";
 import {
   type HistoryState,
   createHistory,
@@ -163,9 +163,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   addWall: (wall) => {
     const state = get();
+    const newWalls = reorientWalls([...state.drawingState.walls, wall]);
     const newDrawingState = {
       ...state.drawingState,
-      walls: [...state.drawingState.walls, wall],
+      walls: newWalls,
       startPoint: null,
       previewPoint: null,
       isDrawing: false,
@@ -244,7 +245,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const state = get();
     const newDrawingState = {
       ...state.drawingState,
-      walls: state.drawingState.walls.filter((w) => w.id !== id),
+      walls: reorientWalls(state.drawingState.walls.filter((w) => w.id !== id)),
       cabinets: state.drawingState.cabinets.filter((c) => c.id !== id),
       openings: state.drawingState.openings.filter((o) => o.id !== id),
       selectedId: state.drawingState.selectedId === id ? null : state.drawingState.selectedId,
