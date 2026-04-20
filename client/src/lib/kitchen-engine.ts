@@ -1180,6 +1180,30 @@ export interface WallCornerJoint {
   wall2Angle: number;
 }
 
+/**
+ * Returns the 4 corners of a wall as a thick rectangle (inner face → outer face).
+ * Order: [innerStart, innerEnd, outerEnd, outerStart] — inner edge is the first two.
+ * Uses computeInteriorNormal so the inner face matches what cabinets snap to.
+ */
+export function getWallPolygon(wall: Wall, walls: Wall[]): Point[] {
+  const half = wall.thickness / 2;
+  const interior = computeInteriorNormal(wall.start, wall.end, walls);
+  const ix = interior.nx * half;
+  const iy = interior.ny * half;
+  return [
+    { x: wall.start.x + ix, y: wall.start.y + iy }, // inner start
+    { x: wall.end.x + ix, y: wall.end.y + iy },     // inner end
+    { x: wall.end.x - ix, y: wall.end.y - iy },     // outer end
+    { x: wall.start.x - ix, y: wall.start.y - iy }, // outer start
+  ];
+}
+
+/** Returns just the inner face line (start → end) of a wall — for snap targets. */
+export function getWallInnerFace(wall: Wall, walls: Wall[]): { start: Point; end: Point } {
+  const poly = getWallPolygon(wall, walls);
+  return { start: poly[0], end: poly[1] };
+}
+
 export function getWallCornerJoints(walls: Wall[]): WallCornerJoint[] {
   const joints: WallCornerJoint[] = [];
   const seen = new Set<string>();

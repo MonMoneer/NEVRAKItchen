@@ -46,6 +46,8 @@ import {
 	pointAlongWall,
 	getWallDirectionFromRef,
 	computeInteriorNormal,
+	getWallPolygon,
+	getWallInnerFace,
 	getWallAnchorPoints,
 	checkClearanceViolation,
 	calculateRemainingWallSpace,
@@ -3716,43 +3718,37 @@ export function DesignerCanvas({
 		return drawingState.walls.map((wall) => {
 			const isSelected = drawingState.selectedId === wall.id;
 			const isHovered = hoveredWallId === wall.id;
-			const strokeColor = isSelected
-				? '#f97316'
+			const polygon = getWallPolygon(wall, drawingState.walls);
+			const innerStart = polygon[0];
+			const innerEnd = polygon[1];
+
+			const fillColor = isSelected
+				? '#FED7AA'
 				: isHovered
-					? '#A855F7'
+					? '#E5E7EB'
 					: '#374151';
+			const strokeColor = isSelected ? '#f97316' : '#1F2937';
+
 			return (
 				<Group key={wall.id}>
-					{isHovered && (
-						<Line
-							points={[
-								wall.start.x,
-								wall.start.y,
-								wall.end.x,
-								wall.end.y,
-							]}
-							stroke="#A855F7"
-							strokeWidth={(wall.thickness + 8) / scale}
-							opacity={0.2}
-							lineCap="round"
-							lineJoin="round"
-							listening={false}
-						/>
-					)}
+					{/* Wall body — filled 2D polygon */}
 					<Line
-						points={[
-							wall.start.x,
-							wall.start.y,
-							wall.end.x,
-							wall.end.y,
-						]}
+						points={polygon.flatMap((p) => [p.x, p.y])}
+						closed
+						fill={fillColor}
 						stroke={strokeColor}
-						strokeWidth={
-							wall.thickness / scale > 4 ? wall.thickness : 4
-						}
-						lineCap="round"
-						lineJoin="round"
+						strokeWidth={Math.max(1, 1.5 / scale)}
 					/>
+
+					{/* Inner-face accent line — always visible, low opacity */}
+					<Line
+						points={[innerStart.x, innerStart.y, innerEnd.x, innerEnd.y]}
+						stroke="#9CA3AF"
+						strokeWidth={Math.max(1, 1 / scale)}
+						opacity={0.6}
+						listening={false}
+					/>
+
 					<Circle
 						x={wall.start.x}
 						y={wall.start.y}
@@ -3827,6 +3823,42 @@ export function DesignerCanvas({
 			const isSelected = drawingState.selectedId === cabinet.id;
 			return renderCabinetBody(cabinet, isSelected, pairs);
 		});
+	};
+
+	// Inner-face glow: shows when a wall-snapping tool is active so the user
+	// sees exactly where cabinets/openings will land.
+	const renderInnerFaceGlow = () => {
+		const tool = drawingState.tool;
+		const isWallSnapTool =
+			tool === 'door' ||
+			tool === 'window' ||
+			tool === 'base' ||
+			tool === 'wall_cabinet' ||
+			tool === 'tall' ||
+			activeCustomTool === 'electrical' ||
+			activeCustomTool === 'plumbing' ||
+			!!wallPlacement;
+		if (!isWallSnapTool) return null;
+		return (
+			<Group listening={false}>
+				{drawingState.walls.map((wall) => {
+					const inner = getWallInnerFace(wall, drawingState.walls);
+					const isHovered = hoveredWallId === wall.id;
+					return (
+						<Line
+							key={`glow-${wall.id}`}
+							points={[inner.start.x, inner.start.y, inner.end.x, inner.end.y]}
+							stroke={isHovered ? '#22D3EE' : '#06B6D4'}
+							strokeWidth={isHovered ? 4 / scale : 3 / scale}
+							opacity={isHovered ? 1 : 0.7}
+							shadowColor="#22D3EE"
+							shadowBlur={isHovered ? 8 / scale : 4 / scale}
+							shadowOpacity={0.6}
+						/>
+					);
+				})}
+			</Group>
+		);
 	};
 
 	const renderWallCornerJoints = () => {
@@ -4530,6 +4562,7 @@ export function DesignerCanvas({
 				<Layer>
 					{renderClearanceZones()}
 					{renderWalls()}
+					{renderInnerFaceGlow()}
 					{renderWallCornerJoints()}
 					{renderOpenings()}
 					{stage !== 'site_measurement' && renderCabinets()}
