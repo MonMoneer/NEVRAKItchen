@@ -4229,21 +4229,51 @@ export function DesignerCanvas({
 		}
 
 		if (tool === 'wall') {
+			const start = startPoint;
+			const end = previewPoint;
+			const dx = end.x - start.x;
+			const dy = end.y - start.y;
+			const len = Math.hypot(dx, dy);
+			let wallGhost: React.ReactNode = null;
+			if (len >= 1) {
+				// Outward direction during drawing = right of (start → preview) = +90° CW
+				const nx = dy / len;
+				const ny = -dx / len;
+				const ox = nx * WALL_THICKNESS;
+				const oy = ny * WALL_THICKNESS;
+				const polygon = [
+					start.x,           start.y,
+					end.x,             end.y,
+					end.x   + ox,      end.y   + oy,
+					start.x + ox,      start.y + oy,
+				];
+				wallGhost = (
+					<Group listening={false}>
+						<Line
+							points={polygon}
+							closed
+							fill="rgba(55, 65, 81, 0.35)"
+							stroke="#1F2937"
+							strokeWidth={Math.max(1, 1.5 / scale)}
+							dash={[8, 4]}
+						/>
+						<Line
+							points={[start.x, start.y, end.x, end.y]}
+							stroke="#06B6D4"
+							strokeWidth={2 / scale}
+						/>
+						<Line
+							points={[start.x + ox, start.y + oy, end.x + ox, end.y + oy]}
+							stroke="#6B7280"
+							strokeWidth={1.5 / scale}
+							opacity={0.7}
+						/>
+					</Group>
+				);
+			}
 			return (
 				<Group listening={false}>
-					<Line
-						points={[
-							startPoint.x,
-							startPoint.y,
-							previewPoint.x,
-							previewPoint.y,
-						]}
-						stroke="#9CA3AF"
-						strokeWidth={WALL_THICKNESS}
-						dash={[8, 4]}
-						lineCap="round"
-						opacity={0.5}
-					/>
+					{wallGhost}
 					{renderDimensionLabel(
 						startPoint,
 						previewPoint,
