@@ -46,6 +46,7 @@ import {
 	pointAlongWall,
 	getWallDirectionFromRef,
 	computeInteriorNormal,
+	computeOutwardNormal,
 	getWallPolygon,
 	getWallInnerFace,
 	getWallAnchorPoints,
@@ -3869,21 +3870,35 @@ export function DesignerCanvas({
 			const angle = angleBetween(opening.start, opening.end);
 			const length = distanceBetween(opening.start, opening.end);
 			const deg = (angle * 180) / Math.PI;
-			const wallThickPx = WALL_THICKNESS;
+
+			const wall = drawingState.walls.find((w) => w.id === opening.wallId);
+			const thickness = wall ? wall.thickness : WALL_THICKNESS;
+			const out = wall
+				? computeOutwardNormal(wall.start, wall.end, drawingState.walls)
+				: { nx: 0, ny: 1 };
+			const ox = out.nx * thickness;
+			const oy = out.ny * thickness;
+
+			const polygonPoints = [
+				opening.start.x,        opening.start.y,
+				opening.end.x,           opening.end.y,
+				opening.end.x   + ox,    opening.end.y   + oy,
+				opening.start.x + ox,    opening.start.y + oy,
+			];
+
+			const fill = opening.type === 'door' ? '#FEF3C7' : '#DBEAFE';
+			const strokeColor = isSelected
+				? '#f97316'
+				: opening.type === 'door' ? '#D97706' : '#2563EB';
 
 			return (
 				<Group key={opening.id}>
 					<Line
-						points={[
-							opening.start.x,
-							opening.start.y,
-							opening.end.x,
-							opening.end.y,
-						]}
-						stroke={isSelected ? '#f97316' : style.stroke}
-						strokeWidth={wallThickPx}
-						lineCap="butt"
-						lineJoin="round"
+						points={polygonPoints}
+						closed
+						fill={fill}
+						stroke={strokeColor}
+						strokeWidth={Math.max(1, 1.5 / scale)}
 						opacity={isSelected ? 0.9 : style.fillOpacity}
 					/>
 					<Group
@@ -3896,9 +3911,9 @@ export function DesignerCanvas({
 								<Line
 									points={[
 										0,
-										-wallThickPx / 2,
+										0,
 										length,
-										wallThickPx / 2,
+										thickness,
 									]}
 									stroke={style.textColor}
 									strokeWidth={0.8 / scale}
@@ -3908,9 +3923,9 @@ export function DesignerCanvas({
 								<Line
 									points={[
 										0,
-										wallThickPx / 2,
+										thickness,
 										length,
-										-wallThickPx / 2,
+										0,
 									]}
 									stroke={style.textColor}
 									strokeWidth={0.8 / scale}
@@ -3923,13 +3938,13 @@ export function DesignerCanvas({
 							<Line
 								points={[
 									0,
-									wallThickPx / 2,
+									thickness,
 									0,
-									wallThickPx / 2 + length * 0.4,
+									thickness + length * 0.4,
 									length * 0.3,
-									wallThickPx / 2,
+									thickness,
 								]}
-								stroke={style.stroke}
+								stroke={strokeColor}
 								strokeWidth={1 / scale}
 								opacity={0.4}
 								tension={0.5}
@@ -3938,11 +3953,11 @@ export function DesignerCanvas({
 						)}
 						<Text
 							x={0}
-							y={-wallThickPx / 2}
+							y={0}
 							width={length}
-							height={wallThickPx}
+							height={thickness}
 							text={style.label}
-							fontSize={Math.min(9, wallThickPx * 0.6)}
+							fontSize={Math.min(9, thickness * 0.6)}
 							fill={style.textColor}
 							fontStyle="bold"
 							fontFamily="sans-serif"
@@ -3955,13 +3970,13 @@ export function DesignerCanvas({
 						x={opening.start.x}
 						y={opening.start.y}
 						radius={4 / scale}
-						fill={style.stroke}
+						fill={strokeColor}
 					/>
 					<Circle
 						x={opening.end.x}
 						y={opening.end.y}
 						radius={4 / scale}
-						fill={style.stroke}
+						fill={strokeColor}
 					/>
 					{isSelected && drawingState.tool === 'select' && (
 						<>
