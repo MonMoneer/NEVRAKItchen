@@ -3846,6 +3846,45 @@ export function DesignerCanvas({
 		);
 	};
 
+	const renderInnerFaceCornerMarkers = () => {
+		const tool = drawingState.tool;
+		const isWallSnapTool =
+			tool === 'door' ||
+			tool === 'window' ||
+			tool === 'base' ||
+			tool === 'wall_cabinet' ||
+			tool === 'tall' ||
+			activeCustomTool === 'electrical' ||
+			activeCustomTool === 'plumbing' ||
+			!!wallPlacement;
+		if (!isWallSnapTool) return null;
+
+		// Collect all unique wall endpoints (inner-face corners).
+		const corners: Point[] = [];
+		for (const w of drawingState.walls) {
+			for (const p of [w.start, w.end]) {
+				if (!corners.some((c) => distanceBetween(c, p) < SNAP_RADIUS)) corners.push(p);
+			}
+		}
+
+		return (
+			<Group listening={false}>
+				{corners.map((p, i) => (
+					<Circle
+						key={`corner-${i}`}
+						x={p.x}
+						y={p.y}
+						radius={6 / scale}
+						fill="#FACC15"
+						stroke="#A16207"
+						strokeWidth={1.5 / scale}
+						opacity={0.9}
+					/>
+				))}
+			</Group>
+		);
+	};
+
 	const renderWallCornerJoints = () => {
 		const joints = getWallCornerJoints(drawingState.walls);
 		return joints.map((joint, idx) => {
@@ -4592,6 +4631,7 @@ export function DesignerCanvas({
 					{renderClearanceZones()}
 					{renderWalls()}
 					{renderInnerFaceGlow()}
+					{renderInnerFaceCornerMarkers()}
 					{renderWallCornerJoints()}
 					{renderOpenings()}
 					{stage !== 'site_measurement' && renderCabinets()}
