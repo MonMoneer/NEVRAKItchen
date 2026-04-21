@@ -68,6 +68,10 @@ import {
 	signedPerpendicularDistance,
 	computeRail,
 	findIslandHit,
+	getConstrainedEnd,
+	computeChainMidpoint,
+	findAllClosedCycles,
+	getClosedPolygonPath,
 } from '@/lib/kitchen-engine';
 import { FloatingDimensionInput } from './FloatingDimensionInput';
 import { IslandInputOverlay } from './IslandInputOverlay';
@@ -937,6 +941,31 @@ export function DesignerCanvas({
 	const [editingWallPoint, setEditingWallPoint] =
 		useState<WallPointItem | null>(null);
 
+	// ─── Wall chain state (2026-04-21 redesign) ─────────────────────────────
+	type WallChainState =
+		| { phase: 'idle' }
+		| { phase: 'pickingStart' }
+		| {
+				phase: 'drawingSegment';
+				anchor: Point;
+				segments: Array<{ start: Point; end: Point }>;
+		  };
+
+	const [wallChainState, setWallChainState] = useState<WallChainState>({
+		phase: 'idle',
+	});
+	const wallChainStateRef = useRef<WallChainState>(wallChainState);
+	useEffect(() => {
+		wallChainStateRef.current = wallChainState;
+	}, [wallChainState]);
+
+	const [closedChainIds, setClosedChainIds] = useState<Set<string>>(new Set());
+	const [lastOpenChain, setLastOpenChain] = useState<{
+		wallIds: string[];
+		buttonPos: Point;
+	} | null>(null);
+	const lastWallClickRef = useRef<{ time: number; pos: Point } | null>(null);
+
 	useEffect(() => {
 		if (!referenceImage) {
 			setRefImg(null);
@@ -1079,6 +1108,96 @@ export function DesignerCanvas({
 		},
 		[]
 	);
+
+	// ─── Commit the in-progress wall chain into real Wall records ──────────
+	const commitChain = useCallback(() => {
+		const state = wallChainStateRef.current;
+		if (state.phase !== 'drawingSegment' || state.segments.length === 0) {
+			setWallChainState({ phase: 'idle' });
+			return;
+		}
+
+		// Detect closed polygon
+		const firstStart = state.segments[0].start;
+		const lastEnd = state.segments[state.segments.length - 1].end;
+		const isClosed =
+			state.segments.length >= 3 &&
+			distanceBetween(firstStart, lastEnd) < SNAP_RADIUS;
+
+		const segments = [...state.segments];
+		if (isClosed) {
+			segments[segments.length - 1] = {
+				...segments[segments.length - 1],
+				end: { ...firstStart },
+			};
+		}
+
+		// Create Wall records and add them via existing store action
+		const newWallIds: string[] = [];
+		for (const seg of segments) {
+			const wall: Wall = {
+				id: generateId(),
+				start: { ...seg.start },
+				end: { ...seg.end },
+				thickness: WALL_THICKNESS,
+			};
+			onAddWall(wall);
+			newWallIds.push(wall.id);
+		}
+
+		if (isClosed) {
+			setClosedChainIds((prev) => {
+				const next = new Set(prev);
+				for (const id of newWallIds) next.add(id);
+				return next;
+			});
+			setLastOpenChain(null);
+		} else {
+			const bboxWalls: Wall[] = segments.map((s, i) => ({
+				id: newWallIds[i],
+				start: s.start,
+				end: s.end,
+				thickness: WALL_THICKNESS,
+			}));
+			setLastOpenChain({
+				wallIds: newWallIds,
+				buttonPos: computeChainMidpoint(bboxWalls),
+			});
+			setTimeout(() => {
+				setLastOpenChain((current) =>
+					current && current.wallIds === newWallIds ? null : current,
+				);
+			}, 10000);
+		}
+
+		setWallChainState({ phase: 'idle' });
+	}, [onAddWall]);
+
+	// Activate chain mode when Wall tool is selected; commit on tool switch
+	useEffect(() => {
+		if (drawingState.tool === 'wall') {
+			if (wallChainStateRef.current.phase === 'idle') {
+				setWallChainState({ phase: 'pickingStart' });
+			}
+		} else {
+			if (wallChainStateRef.current.phase === 'drawingSegment') {
+				commitChain();
+			}
+			if (wallChainStateRef.current.phase !== 'idle') {
+				setWallChainState({ phase: 'idle' });
+			}
+		}
+	}, [drawingState.tool, commitChain]);
+
+	// Detect closed cycles whenever walls change
+	useEffect(() => {
+		const cycles = findAllClosedCycles(drawingState.walls);
+		const ids = new Set<string>();
+		for (const cycle of cycles) {
+			for (const w of cycle) ids.add(w.id);
+		}
+		setClosedChainIds(ids);
+	}, [drawingState.walls]);
 
 	const createElementAtPoints = useCallback(
 		(
@@ -1589,6 +1708,85 @@ export function DesignerCanvas({
 				return;
 			}
 
+			// ── Wall chain flow: intercept wall-tool clicks ──
+			if (tool === 'wall') {
+				const chainState = wallChainStateRef.current;
+				const now = Date.now();
+
+				// Double-click detection: two clicks within 300ms, within 10px
+				const last = lastWallClickRef.current;
+				const isDblClick =
+					!!last && now - last.time < 300 && distanceBetween(pos, last.pos) < 10;
+				lastWallClickRef.current = { time: now, pos };
+
+				// Snap to existing wall corners if nearby
+				let clickPoint = pos;
+				if (snapEnabled) {
+					const snap = findNearestSnapTarget(
+						pos,
+						walls,
+						cabinets,
+						SNAP_RADIUS,
+						drawingState.openings,
+					);
+					if (snap) clickPoint = snap.point;
+				}
+
+				if (isDblClick && chainState.phase === 'drawingSegment') {
+					commitChain();
+					return;
+				}
+
+				if (chainState.phase === 'idle' || chainState.phase === 'pickingStart') {
+					setWallChainState({
+						phase: 'drawingSegment',
+						anchor: clickPoint,
+						segments: [],
+					});
+					return;
+				}
+
+				if (chainState.phase === 'drawingSegment') {
+					const constrained = getConstrainedEnd(
+						chainState.anchor,
+						clickPoint,
+						chainState.segments,
+					);
+
+					const firstStart = chainState.segments[0]?.start;
+					const willAutoClose =
+						chainState.segments.length >= 2 &&
+						!!firstStart &&
+						distanceBetween(constrained, firstStart) < SNAP_RADIUS;
+
+					const newEnd = willAutoClose && firstStart ? firstStart : constrained;
+
+					if (distanceBetween(chainState.anchor, newEnd) < MIN_DRAW_DISTANCE)
+						return;
+
+					const newSeg = { start: chainState.anchor, end: newEnd };
+					const newSegments = [...chainState.segments, newSeg];
+
+					if (willAutoClose) {
+						setWallChainState({
+							phase: 'drawingSegment',
+							anchor: newEnd,
+							segments: newSegments,
+						});
+						setTimeout(() => commitChain(), 0);
+						return;
+					}
+
+					setWallChainState({
+						phase: 'drawingSegment',
+						anchor: newEnd,
+						segments: newSegments,
+					});
+					return;
+				}
+				return;
+			}
+
 			if (isWallPlacementTool(tool)) {
 				if (!wallPlacement || wallPlacement.phase === 'idle') {
 					const wallResult = findNearestWall(pos, walls, 30);
@@ -1706,6 +1904,7 @@ export function DesignerCanvas({
 			}
 
 			if (isDrawing && startPoint) {
+				if (tool === 'wall') return;
 				let clickPoint = pos;
 				if (snapEnabled) {
 					const snap = findNearestSnapTarget(
@@ -1731,6 +1930,7 @@ export function DesignerCanvas({
 			}
 
 			if (!isDrawing) {
+				if (tool === 'wall') return;
 				let startPos = pos;
 				if (snapEnabled) {
 					const snap = findNearestSnapTarget(
@@ -1779,6 +1979,7 @@ export function DesignerCanvas({
 			snapToWallOrtho,
 			onAddCabinet,
 			handleIslandClick,
+			commitChain,
 		]
 	);
 
@@ -2433,6 +2634,14 @@ export function DesignerCanvas({
 			) {
 				return;
 			}
+			// ── Wall chain: Escape commits chain ──
+			if (
+				e.key === 'Escape' &&
+				wallChainStateRef.current.phase === 'drawingSegment'
+			) {
+				commitChain();
+				return;
+			}
 			// ── New island drawing flow — Escape walks back / typed input ──
 			{
 				const iPhase = useCanvasStore.getState().islandDrawingState;
@@ -2614,6 +2823,7 @@ export function DesignerCanvas({
 		cursorWorld,
 		activeLayerIdFromStore,
 		addIslandAction,
+		commitChain,
 	]);
 
 	const renderGrid = () => {
@@ -4642,6 +4852,178 @@ export function DesignerCanvas({
 				)}
 				<Layer>
 					{renderClearanceZones()}
+					{/* Floor tile pattern for closed wall cycles */}
+					{(() => {
+						const cycles = findAllClosedCycles(drawingState.walls);
+						return cycles.map((cycle, idx) => {
+							const polygon = getClosedPolygonPath(cycle);
+							if (!polygon || polygon.length < 3) return null;
+
+							const minX = Math.min(...polygon.map((p) => p.x));
+							const maxX = Math.max(...polygon.map((p) => p.x));
+							const minY = Math.min(...polygon.map((p) => p.y));
+							const maxY = Math.max(...polygon.map((p) => p.y));
+							const tilePx = 30 * PIXELS_PER_CM;
+
+							const hLines: Array<[number, number, number, number]> = [];
+							for (
+								let y = Math.floor(minY / tilePx) * tilePx;
+								y <= maxY;
+								y += tilePx
+							) {
+								hLines.push([minX, y, maxX, y]);
+							}
+							const vLines: Array<[number, number, number, number]> = [];
+							for (
+								let x = Math.floor(minX / tilePx) * tilePx;
+								x <= maxX;
+								x += tilePx
+							) {
+								vLines.push([x, minY, x, maxY]);
+							}
+
+							return (
+								<Group
+									key={`floor-${idx}`}
+									listening={false}
+									clipFunc={(ctx) => {
+										ctx.beginPath();
+										ctx.moveTo(polygon[0].x, polygon[0].y);
+										for (let i = 1; i < polygon.length; i++) {
+											ctx.lineTo(polygon[i].x, polygon[i].y);
+										}
+										ctx.closePath();
+									}}
+								>
+									<Line
+										points={polygon.flatMap((p) => [p.x, p.y])}
+										closed
+										fill="#D1D5DB"
+										opacity={0.3}
+									/>
+									{hLines.map(([x1, y1, x2, y2], i) => (
+										<Line
+											key={`hl-${i}`}
+											points={[x1, y1, x2, y2]}
+											stroke="#9CA3AF"
+											strokeWidth={0.5 / scale}
+											opacity={0.3}
+										/>
+									))}
+									{vLines.map(([x1, y1, x2, y2], i) => (
+										<Line
+											key={`vl-${i}`}
+											points={[x1, y1, x2, y2]}
+											stroke="#9CA3AF"
+											strokeWidth={0.5 / scale}
+											opacity={0.3}
+										/>
+									))}
+								</Group>
+							);
+						});
+					})()}
+					{/* Wall-chain HUD: in-progress segments, rubber-band preview, close hint */}
+					{wallChainState.phase === 'drawingSegment' &&
+						(() => {
+							const { anchor, segments } = wallChainState;
+							const firstStart = segments[0]?.start;
+							const livePos = cursorWorld;
+							const previewEnd = livePos
+								? getConstrainedEnd(anchor, livePos, segments)
+								: anchor;
+							const nearClose =
+								segments.length >= 2 &&
+								!!firstStart &&
+								distanceBetween(previewEnd, firstStart) < SNAP_RADIUS;
+							const finalPreviewEnd =
+								nearClose && firstStart ? firstStart : previewEnd;
+							const previewColor = nearClose ? '#10B981' : '#F59E0B';
+
+							return (
+								<Group listening={false}>
+									{segments.map((seg, idx) => {
+										const len = Math.round(
+											pixelsToCm(distanceBetween(seg.start, seg.end)),
+										);
+										const mx = (seg.start.x + seg.end.x) / 2;
+										const my = (seg.start.y + seg.end.y) / 2;
+										return (
+											<Group key={`chain-seg-${idx}`}>
+												<Line
+													points={[
+														seg.start.x,
+														seg.start.y,
+														seg.end.x,
+														seg.end.y,
+													]}
+													stroke="#374151"
+													strokeWidth={2 / scale}
+												/>
+												<Text
+													x={mx}
+													y={my - 14 / scale}
+													text={`${len} cm`}
+													fontSize={11 / scale}
+													fill="#374151"
+												/>
+												<Circle
+													x={seg.start.x}
+													y={seg.start.y}
+													radius={4 / scale}
+													fill="#374151"
+												/>
+												<Circle
+													x={seg.end.x}
+													y={seg.end.y}
+													radius={4 / scale}
+													fill="#374151"
+												/>
+											</Group>
+										);
+									})}
+									{livePos && (
+										<>
+											<Line
+												points={[
+													anchor.x,
+													anchor.y,
+													finalPreviewEnd.x,
+													finalPreviewEnd.y,
+												]}
+												stroke={previewColor}
+												strokeWidth={2 / scale}
+												dash={[8 / scale, 4 / scale]}
+											/>
+											<Text
+												x={(anchor.x + finalPreviewEnd.x) / 2}
+												y={(anchor.y + finalPreviewEnd.y) / 2 - 14 / scale}
+												text={`${Math.round(pixelsToCm(distanceBetween(anchor, finalPreviewEnd)))} cm`}
+												fontSize={12 / scale}
+												fill={previewColor}
+												fontStyle="bold"
+											/>
+											<Circle
+												x={finalPreviewEnd.x}
+												y={finalPreviewEnd.y}
+												radius={5 / scale}
+												fill={previewColor}
+											/>
+										</>
+									)}
+									{nearClose && firstStart && (
+										<Circle
+											x={firstStart.x}
+											y={firstStart.y}
+											radius={8 / scale}
+											stroke="#10B981"
+											strokeWidth={2 / scale}
+											opacity={0.7}
+										/>
+									)}
+								</Group>
+							);
+						})()}
 					{renderWalls()}
 					{renderInnerFaceGlow()}
 					{renderInnerFaceCornerMarkers()}
@@ -5312,6 +5694,43 @@ export function DesignerCanvas({
 						}}
 						onClose={() => setSelectedWallPoint(null)}
 					/>
+				);
+			})()}
+
+			{/* Flip-interior button for open wall chains (auto-hides after 10s) */}
+			{lastOpenChain && (() => {
+				const stage = stageRef.current;
+				if (!stage) return null;
+				const screen = stage
+					.getAbsoluteTransform()
+					.point(lastOpenChain.buttonPos);
+				return (
+					<div
+						className="absolute z-50 pointer-events-auto"
+						style={{
+							left: screen.x,
+							top: screen.y,
+							transform: 'translate(-50%, -50%)',
+						}}
+					>
+						<button
+							className="bg-amber-100 border-2 border-amber-500 rounded-full px-3 py-1 shadow-lg hover:bg-amber-200 transition flex items-center gap-1 text-xs font-medium text-amber-900"
+							onClick={() => {
+								lastOpenChain.wallIds.forEach((id) => {
+									const wall = drawingState.walls.find((w) => w.id === id);
+									if (wall) {
+										onUpdateWall(id, {
+											start: { ...wall.end },
+											end: { ...wall.start },
+										});
+									}
+								});
+								setLastOpenChain(null);
+							}}
+						>
+							↔ Flip interior side
+						</button>
+					</div>
 				);
 			})()}
 		</div>
