@@ -1132,9 +1132,75 @@ export function DesignerCanvas({
 			};
 		}
 
-		// Create Wall records and add them via existing store action
+		// Convention (Ahmed): user's drawn line = OUTER face of the wall.
+		// Our storage model: wall.start/end = INNER face, thickness extrudes outward.
+		// Bridge: inset each drawn segment inward by WALL_THICKNESS so the outer
+		// face (start + outward*t) lands exactly on the user's drawn line.
+		//
+		// For a closed polygon: determine which side is "inside" via signed area,
+		// then offset every segment toward that side.
+		// For an open chain: default to left-of-direction (user can flip via button).
+		const polygonPoints = segments.map((s) => s.start);
+		// Signed area > 0 (screen coords, y-down) means CW → inside is to the RIGHT of start→end.
+		// Signed area < 0 means CCW → inside is to the LEFT of start→end.
+		let area = 0;
+		if (isClosed) {
+			for (let i = 0; i < polygonPoints.length; i++) {
+				const a = polygonPoints[i];
+				const b = polygonPoints[(i + 1) % polygonPoints.length];
+				area += a.x * b.y - b.x * a.y;
+			}
+		}
+		const insetSign = isClosed
+			? area > 0
+				? 1 // CW in screen → inside on right → inward-normal = right-of-direction = +90° CW
+				: -1 // CCW in screen → inside on left → inward-normal = left-of-direction = -90° (+90° CCW)
+			: -1; // open chain: default left
+
+		// Compute each segment's inward-offset by shifting perpendicular to its direction.
+		// Left-perp of (dx,dy): (dy, -dx) normalized; right-perp: (-dy, dx) normalized.
+		const insetSegments = segments.map((seg) => {
+			const dx = seg.end.x - seg.start.x;
+			const dy = seg.end.y - seg.start.y;
+			const len = Math.hypot(dx, dy) || 1;
+			const nx = (insetSign === 1 ? dy : -dy) / len;
+			const ny = (insetSign === 1 ? -dx : dx) / len;
+			const ox = nx * WALL_THICKNESS;
+			const oy = ny * WALL_THICKNESS;
+			return {
+				start: { x: seg.start.x + ox, y: seg.start.y + oy },
+				end: { x: seg.end.x + ox, y: seg.end.y + oy },
+			};
+		});
+
+		// Stitch inset segments back together: each corner moves to the intersection
+		// of two adjacent inset lines so walls still share endpoints exactly.
+		const stitched: Array<{ start: Point; end: Point }> = insetSegments.map((s) => ({
+			start: { ...s.start },
+			end: { ...s.end },
+		}));
+		const count = stitched.length;
+		for (let i = 0; i < count; i++) {
+			const nextIdx = (i + 1) % count;
+			const isLastOfOpen = !isClosed && i === count - 1;
+			if (isLastOfOpen) continue; // open chain's last end stays where it was
+			const a = stitched[i];
+			const b = stitched[nextIdx];
+			// Intersect line a with line b
+			const x1 = a.start.x, y1 = a.start.y, x2 = a.end.x, y2 = a.end.y;
+			const x3 = b.start.x, y3 = b.start.y, x4 = b.end.x, y4 = b.end.y;
+			const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+			if (Math.abs(denom) < 1e-6) continue;
+			const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+			const ix = x1 + t * (x2 - x1);
+			const iy = y1 + t * (y2 - y1);
+			stitched[i].end = { x: ix, y: iy };
+			stitched[nextIdx].start = { x: ix, y: iy };
+		}
+
+		// Create Wall records using the STITCHED inner-face segments.
 		const newWallIds: string[] = [];
-		for (const seg of segments) {
+		for (const seg of stitched) {
 			const wall: Wall = {
 				id: generateId(),
 				start: { ...seg.start },
