@@ -4109,16 +4109,34 @@ export function DesignerCanvas({
 	};
 
 	const renderWallCornerJoints = () => {
-		const joints = getWallCornerJoints(drawingState.walls);
+		// Inner-face model: two walls share corner point C (inner-face corner).
+		// Each wall extrudes outward by its thickness. At a 90° corner the two
+		// outward-extruded rectangles leave a square gap at the outer corner.
+		// We fill that gap with a quadrilateral: C → C+outA*t → C+outA*t+outB*t → C+outB*t.
+		const walls = drawingState.walls;
+		const joints = getWallCornerJoints(walls);
+		const tol = 0.5;
 		return joints.map((joint, idx) => {
-			const polygon = getWallCornerPolygon(joint);
-			const points = polygon.flatMap((p) => [p.x, p.y]);
+			const { cornerPoint, wall1, wall2 } = joint;
+			const out1 = computeOutwardNormal(wall1.start, wall1.end, walls);
+			const out2 = computeOutwardNormal(wall2.start, wall2.end, walls);
+			const t = wall1.thickness; // assume both walls share thickness
+			const p0 = cornerPoint;
+			const p1 = { x: cornerPoint.x + out1.nx * t, y: cornerPoint.y + out1.ny * t };
+			const p2 = {
+				x: cornerPoint.x + out1.nx * t + out2.nx * t,
+				y: cornerPoint.y + out1.ny * t + out2.ny * t,
+			};
+			const p3 = { x: cornerPoint.x + out2.nx * t, y: cornerPoint.y + out2.ny * t };
+			// Skip near-degenerate joints (walls pointing outward in nearly same direction)
+			const cross = out1.nx * out2.ny - out1.ny * out2.nx;
+			if (Math.abs(cross) < tol) return null;
 			return (
 				<Line
 					key={`wall-corner-${idx}`}
-					points={points}
+					points={[p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y]}
 					fill="#374151"
-					closed={true}
+					closed
 					listening={false}
 				/>
 			);
