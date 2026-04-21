@@ -40,6 +40,14 @@ export interface Island {
   depthCm: number;              // perpendicular-to-rail dimension
   rotationRad: number;          // wall angle at placement time
   heightCm: number;             // counter height (typed only, not drawn)
+  /**
+   * Which axis the `lengthCm` dimension runs along in world coords:
+   *   - "h": length is horizontal, depth is vertical (default / legacy)
+   *   - "v": length is vertical, depth is horizontal
+   * Set during the free-draw flow based on the user's first drag direction.
+   * Optional for backwards compatibility; renderer treats `undefined` as "h".
+   */
+  axis?: "h" | "v";
 }
 
 export interface Layer {
@@ -104,6 +112,20 @@ export const CABINET_DEPTHS: Record<CabinetType, number> = {
   island: 60,
 };
 
+/**
+ * Extra depth in cm added to the RENDERED rectangle of every cabinet.
+ * Purely visual — stored `cabinet.depth`, pricing, clearance checks, and
+ * overlap tests all use the real depth. This bonus represents the countertop
+ * / finishing overhang so the drawn shape reflects the real occupied footprint
+ * (e.g. a 55 cm base cabinet visually occupies 57 cm).
+ */
+export const CABINET_RENDER_DEPTH_BONUS = 2;
+
+/** Depth in cm to use when drawing a cabinet (data + visual overhang). */
+export function getRenderDepthCm(cabinet: { depth: number }): number {
+  return cabinet.depth + CABINET_RENDER_DEPTH_BONUS;
+}
+
 export const DEFAULT_HEIGHTS: Record<LayerType, number> = {
   base: 90,
   wall_cabinet: 60,
@@ -135,11 +157,18 @@ export function normalizeLayer(raw: any): Layer {
 export const PIXELS_PER_CM = 2;
 
 /** Default wall thickness in cm. */
-export const WALL_THICKNESS_CM = 15;
-/** Default wall thickness in canvas pixels. 15 cm × 2 px/cm = 30 px. */
+export const WALL_THICKNESS_CM = 10;
+/** Default wall thickness in canvas pixels. 10 cm × 2 px/cm = 20 px. */
 export const WALL_THICKNESS = WALL_THICKNESS_CM * PIXELS_PER_CM;
 
-export const SNAP_RADIUS = 12;
+/**
+ * Magnetic snap radius in canvas pixels. When the cursor comes within this
+ * distance of a snap target (wall corner, endpoint, midpoint, cabinet edge,
+ * opening edge), it is pulled onto the target. Raised from 12 to 18 to give
+ * a clearly "magnetic" feel while still allowing free placement between
+ * existing geometry.
+ */
+export const SNAP_RADIUS = 18;
 
 export interface CabinetStyle {
   fill: string;
@@ -888,18 +917,16 @@ function pointInPolygon(point: Point, polygon: Point[]): boolean {
 }
 
 /**
- * Returns the unit vector pointing FROM inner face OUTWARD (away from room interior).
+ * Raw right-hand perpendicular of `start → end` (rotated +90° clockwise in
+ * screen coords, i.e. `{nx: dy/len, ny: -dx/len}`).
  *
- * Convention (after `reorientWalls` has run): outward = right of `start → end` direction
- * = rotate (end - start) by +90° clockwise and normalize → `{nx: dy/len, ny: -dx/len}`.
- *
- * Deterministic and O(1). The polygon-orientation logic that establishes
- * the convention lives in `reorientWalls`, not here.
+ * This is an unanchored direction — it has no notion of "inside the room" vs
+ * "outside the room". Use `computeOutwardNormal` / `computeInteriorNormal`
+ * instead when you need a room-aware direction.
  */
-export function computeOutwardNormal(
+function rawRightNormal(
   wallStart: Point,
   wallEnd: Point,
-  _walls: Wall[],
 ): { nx: number; ny: number } {
   const dx = wallEnd.x - wallStart.x;
   const dy = wallEnd.y - wallStart.y;
@@ -909,19 +936,84 @@ export function computeOutwardNormal(
 }
 
 /**
+ * Returns the room-aware "inside" direction for a wall segment:
+ * the ±raw-perpendicular that points toward the centroid of the implied room.
+ *
+ * Works for closed polygons (uses the containing cycle's centroid) and for
+ * open 2–3 wall layouts (uses centroid of all wall endpoints, matching the
+ * system's implicit "room space").
+ *
+ * This is the SINGLE SOURCE OF TRUTH for which side of a wall is inside.
+ * All higher-level helpers (`computeOutwardNormal`, `getWallInteriorNormal`,
+ * `getWallPolygon`, etc.) derive from this.
+ */
+function centroidAnchoredInteriorNormal(
+  wallStart: Point,
+  wallEnd: Point,
+  walls: Wall[],
+): { nx: number; ny: number } {
+  const raw = rawRightNormal(wallStart, wallEnd);
+  if (raw.nx === 0 && raw.ny === 0) return raw;
+
+  // Pick a reference centroid.
+  const cycles = findAllClosedCycles(walls);
+  const ownCycle = cycles.find((cycle) =>
+    cycle.some(
+      (w) =>
+        (distanceBetween(w.start, wallStart) < 0.5 &&
+          distanceBetween(w.end, wallEnd) < 0.5) ||
+        (distanceBetween(w.start, wallEnd) < 0.5 &&
+          distanceBetween(w.end, wallStart) < 0.5),
+    ),
+  );
+
+  const referencePoints: Point[] = ownCycle
+    ? ownCycle.map((w) => w.start)
+    : walls.flatMap((w) => [w.start, w.end]);
+
+  if (referencePoints.length === 0) return { nx: -raw.nx, ny: -raw.ny };
+
+  const cx =
+    referencePoints.reduce((s, p) => s + p.x, 0) / referencePoints.length;
+  const cy =
+    referencePoints.reduce((s, p) => s + p.y, 0) / referencePoints.length;
+  const midX = (wallStart.x + wallEnd.x) / 2;
+  const midY = (wallStart.y + wallEnd.y) / 2;
+  const toCentroidX = cx - midX;
+  const toCentroidY = cy - midY;
+
+  const dot = raw.nx * toCentroidX + raw.ny * toCentroidY;
+  return dot > 0 ? { nx: raw.nx, ny: raw.ny } : { nx: -raw.nx, ny: -raw.ny };
+}
+
+/**
+ * Returns the unit vector pointing FROM the wall line OUTWARD (away from the
+ * room interior). Anchored via centroid — independent of `reorientWalls`
+ * convention.
+ *
+ * Contract: the user's drawn line `wall.start → wall.end` is the INNER face.
+ * Wall bodies extrude in this `outward` direction, so the user's drawn
+ * dimensions equal the interior room dimensions.
+ */
+export function computeOutwardNormal(
+  wallStart: Point,
+  wallEnd: Point,
+  walls: Wall[],
+): { nx: number; ny: number } {
+  const inward = centroidAnchoredInteriorNormal(wallStart, wallEnd, walls);
+  return { nx: -inward.nx, ny: -inward.ny };
+}
+
+/**
  * Returns the unit vector pointing FROM the wall line INTO the room interior.
  * Negation of `computeOutwardNormal`.
- *
- * Kept for back-compat with older callers (`calculateDepthDirection`, etc.).
- * New code should prefer `computeOutwardNormal` directly.
  */
 export function computeInteriorNormal(
   wallStart: Point,
   wallEnd: Point,
   walls: Wall[],
 ): { nx: number; ny: number } {
-  const out = computeOutwardNormal(wallStart, wallEnd, walls);
-  return { nx: -out.nx, ny: -out.ny };
+  return centroidAnchoredInteriorNormal(wallStart, wallEnd, walls);
 }
 
 /**
@@ -1034,16 +1126,54 @@ export function reorientWalls(walls: Wall[]): Wall[] {
   return result;
 }
 
+/**
+ * Returns the unit vector pointing FROM a wall INTO the room interior.
+ *
+ * This is the SINGLE SOURCE OF TRUTH for "which side is inside".
+ * Callers: ghost preview, cabinet commit, opening commit, re-flip button.
+ *
+ * Works for BOTH closed rooms (via reorientWalls + computeOutwardNormal)
+ * AND open walls (via partial-polygon centroid fallback — the system already
+ * displays a "room space" for 2–3 unclosed walls; this picks the same side).
+ *
+ * IMPORTANT: Assumes `walls` has been passed through `reorientWalls()`.
+ * The Zustand store guarantees this for all stored walls.
+ */
+export function getWallInteriorNormal(
+  wall: Wall,
+  walls: Wall[],
+): { nx: number; ny: number } {
+  return centroidAnchoredInteriorNormal(wall.start, wall.end, walls);
+}
+
+/**
+ * Returns `depthFlipped` for a cabinet placed on `wall`.
+ *
+ * Contract with `renderCabinetBody`:
+ * - Cabinet is drawn in a local frame rotated by `angleBetween(cabinet.start, cabinet.end)`.
+ * - When `depthFlipped === false`, depth extends +y in that local frame.
+ * - When `depthFlipped === true`, depth extends -y.
+ *
+ * Callers MUST ensure `cabinet.start → cabinet.end` is aligned with
+ * `wall.start → wall.end` (same direction). Commit paths in DesignerCanvas.tsx
+ * enforce this by reordering user drag endpoints before building the Cabinet.
+ *
+ * Under that contract, the correct `depthFlipped` is decided entirely by the
+ * wall's interior normal — independent of cursor drag direction.
+ */
 export function calculateDepthDirection(
-  cabinetStart: Point,
-  cabinetEnd: Point,
+  wall: Wall,
   walls: Wall[],
 ): boolean {
-  const cabinetAngle = angleBetween(cabinetStart, cabinetEnd);
-  const interior = computeInteriorNormal(cabinetStart, cabinetEnd, walls);
-  const perpAngle1 = cabinetAngle + Math.PI / 2;
-  const dot = Math.cos(perpAngle1) * interior.nx + Math.sin(perpAngle1) * interior.ny;
-  return dot < 0;
+  const interior = getWallInteriorNormal(wall, walls);
+  const wallAngle = angleBetween(wall.start, wall.end);
+  // Rotate world interior vector into the cabinet's local frame.
+  // Local frame = world rotated by -wallAngle → local_y = -sin(a)*world_x + cos(a)*world_y.
+  const localInteriorY =
+    -Math.sin(wallAngle) * interior.nx + Math.cos(wallAngle) * interior.ny;
+  // depthFlipped === true means depth extends -y locally.
+  // We want depth to extend toward interior: localInteriorY > 0 → +y → flipped=false.
+  return localInteriorY < 0;
 }
 
 export function pixelsToCm(pixels: number): number {
@@ -1726,8 +1856,13 @@ export function computeEffectiveLengths(
     const len2 = distanceBetween(pair.cabinet2.start, pair.cabinet2.end);
 
     const deductFrom = len1 <= len2 ? pair.cabinet1 : pair.cabinet2;
+    const cutter = len1 <= len2 ? pair.cabinet2 : pair.cabinet1;
     const deductEndpoint = len1 <= len2 ? pair.cab1Endpoint : pair.cab2Endpoint;
-    const depthPx = cmToPixels(overrideDepthCm ?? deductFrom.depth);
+    // Deduct the CUTTER's rendered depth (incl. the visual overhang bonus)
+    // so the shortened length matches what the user sees. Using the raw
+    // stored depth would under-deduct by CABINET_RENDER_DEPTH_BONUS (2 cm)
+    // per junction and leave a visible overlap.
+    const depthPx = cmToPixels(overrideDepthCm ?? getRenderDepthCm(cutter));
 
     const d = deductions.get(deductFrom.id)!;
     if (deductEndpoint === "start") {
@@ -1806,7 +1941,8 @@ export function findHitTarget(
   cabinets: Cabinet[],
   handleRadius: number = 12,
   openings: Opening[] = [],
-): { type: "wall" | "cabinet" | "opening"; id: string; handle: DragHandle } | null {
+  guidelines: Guideline[] = [],
+): { type: "wall" | "cabinet" | "opening" | "guideline"; id: string; handle: DragHandle } | null {
   for (const cab of cabinets) {
     if (distanceBetween(pos, cab.start) <= handleRadius) {
       return { type: "cabinet", id: cab.id, handle: "start" };
@@ -1849,6 +1985,21 @@ export function findHitTarget(
   for (const wall of walls) {
     if (pointNearLine(pos, wall.start, wall.end, wall.thickness / 2 + 5)) {
       return { type: "wall", id: wall.id, handle: "body" };
+    }
+  }
+
+  // Measurements (guidelines): thin lines, so use a generous hit radius so
+  // the Delete tool can catch them without pixel-perfect aim. Single-point
+  // guidelines (start === end) — stray dots left behind when a measurement
+  // chain was abandoned — are matched via a disc around their start so the
+  // user can clean them up.
+  for (const g of guidelines) {
+    const isPoint = distanceBetween(g.start, g.end) < 0.5;
+    const hit = isPoint
+      ? distanceBetween(pos, g.start) <= 10
+      : pointNearLine(pos, g.start, g.end, 8);
+    if (hit) {
+      return { type: "guideline", id: g.id, handle: "body" };
     }
   }
 
@@ -2021,6 +2172,11 @@ export function normalizeIsland(raw: any): Island {
 export function isPointInIsland(p: Point, island: Island): boolean {
   const lengthPx = island.lengthCm * PIXELS_PER_CM;
   const depthPx = island.depthCm * PIXELS_PER_CM;
+  // The rendered rectangle's width/height depend on whether the length
+  // runs along x ("h") or y ("v"). Hit testing must use the same mapping.
+  const isVertical = island.axis === "v";
+  const rectWidth = isVertical ? depthPx : lengthPx;
+  const rectHeight = isVertical ? lengthPx : depthPx;
   // Transform p into the island's local (unrotated) coordinate space
   const dx = p.x - island.anchorPoint.x;
   const dy = p.y - island.anchorPoint.y;
@@ -2028,7 +2184,7 @@ export function isPointInIsland(p: Point, island: Island): boolean {
   const sin = Math.sin(-island.rotationRad);
   const localX = dx * cos - dy * sin;
   const localY = dx * sin + dy * cos;
-  return localX >= 0 && localX <= lengthPx && localY >= 0 && localY <= depthPx;
+  return localX >= 0 && localX <= rectWidth && localY >= 0 && localY <= rectHeight;
 }
 
 /** Find the topmost island under point p, if any. */
@@ -2067,7 +2223,7 @@ export function getConstrainedEnd(
   return { x: cursor.x, y: anchor.y }; // must be horizontal
 }
 
-/** Bounding-box midpoint of a set of walls. Used to position the flip-interior button. */
+/** Bounding-box midpoint of a set of walls. */
 export function computeChainMidpoint(walls: Wall[]): Point {
   if (walls.length === 0) return { x: 0, y: 0 };
   let minX = Infinity,

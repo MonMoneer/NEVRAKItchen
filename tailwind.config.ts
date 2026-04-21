@@ -5,6 +5,19 @@ export default {
   content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
+      screens: {
+        // True tablet: landscape, touch-primary, and large enough for our
+        // two-sidebar layout. Lets components opt into tablet-specific
+        // styles with `tablet:xxx` Tailwind prefixes.
+        tablet: {
+          raw: "(min-width: 1024px) and (pointer: coarse) and (orientation: landscape)",
+        },
+        // Any touch-primary device, regardless of size — for affordances
+        // that should also apply to hybrid / mouseless setups.
+        touch: {
+          raw: "(pointer: coarse)",
+        },
+      },
       borderRadius: {
         lg: ".5625rem", /* 9px */
         md: ".375rem", /* 6px */

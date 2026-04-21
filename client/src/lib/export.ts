@@ -1,6 +1,6 @@
 import jsPDF from "jspdf";
 import { PDFDocument } from "pdf-lib";
-import type { Wall, Cabinet, Opening, Layer } from "./kitchen-engine";
+import type { Wall, Cabinet, Opening, Layer, Island } from "./kitchen-engine";
 import { pixelsToCm, OPENING_STYLES, computeEffectiveLengths } from "./kitchen-engine";
 import { calculateLayerPrice, type PricingLayer } from "./dream-home-pricing";
 import type { DreamHomeFinish, DreamHomePrice, TallHeight, PricingSettings } from "@shared/schema";
@@ -57,6 +57,7 @@ export async function exportToPDF(
   openings: Opening[] = [],
   layoutImageDataUrl?: string,
   layers: Layer[] = [],
+  islands: Island[] = [],
 ) {
   const { finishes, dreamHomePrices, tallHeights, pricingSettings } = await fetchSettings();
   void selectedFinishingId; // finish is now per-layer, project-level selection unused
@@ -215,18 +216,36 @@ export async function exportToPDF(
     const isCountType = layer.type === "end_panel" || layer.type === "filler" || layer.type === "drawer";
     const isIsland = layer.type === "island";
 
+    // Islands live in a separate `islands` array, not as cabinets. Look up
+    // the one bound to this layer (if any) — mirrors LayerPanel.tsx so the
+    // PDF shows the same length / depth / height / pricing the user sees
+    // in the sidebar.
+    const boundIsland = isIsland
+      ? islands.find((i) => i.layerId === layer.id) ?? null
+      : null;
+
     const layerCabinets = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
     const effLengths = computeEffectiveLengths(layerCabinets, walls, layer.depth ?? undefined);
-    const lengthM = layerCabinets.reduce((sum, c) => {
+    const cabinetsLengthM = layerCabinets.reduce((sum, c) => {
       const effPx = effLengths.get(c.id) ?? 0;
       return sum + pixelsToCm(effPx) / 100;
     }, 0);
-    const effectiveDepth = isIsland && layerCabinets.length > 0
-      ? pixelsToCm(layerCabinets[0].depth)
-      : (layer.depth ?? 0);
+    const lengthM = boundIsland ? boundIsland.lengthCm / 100 : cabinetsLengthM;
+    const effectiveDepth = boundIsland
+      ? boundIsland.depthCm
+      : isIsland && layerCabinets.length > 0
+        ? pixelsToCm(layerCabinets[0].depth)
+        : (layer.depth ?? 0);
+
+    // For islands, feed pricing the island's own depth/height (mirrors
+    // LayerPanel.tsx:229-232) — the Layer record itself may not have depth
+    // set when an island was drawn freehand.
+    const pricingLayerInput = boundIsland
+      ? { ...layer, depth: boundIsland.depthCm, height: boundIsland.heightCm }
+      : layer;
 
     const result = calculateLayerPrice({
-      layer: layer as unknown as PricingLayer,
+      layer: pricingLayerInput as unknown as PricingLayer,
       lengthM,
       settings: pricingSettings,
       dreamHomePrices,
@@ -246,9 +265,10 @@ export async function exportToPDF(
     doc.setFontSize(7);
     doc.setTextColor(50, 50, 50);
 
+    const heightCm = boundIsland ? boundIsland.heightCm : (layer.height ?? 0);
     doc.text(cabinetLabels[layer.type] || layer.type, colX[0], y);
     doc.text(isCountType ? `${layer.qty ?? 0} pcs` : `${lengthM.toFixed(2)} m`, colX[1], y);
-    doc.text(`${effectiveDepth}×${layer.height ?? 0} cm`, colX[2], y);
+    doc.text(`${effectiveDepth}×${heightCm} cm`, colX[2], y);
     doc.text(layerFinish?.name ?? "—", colX[3], y);
 
     doc.setFont("helvetica", "bold");

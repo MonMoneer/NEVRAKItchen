@@ -37,6 +37,7 @@ import {
 	calculateDepthDirection,
 	midpoint as getMidpoint,
 	nearestPointOnSegment,
+	pointNearLine,
 	getWallCornerJoints,
 	getWallCornerPolygon,
 	findCornerCabinetPairs,
@@ -56,6 +57,7 @@ import {
 	calculateRemainingWallSpace,
 	type AnchorPoint,
 	CABINET_DEPTHS,
+	CABINET_RENDER_DEPTH_BONUS,
 	WALL_THICKNESS,
 	CABINET_STYLES,
 	OPENING_STYLES,
@@ -69,7 +71,6 @@ import {
 	computeRail,
 	findIslandHit,
 	getConstrainedEnd,
-	computeChainMidpoint,
 	findAllClosedCycles,
 	getClosedPolygonPath,
 } from '@/lib/kitchen-engine';
@@ -78,6 +79,8 @@ import { IslandInputOverlay } from './IslandInputOverlay';
 import { WallPointPopup } from './WallPointPopup';
 import { useCanvasStore, type WallPointItem } from '@/stores/useCanvasStore';
 import type { CustomTool } from './Toolbar';
+import { haptic } from '@/lib/haptics';
+import { useIsTouch } from '@/hooks/use-touch';
 
 // Wall-point placement state
 // Phase 0 (no state): hovering — nearest corner is highlighted via hoveredCorner
@@ -294,6 +297,33 @@ const SNAP_VISUAL_RADIUS = 8;
 const MIN_DRAW_DISTANCE = 10;
 const HANDLE_RADIUS = 6;
 const HATCH_SPACING = 10;
+
+/**
+ * Reorders two user-drag endpoints so that `aStart → aEnd` points in the same
+ * direction as `wall.start → wall.end`. If no parent wall is given, returns
+ * the inputs unchanged.
+ *
+ * This is critical for cabinet/opening placement: downstream rendering
+ * (renderCabinetBody) uses angleBetween(start, end) to build a local frame,
+ * and depth direction is decided relative to that frame. If the cabinet's
+ * frame is opposite to the wall's frame, depth inverts → cabinet appears
+ * outside the room. Aligning here eliminates the cursor-direction bug.
+ */
+function alignToWall(
+	startPoint: Point,
+	endPoint: Point,
+	wall: Wall | undefined,
+): { aStart: Point; aEnd: Point } {
+	if (!wall) return { aStart: startPoint, aEnd: endPoint };
+	const wallDx = wall.end.x - wall.start.x;
+	const wallDy = wall.end.y - wall.start.y;
+	const cabDx = endPoint.x - startPoint.x;
+	const cabDy = endPoint.y - startPoint.y;
+	const sameDir = wallDx * cabDx + wallDy * cabDy >= 0;
+	return sameDir
+		? { aStart: startPoint, aEnd: endPoint }
+		: { aStart: endPoint, aEnd: startPoint };
+}
 
 // Feature flag — legacy wall-anchored island tool
 // Kept in the repo for reversibility but dead at runtime.
@@ -895,6 +925,7 @@ export function DesignerCanvas({
 	const cancelIslandDraw = useCanvasStore((s) => s.cancelIslandDraw);
 	const activeLayerIdFromStore = useCanvasStore((s) => s.activeLayerId);
 	const setActiveLayerFromStore = useCanvasStore((s) => s.setActiveLayer);
+	const layersFromStore = useCanvasStore((s) => s.layers);
 	const showReferenceOverlay = useCanvasStore((s) => s.showReferenceOverlay);
 	const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
 	// Typed input for length/depth during island draw (null = not typing, mouse drag is live)
@@ -914,6 +945,30 @@ export function DesignerCanvas({
 	const [scale, setScale] = useState(1);
 	const [mousePos, setMousePos] = useState<Point | null>(null);
 	const [snapResult, setSnapResult] = useState<SnapResult | null>(null);
+	// True when primary pointer is coarse (finger/stylus). Used to upscale
+	// snap halos and other precision-critical affordances.
+	const isTouch = useIsTouch();
+
+	// ── Long-press context menu ─────────────────────────────────────────────
+	// When the user holds on a cabinet/wall/opening for ~500ms, show a
+	// floating action menu (delete, flip depth, duplicate stub, properties).
+	// Timer + "start pos" live in refs so we can cancel on move/up without
+	// React re-renders.
+	const [contextMenu, setContextMenu] = useState<{
+		screenX: number;
+		screenY: number;
+		itemType: 'cabinet' | 'wall' | 'opening' | 'guideline';
+		itemId: string;
+	} | null>(null);
+	const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+	const cancelLongPress = useCallback(() => {
+		if (longPressTimerRef.current) {
+			clearTimeout(longPressTimerRef.current);
+			longPressTimerRef.current = null;
+		}
+		longPressStartRef.current = null;
+	}, []);
 	const [showDimensionInput, setShowDimensionInput] = useState(false);
 	const [isPanning, setIsPanning] = useState(false);
 	const [dragState, setDragState] = useState<DragState | null>(null);
@@ -959,11 +1014,13 @@ export function DesignerCanvas({
 		wallChainStateRef.current = wallChainState;
 	}, [wallChainState]);
 
+	// Typed-length input for wall chain drawing (mirrors the island pattern).
+	// When non-null, indicates the user is typing an exact length in cm for the
+	// current segment; on Enter we commit the segment at that length along the
+	// snapped direction from the chain anchor.
+	const [wallTypedInput, setWallTypedInput] = useState<string | null>(null);
+
 	const [closedChainIds, setClosedChainIds] = useState<Set<string>>(new Set());
-	const [lastOpenChain, setLastOpenChain] = useState<{
-		wallIds: string[];
-		buttonPos: Point;
-	} | null>(null);
 	const lastWallClickRef = useRef<{ time: number; pos: Point } | null>(null);
 
 	useEffect(() => {
@@ -1151,23 +1208,6 @@ export function DesignerCanvas({
 				for (const id of newWallIds) next.add(id);
 				return next;
 			});
-			setLastOpenChain(null);
-		} else {
-			const bboxWalls: Wall[] = segments.map((s, i) => ({
-				id: newWallIds[i],
-				start: s.start,
-				end: s.end,
-				thickness: WALL_THICKNESS,
-			}));
-			setLastOpenChain({
-				wallIds: newWallIds,
-				buttonPos: computeChainMidpoint(bboxWalls),
-			});
-			setTimeout(() => {
-				setLastOpenChain((current) =>
-					current && current.wallIds === newWallIds ? null : current,
-				);
-			}, 10000);
 		}
 
 		setWallChainState({ phase: 'idle' });
@@ -1226,41 +1266,73 @@ export function DesignerCanvas({
 					thickness: WALL_THICKNESS,
 				};
 				onAddWall(wall);
+				haptic('medium');
 			} else if (tool === 'door' || tool === 'window') {
+				// Align opening endpoints with wall direction so downstream
+				// rendering is consistent regardless of user drag direction.
+				const parentWall = parentWallId
+					? walls.find((w) => w.id === parentWallId)
+					: undefined;
+				const { aStart, aEnd } = alignToWall(
+					startPoint,
+					finalEnd,
+					parentWall
+				);
 				const opening: Opening = {
 					id: generateId(),
 					type: tool as OpeningType,
-					start: { ...startPoint },
-					end: { ...finalEnd },
-					length: distanceBetween(startPoint, finalEnd),
+					start: { ...aStart },
+					end: { ...aEnd },
+					length: distanceBetween(aStart, aEnd),
 					wallId: parentWallId,
 				};
 				onAddOpening(opening);
+				haptic('medium');
 			} else if (
 				tool === 'base' ||
 				tool === 'wall_cabinet' ||
 				tool === 'tall'
 			) {
-				// Use CABINET endpoints for depth direction (same frame as renderCabinetBody).
-				// renderCabinetBody rotates by angleBetween(cabinet.start, cabinet.end),
-				// so depthFlipped must be computed in that same frame — otherwise if the
-				// user drags the cabinet opposite to the wall's start→end direction, the
-				// interior/exterior sides invert and the cabinet extrudes outward.
-				const flipped = calculateDepthDirection(startPoint, finalEnd, walls);
+				// Align cabinet endpoints with wall direction so the cabinet's
+				// local frame (rotated by angleBetween(start,end)) matches the
+				// wall's frame. Depth direction is then decided by the wall's
+				// interior normal — fully independent of cursor drag direction.
+				const parentWall = parentWallId
+					? walls.find((w) => w.id === parentWallId)
+					: undefined;
+				const { aStart, aEnd } = alignToWall(
+					startPoint,
+					finalEnd,
+					parentWall
+				);
+				const flipped = parentWall
+					? calculateDepthDirection(parentWall, walls)
+					: false;
+				// Prefer the active layer's depth (set by the user in the side
+				// panel) over the hard-coded default. Fallback to the default
+				// only when the layer has no explicit depth yet.
+				const activeLayer = useCanvasStore
+					.getState()
+					.layers.find((l) => l.id === activeLayerIdFromStore);
+				const initialDepth =
+					activeLayer && typeof activeLayer.depth === 'number'
+						? activeLayer.depth
+						: CABINET_DEPTHS[tool as CabinetType];
 				const cabinet: Cabinet = {
 					id: generateId(),
 					type: tool as CabinetType,
-					start: { ...startPoint },
-					end: { ...finalEnd },
-					depth: CABINET_DEPTHS[tool as CabinetType],
-					length: distanceBetween(startPoint, finalEnd),
+					start: { ...aStart },
+					end: { ...aEnd },
+					depth: initialDepth,
+					length: distanceBetween(aStart, aEnd),
 					depthFlipped: flipped,
 					wallId: parentWallId,
 				};
 				onAddCabinet(cabinet);
+				haptic('medium');
 			}
 		},
-		[onAddWall, onAddCabinet, onAddOpening]
+		[onAddWall, onAddCabinet, onAddOpening, activeLayerIdFromStore]
 	);
 
 	const handleWheel = useCallback(
@@ -1295,6 +1367,115 @@ export function DesignerCanvas({
 		},
 		[scale, stagePos]
 	);
+
+	// ── Touch gesture: pinch-to-zoom + two-finger pan ──────────────────────
+	// pinchState persists across mousedown/move/up handlers; we use a ref so
+	// updates don't cause React re-renders mid-gesture (would drop frames).
+	const pinchStateRef = useRef<{
+		// True while two fingers are down — the mouse-equivalent handlers
+		// check this and early-return so drawing doesn't start mid-pinch.
+		active: boolean;
+		// Initial distance between the two fingers in stage coords.
+		startDist: number;
+		// Scale at the moment the gesture started, so we scale relative to it.
+		startScale: number;
+		// Stage position at the moment the gesture started.
+		startStagePos: { x: number; y: number };
+		// Midpoint between the two fingers when the gesture started, in
+		// client (screen) coords — used as the zoom focal point.
+		startMidClient: { x: number; y: number };
+	}>({
+		active: false,
+		startDist: 0,
+		startScale: 1,
+		startStagePos: { x: 0, y: 0 },
+		startMidClient: { x: 0, y: 0 },
+	});
+
+	const getTouchMidAndDist = (t1: Touch, t2: Touch) => {
+		const dx = t2.clientX - t1.clientX;
+		const dy = t2.clientY - t1.clientY;
+		return {
+			dist: Math.hypot(dx, dy),
+			midClient: {
+				x: (t1.clientX + t2.clientX) / 2,
+				y: (t1.clientY + t2.clientY) / 2,
+			},
+		};
+	};
+
+	const handleTouchStart = useCallback(
+		(e: KonvaEventObject<TouchEvent>) => {
+			const touches = e.evt.touches;
+			if (touches.length === 2) {
+				e.evt.preventDefault();
+				const { dist, midClient } = getTouchMidAndDist(
+					touches[0],
+					touches[1],
+				);
+				pinchStateRef.current = {
+					active: true,
+					startDist: dist,
+					startScale: scale,
+					startStagePos: { ...stagePos },
+					startMidClient: midClient,
+				};
+			}
+		},
+		[scale, stagePos],
+	);
+
+	const handleTouchMove = useCallback((e: KonvaEventObject<TouchEvent>) => {
+		const touches = e.evt.touches;
+		const state = pinchStateRef.current;
+		if (!state.active || touches.length < 2) return;
+		e.evt.preventDefault();
+
+		const { dist, midClient } = getTouchMidAndDist(touches[0], touches[1]);
+		if (state.startDist < 1) return;
+
+		// Scale factor is current/initial distance, clamped to the same
+		// range the wheel-zoom uses so users can't over-zoom into oblivion.
+		const rawScale = state.startScale * (dist / state.startDist);
+		const newScale = Math.max(0.1, Math.min(5, rawScale));
+
+		// Convert the gesture's starting midpoint from client coords into
+		// the canvas container's local space so it stays anchored while
+		// both scale and pan evolve. (Matches the handleWheel pattern.)
+		const container = stageRef.current?.container();
+		if (!container) return;
+		const rect = container.getBoundingClientRect();
+		const anchorLocal = {
+			x: state.startMidClient.x - rect.left,
+			y: state.startMidClient.y - rect.top,
+		};
+		const worldPointAtAnchor = {
+			x: (anchorLocal.x - state.startStagePos.x) / state.startScale,
+			y: (anchorLocal.y - state.startStagePos.y) / state.startScale,
+		};
+
+		// Pan = (current midpoint - initial midpoint) in screen coords
+		const panDelta = {
+			x: midClient.x - state.startMidClient.x,
+			y: midClient.y - state.startMidClient.y,
+		};
+
+		setScale(newScale);
+		setStagePos({
+			x: anchorLocal.x - worldPointAtAnchor.x * newScale + panDelta.x,
+			y: anchorLocal.y - worldPointAtAnchor.y * newScale + panDelta.y,
+		});
+	}, []);
+
+	const handleTouchEnd = useCallback((e: KonvaEventObject<TouchEvent>) => {
+		// Fewer than 2 fingers remaining → exit pinch mode. If the user lifts
+		// one finger but keeps the other down, we still exit — avoids the
+		// single-remaining finger being interpreted as a fresh draw gesture
+		// mid-motion.
+		if (e.evt.touches.length < 2) {
+			pinchStateRef.current.active = false;
+		}
+	}, []);
 
 	// ── New island flow click handler (free H/V 3-click drawing, no walls) ──
 	const handleIslandClick = useCallback(
@@ -1361,6 +1542,7 @@ export function DesignerCanvas({
 						depthCm,
 						rotationRad: 0,
 						heightCm: 77,
+						axis: phase.axis,
 					};
 					addIslandAction(island);
 					setIslandPhase({ phase: 'idle' });
@@ -1375,6 +1557,10 @@ export function DesignerCanvas({
 
 	const handleMouseDown = useCallback(
 		(e: KonvaEventObject<MouseEvent>) => {
+			// Pinch/pan in progress? Swallow mouse-like events so we don't
+			// start a draw/select gesture while the user is just zooming.
+			if (pinchStateRef.current.active) return;
+
 			if (e.evt.button === 1) {
 				setIsPanning(true);
 				return;
@@ -1422,11 +1608,15 @@ export function DesignerCanvas({
 					? constrainToAxis(measureTape.startPoint, snappedPos)
 					: snappedPos;
 				if (!measureTape) {
-					// First click: save Point A as a guideline node and start chain
-					onAddGuideline?.({ id: generateId(), start: finalPos, end: finalPos });
+					// First click: just remember the anchor locally. We no
+					// longer persist a single-point "dot" guideline here,
+					// because it would survive past chain commit and couldn't
+					// be removed together with its measurement line. The live
+					// preview draws an anchor dot visually while the chain is
+					// active.
 					setMeasureTape({ startPoint: finalPos });
 				} else {
-					// Subsequent click: confirm end, save guideline segment, chain continues
+					// Subsequent click: save the full segment guideline.
 					onAddGuideline?.({ id: generateId(), start: measureTape.startPoint, end: finalPos });
 					setMeasureTape({ startPoint: finalPos });
 				}
@@ -1646,46 +1836,135 @@ export function DesignerCanvas({
 				return;
 			}
 
+			// Cabinets sorted so the one belonging to the top-most layer in
+			// the Layers panel is checked first by findHitTarget (Photoshop
+			// semantics: top-of-list wins when overlapping). Unlayered
+			// cabinets fall to the bottom of the pick order.
+			const layerIndexById = new Map<string, number>();
+			layersFromStore.forEach((l, i) => layerIndexById.set(l.id, i));
+			const pickOrderCabinets = [...cabinets].sort((a, b) => {
+				const lA = a.layerId ? layerIndexById.get(a.layerId) ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
+				const lB = b.layerId ? layerIndexById.get(b.layerId) ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
+				if (lA !== lB) return lA - lB;
+				return cabinets.indexOf(a) - cabinets.indexOf(b);
+			});
+
 			if (tool === 'delete') {
+				// Priority 1: measurements (guidelines). Thin annotations
+				// that are almost impossible to hit if cabinets/walls claim
+				// the click first — so give them top priority here.
+				const guidelineHitRadius = 10;
+				let gHit: Guideline | null = null;
+				let gBestDist = guidelineHitRadius;
+				for (const g of guidelines) {
+					const isPoint = distanceBetween(g.start, g.end) < 0.5;
+					if (isPoint) {
+						const d = distanceBetween(pos, g.start);
+						if (d <= gBestDist) {
+							gBestDist = d;
+							gHit = g;
+						}
+					} else if (pointNearLine(pos, g.start, g.end, guidelineHitRadius)) {
+						// Approximate distance: perpendicular to the segment.
+						const dx = g.end.x - g.start.x;
+						const dy = g.end.y - g.start.y;
+						const len = Math.hypot(dx, dy) || 1;
+						const d = Math.abs(((pos.x - g.start.x) * dy - (pos.y - g.start.y) * dx) / len);
+						if (d <= gBestDist) {
+							gBestDist = d;
+							gHit = g;
+						}
+					}
+				}
+				if (gHit) {
+					haptic('heavy');
+					onDeleteItem(gHit.id);
+					return;
+				}
+
+				// Priority 2: wall points (electrical / plumbing markers).
+				// They live in a separate state and have numeric ids, so
+				// they aren't part of findHitTarget.
+				const wpHitRadius = 14;
+				let wpHit: WallPointItem | null = null;
+				let wpBestDist = wpHitRadius;
+				for (const wp of wallPoints) {
+					const d = distanceBetween(pos, { x: wp.posX, y: wp.posY });
+					if (d <= wpBestDist) {
+						wpBestDist = d;
+						wpHit = wp;
+					}
+				}
+				if (wpHit) {
+					haptic('heavy');
+					onDeleteWallPoint?.(wpHit.id);
+					return;
+				}
+
+				// Priority 3: walls / cabinets / openings via the shared
+				// hit-test. Guidelines are omitted from this call now —
+				// they were handled above.
 				const hit = findHitTarget(
 					pos,
 					walls,
-					cabinets,
+					pickOrderCabinets,
 					12,
-					drawingState.openings
+					drawingState.openings,
 				);
 				if (hit) {
+					haptic('heavy');
 					onDeleteItem(hit.id);
 				}
 				return;
 			}
 
 			if (tool === 'select') {
-				// Check islands first — they sit in canvas space like cabinets
+				// Photoshop pick order: whichever item belongs to the highest
+				// layer (smallest layer index) wins when overlapping.
+				// Check candidates from islands + cabinets, keep the one with
+				// the smallest layer index. Ties fall back to z-order within
+				// their own domain (islands check last-first, cabinets follow
+				// pickOrderCabinets).
 				const islandsNow = useCanvasStore.getState().islands;
-				const islandHit = findIslandHit(pos, islandsNow);
-				if (islandHit) {
-					setActiveLayerFromStore(islandHit.layerId);
-					onSelectItem(islandHit.id);
+				const islandHitCandidate = findIslandHit(pos, islandsNow);
+				const cabinetHitCandidate = findHitTarget(
+					pos,
+					walls,
+					pickOrderCabinets,
+					12,
+					drawingState.openings
+				);
+				const layerIndexOfId = (id: string | undefined): number => {
+					if (!id) return Number.POSITIVE_INFINITY;
+					return layerIndexById.get(id) ?? Number.POSITIVE_INFINITY;
+				};
+				const islandLayerIdx = islandHitCandidate
+					? layerIndexOfId(islandHitCandidate.layerId)
+					: Number.POSITIVE_INFINITY;
+				const cabinetLayerIdx = cabinetHitCandidate?.type === 'cabinet'
+					? layerIndexOfId(
+						cabinets.find((c) => c.id === cabinetHitCandidate.id)?.layerId,
+					)
+					: Number.POSITIVE_INFINITY;
+				const islandWins =
+					islandHitCandidate !== null &&
+					(cabinetHitCandidate === null || islandLayerIdx <= cabinetLayerIdx);
+				if (islandWins && islandHitCandidate) {
+					setActiveLayerFromStore(islandHitCandidate.layerId);
+					onSelectItem(islandHitCandidate.id);
 					setIslandDragState({
-						islandId: islandHit.id,
+						islandId: islandHitCandidate.id,
 						startMousePos: { ...pos },
-						originalAnchor: { ...islandHit.anchorPoint },
+						originalAnchor: { ...islandHitCandidate.anchorPoint },
 					});
 					return;
 				}
 
-				const hit = findHitTarget(
-					pos,
-					walls,
-					cabinets,
-					12,
-					drawingState.openings
-				);
+				const hit = cabinetHitCandidate;
 				if (hit) {
 					onSelectItem(hit.id);
 
-					if (hit.type !== 'opening') {
+					if (hit.type === 'wall' || hit.type === 'cabinet') {
 						const item =
 							hit.type === 'wall'
 								? walls.find((w) => w.id === hit.id)
@@ -1702,6 +1981,22 @@ export function DesignerCanvas({
 							});
 						}
 					}
+
+					// Arm long-press for the context menu. If the pointer moves
+					// more than ~8px OR lifts before 500ms, we cancel in the
+					// move / up handlers.
+					longPressStartRef.current = { x: pos.x, y: pos.y };
+					const clientX = (e.evt as MouseEvent).clientX ?? 0;
+					const clientY = (e.evt as MouseEvent).clientY ?? 0;
+					longPressTimerRef.current = setTimeout(() => {
+						setContextMenu({
+							screenX: clientX,
+							screenY: clientY,
+							itemType: hit.type,
+							itemId: hit.id,
+						});
+						haptic('medium');
+					}, 500);
 				} else {
 					onSelectItem(null);
 				}
@@ -1719,7 +2014,10 @@ export function DesignerCanvas({
 					!!last && now - last.time < 300 && distanceBetween(pos, last.pos) < 10;
 				lastWallClickRef.current = { time: now, pos };
 
-				// Snap to existing wall corners if nearby
+				// Magnetic snap for click placement: consider existing geometry
+				// (committed walls/cabinets/openings) AND the in-progress chain
+				// vertices so the user can close the loop by clicking near the
+				// first segment's start.
 				let clickPoint = pos;
 				if (snapEnabled) {
 					const snap = findNearestSnapTarget(
@@ -1729,7 +2027,24 @@ export function DesignerCanvas({
 						SNAP_RADIUS,
 						drawingState.openings,
 					);
+					let bestDist = snap
+						? distanceBetween(pos, snap.point)
+						: SNAP_RADIUS;
 					if (snap) clickPoint = snap.point;
+					if (chainState.phase === 'drawingSegment') {
+						const chainPts: Point[] = [];
+						if (chainState.segments.length > 0) {
+							chainPts.push(chainState.segments[0].start);
+						}
+						for (const seg of chainState.segments) chainPts.push(seg.end);
+						for (const cp of chainPts) {
+							const d = distanceBetween(pos, cp);
+							if (d < bestDist) {
+								bestDist = d;
+								clickPoint = cp;
+							}
+						}
+					}
 				}
 
 				if (isDblClick && chainState.phase === 'drawingSegment') {
@@ -1985,6 +2300,23 @@ export function DesignerCanvas({
 
 	const handleMouseMove = useCallback(
 		(e: KonvaEventObject<MouseEvent>) => {
+			// Ignore while a two-finger pinch/pan is in flight so the canvas
+			// isn't simultaneously moved by the pinch AND by a phantom "mouse
+			// move" generated by Konva's touch→mouse translation.
+			if (pinchStateRef.current.active) return;
+
+			// Cancel long-press if the pointer has drifted > 8px from where
+			// it started. Prevents accidental menu open while dragging.
+			if (longPressStartRef.current) {
+				const konvaStage = stageRef.current;
+				const cur = konvaStage?.getPointerPosition();
+				if (cur) {
+					const dx = cur.x - longPressStartRef.current.x;
+					const dy = cur.y - longPressStartRef.current.y;
+					if (Math.hypot(dx, dy) > 8) cancelLongPress();
+				}
+			}
+
 			if (isPanning) {
 				setStagePos((prev) => ({
 					x: prev.x + e.evt.movementX,
@@ -2341,8 +2673,10 @@ export function DesignerCanvas({
 					drawingState.openings
 				);
 			}
+			let bestSnapDist = currentSnap
+				? distanceBetween(pos, currentSnap.point)
+				: SNAP_RADIUS;
 			// Snap to guideline endpoints
-			let bestSnapDist = currentSnap ? distanceBetween(pos, currentSnap.point) : SNAP_RADIUS;
 			for (const g of guidelines) {
 				for (const gpt of [g.start, g.end]) {
 					const d = distanceBetween(pos, gpt);
@@ -2352,7 +2686,46 @@ export function DesignerCanvas({
 					}
 				}
 			}
-			setSnapResult(currentSnap);
+			// Snap to the in-progress wall chain. The first segment's start is
+			// the "closing" point for an open loop (e.g. the 4th wall in a
+			// square snaps back to where the 1st wall began). All segment
+			// endpoints are also considered so the user can branch off any
+			// already-drawn vertex.
+			const chain = wallChainStateRef.current;
+			if (snapEnabled && chain.phase === 'drawingSegment') {
+				const chainPoints: Array<{ pt: Point; type: SnapResult['type'] }> = [];
+				if (chain.segments.length > 0) {
+					chainPoints.push({
+						pt: chain.segments[0].start,
+						type: 'corner',
+					});
+				}
+				for (const seg of chain.segments) {
+					chainPoints.push({ pt: seg.end, type: 'endpoint' });
+				}
+				for (const cp of chainPoints) {
+					const d = distanceBetween(pos, cp.pt);
+					if (d < bestSnapDist) {
+						bestSnapDist = d;
+						currentSnap = { point: cp.pt, type: cp.type };
+					}
+				}
+			}
+			// Light haptic on snap "attach" — only when transitioning from
+			// no-snap (or a different target) to snapping onto something.
+			// Prevents per-frame buzzing while the cursor sits on a target.
+			setSnapResult((prev) => {
+				const prevTargetKey = prev
+					? `${prev.point.x.toFixed(1)},${prev.point.y.toFixed(1)}`
+					: null;
+				const nextTargetKey = currentSnap
+					? `${currentSnap.point.x.toFixed(1)},${currentSnap.point.y.toFixed(1)}`
+					: null;
+				if (nextTargetKey && nextTargetKey !== prevTargetKey) {
+					haptic('light');
+				}
+				return currentSnap;
+			});
 
 			if (isDrawing && startPoint) {
 				let previewPoint = pos;
@@ -2388,6 +2761,14 @@ export function DesignerCanvas({
 
 	const handleMouseUp = useCallback(
 		(e: KonvaEventObject<MouseEvent>) => {
+			// If the last pinch just ended, Konva may still fire a mouseup for
+			// the final finger-lift — don't let it trigger commit/select.
+			if (pinchStateRef.current.active) return;
+
+			// Cancel any pending long-press (if the user lifted before 500ms
+			// it was a tap, not a hold).
+			cancelLongPress();
+
 			if (
 				e.evt.button === 1 ||
 				(isPanning && drawingState.tool === 'pan')
@@ -2634,6 +3015,103 @@ export function DesignerCanvas({
 			) {
 				return;
 			}
+			// ── Wall chain: typed-length input (digits/backspace/enter/esc) ──
+			// Mirrors the island-drawing pattern. Active whenever the user is
+			// drawing a wall segment — regardless of whether they've clicked a
+			// second anchor yet. On Enter, commits a segment of the typed length
+			// in the currently snapped direction (from getConstrainedEnd).
+			if (wallChainStateRef.current.phase === 'drawingSegment') {
+				// Start/append typed input on digit
+				if (/^[0-9]$/.test(e.key)) {
+					setWallTypedInput((prev) => (prev ?? '') + e.key);
+					e.preventDefault();
+					return;
+				}
+				// Decimal point (only once)
+				if (
+					e.key === '.' &&
+					wallTypedInput !== null &&
+					!wallTypedInput.includes('.')
+				) {
+					setWallTypedInput(wallTypedInput + '.');
+					e.preventDefault();
+					return;
+				}
+				// Backspace edits the typed value
+				if (e.key === 'Backspace' && wallTypedInput !== null) {
+					setWallTypedInput(
+						wallTypedInput.length > 1
+							? wallTypedInput.slice(0, -1)
+							: null
+					);
+					e.preventDefault();
+					return;
+				}
+				// Enter commits the typed value as the next segment
+				if (e.key === 'Enter' && wallTypedInput !== null) {
+					const n = parseFloat(wallTypedInput);
+					if (!Number.isFinite(n) || n <= 0) {
+						setWallTypedInput(null);
+						return;
+					}
+					const state = wallChainStateRef.current;
+					if (state.phase !== 'drawingSegment') {
+						setWallTypedInput(null);
+						return;
+					}
+					const lengthPx = cmToPixels(n);
+					// Direction = snapped end from cursor relative to anchor.
+					// This respects ortho snapping (H/V) and the rule that
+					// alternating segments must flip axis.
+					const cursor = cursorWorld ?? state.anchor;
+					const snapped = getConstrainedEnd(
+						state.anchor,
+						cursor,
+						state.segments
+					);
+					const dx = snapped.x - state.anchor.x;
+					const dy = snapped.y - state.anchor.y;
+					const mag = Math.hypot(dx, dy);
+					if (mag < 1e-6) {
+						setWallTypedInput(null);
+						return;
+					}
+					const ux = dx / mag;
+					const uy = dy / mag;
+					const newEnd: Point = {
+						x: state.anchor.x + ux * lengthPx,
+						y: state.anchor.y + uy * lengthPx,
+					};
+					const firstStart = state.segments[0]?.start;
+					const willAutoClose =
+						state.segments.length >= 2 &&
+						!!firstStart &&
+						distanceBetween(newEnd, firstStart) < SNAP_RADIUS;
+					const finalEnd = willAutoClose && firstStart ? firstStart : newEnd;
+					const newSegments = [
+						...state.segments,
+						{ start: state.anchor, end: finalEnd },
+					];
+					setWallChainState({
+						phase: 'drawingSegment',
+						anchor: finalEnd,
+						segments: newSegments,
+					});
+					setWallTypedInput(null);
+					if (willAutoClose) {
+						setTimeout(() => commitChain(), 0);
+					}
+					e.preventDefault();
+					return;
+				}
+				// Escape: clear typed input first (if any), otherwise fall through
+				// to the chain-commit logic below.
+				if (e.key === 'Escape' && wallTypedInput !== null) {
+					setWallTypedInput(null);
+					e.preventDefault();
+					return;
+				}
+			}
 			// ── Wall chain: Escape commits chain ──
 			if (
 				e.key === 'Escape' &&
@@ -2743,6 +3221,7 @@ export function DesignerCanvas({
 								depthCm: n,
 								rotationRad: 0,
 								heightCm: 77,
+								axis: iPhase.axis,
 							};
 							addIslandAction(island);
 							setIslandPhase({ phase: 'idle' });
@@ -2824,6 +3303,7 @@ export function DesignerCanvas({
 		activeLayerIdFromStore,
 		addIslandAction,
 		commitChain,
+		wallTypedInput,
 	]);
 
 	const renderGrid = () => {
@@ -3172,7 +3652,11 @@ export function DesignerCanvas({
 				) {
 					const cabType = wpTool as CabinetType;
 					const style = CABINET_STYLES[cabType];
-					const depthPx = cmToPixels(CABINET_DEPTHS[cabType]);
+					// Ghost uses the default depth + render overhang so the
+					// preview matches what the cabinet will look like on commit.
+					const depthPx = cmToPixels(
+						CABINET_DEPTHS[cabType] + CABINET_RENDER_DEPTH_BONUS
+					);
 
 					// Validate ghost placement for valid/invalid color
 					const ghostClearance = checkClearanceViolation(
@@ -3194,10 +3678,10 @@ export function DesignerCanvas({
 							: wpTool === 'base'
 								? 'BC'
 								: 'WC';
-					// Use WALL endpoints (not cabinet preview points) for depth direction
+					// Wall is the single source of truth for interior side.
+					// calculateDepthDirection now takes the wall object directly.
 					const interiorFlipped = calculateDepthDirection(
-						wall.start,
-						wall.end,
+						wall,
 						drawingState.walls
 					);
 					// No halfWall offset — back edge sits on inner face (y=0 in cabinet local frame)
@@ -3404,6 +3888,19 @@ export function DesignerCanvas({
 				: mousePos;
 			const liveLenCm = Math.round(pixelsToCm(distanceBetween(measureTape.startPoint, liveEnd)));
 			const liveMid = { x: (measureTape.startPoint.x + liveEnd.x) / 2, y: (measureTape.startPoint.y + liveEnd.y) / 2 };
+			// Anchor dot at the first click so the user can see where the
+			// measurement starts while the chain is active. Purely visual —
+			// disappears as soon as the tool is exited, no persisted record.
+			elements.push(
+				<Circle
+					key="tape-live-anchor"
+					x={measureTape.startPoint.x}
+					y={measureTape.startPoint.y}
+					radius={5 / scale}
+					fill="#A855F7"
+					listening={false}
+				/>,
+			);
 			elements.push(
 				<Line key="tape-live"
 					points={[measureTape.startPoint.x, measureTape.startPoint.y, liveEnd.x, liveEnd.y]}
@@ -3815,7 +4312,9 @@ export function DesignerCanvas({
 		const style = CABINET_STYLES[cabinet.type];
 		const angle = angleBetween(cabinet.start, cabinet.end);
 		const length = distanceBetween(cabinet.start, cabinet.end);
-		const depthPx = cmToPixels(cabinet.depth);
+		// Rendered depth includes the visual overhang bonus. Stored
+		// cabinet.depth stays authoritative for pricing / clearance / overlap.
+		const depthPx = cmToPixels(cabinet.depth + CABINET_RENDER_DEPTH_BONUS);
 		const deg = (angle * 180) / Math.PI;
 
 		// Cabinet back edge sits ON the inner-face line — no halfWall offset.
@@ -4005,23 +4504,37 @@ export function DesignerCanvas({
 			drawingState.cabinets,
 			drawingState.walls
 		);
-		const order: Record<CabinetType, number> = {
+		const typeOrder: Record<CabinetType, number> = {
 			base: 0,
 			tall: 1,
 			wall_cabinet: 2,
 			island: 3,
 		};
 
-		const sortedCabinets = [...drawingState.cabinets].sort((a, b) => {
-			const tA = order[a.type] ?? 0;
-			const tB = order[b.type] ?? 0;
-			if (tA === tB) {
-				// preserve existing placement tie-breaker fallback logic
-				const oA = drawingState.cabinets.indexOf(a);
-				const oB = drawingState.cabinets.indexOf(b);
-				return oA - oB;
+		// Z-order (Photoshop semantics): the TOP of the Layers panel is the
+		// FRONT of the canvas. Konva draws later elements on top, so layers
+		// with a smaller index (top of list) must render LAST.
+		// Unlayered cabinets get layer index = Infinity so they sit below
+		// every real layer.
+		const layerIndexById = new Map<string, number>();
+		layersFromStore.forEach((l, i) => layerIndexById.set(l.id, i));
+		const layerIndexOf = (cab: Cabinet): number => {
+			if (cab.layerId && layerIndexById.has(cab.layerId)) {
+				return layerIndexById.get(cab.layerId) as number;
 			}
-			return tA - tB;
+			return Number.POSITIVE_INFINITY;
+		};
+
+		const sortedCabinets = [...drawingState.cabinets].sort((a, b) => {
+			const lA = layerIndexOf(a);
+			const lB = layerIndexOf(b);
+			// Higher layer index renders first (goes to the back), so the
+			// top-of-list layer ends up drawn last / on top.
+			if (lA !== lB) return lB - lA;
+			const tA = typeOrder[a.type] ?? 0;
+			const tB = typeOrder[b.type] ?? 0;
+			if (tA !== tB) return tA - tB;
+			return drawingState.cabinets.indexOf(a) - drawingState.cabinets.indexOf(b);
 		});
 
 		return sortedCabinets.map((cabinet) => {
@@ -4368,14 +4881,21 @@ export function DesignerCanvas({
 
 		// Build a synthetic preview cabinet so findOverlappingCabinets can
 		// detect perpendicular corner overlap (in addition to same-wall).
-		const previewFlipped = calculateDepthDirection(startPoint, previewPoint, walls);
+		// Find the wall under the cursor — depth direction follows the wall,
+		// not the user's drag direction.
+		const nearest = findNearestWall(startPoint, walls);
+		const parentWall = nearest?.wall;
+		const { aStart, aEnd } = alignToWall(startPoint, previewPoint, parentWall);
+		const previewFlipped = parentWall
+			? calculateDepthDirection(parentWall, walls)
+			: false;
 		const cutterPreview: Cabinet = {
 			id: '__preview_tall__',
 			type: 'tall',
-			start: startPoint,
-			end: previewPoint,
+			start: aStart,
+			end: aEnd,
 			depth: CABINET_DEPTHS.tall,
-			length: distanceBetween(startPoint, previewPoint),
+			length: distanceBetween(aStart, aEnd),
 			depthFlipped: previewFlipped,
 		};
 
@@ -4396,7 +4916,10 @@ export function DesignerCanvas({
 					const { splitStart, splitEnd, consumed } =
 						computeSplitPoints(cab, startPoint, previewPoint, cutterPreview);
 
-					const depthPx = cmToPixels(cab.depth);
+					// Visual overhang applied to match renderCabinetBody.
+					const depthPx = cmToPixels(
+						cab.depth + CABINET_RENDER_DEPTH_BONUS
+					);
 					const angle = angleBetween(cab.start, cab.end);
 					const flip = cab.depthFlipped ? -1 : 1;
 					const perpX =
@@ -4571,7 +5094,10 @@ export function DesignerCanvas({
 			const style = CABINET_STYLES[tool as CabinetType];
 			const angle = angleBetween(startPoint, previewPoint);
 			const length = distanceBetween(startPoint, previewPoint);
-			const depthPx = cmToPixels(CABINET_DEPTHS[tool as CabinetType]);
+			// Preview rectangle matches the final drawn size (incl. overhang).
+			const depthPx = cmToPixels(
+				CABINET_DEPTHS[tool as CabinetType] + CABINET_RENDER_DEPTH_BONUS
+			);
 			const deg = (angle * 180) / Math.PI;
 
 			return (
@@ -4610,23 +5136,27 @@ export function DesignerCanvas({
 		) {
 			return null;
 		}
+		// On touch, inflate the snap halo so the magnetic target is obvious
+		// even when a finger is partially obscuring it.
+		const baseR = isTouch ? SNAP_VISUAL_RADIUS * 1.5 : SNAP_VISUAL_RADIUS;
+		const outerR = isTouch ? baseR + 8 : baseR + 4;
 		return (
 			<Group listening={false}>
 				<Circle
 					x={snapResult.point.x}
 					y={snapResult.point.y}
-					radius={SNAP_VISUAL_RADIUS / scale}
+					radius={baseR / scale}
 					fill={snapResult.type === 'corner' ? '#f97316' : '#3B82F6'}
 					opacity={0.6}
 				/>
 				<Circle
 					x={snapResult.point.x}
 					y={snapResult.point.y}
-					radius={(SNAP_VISUAL_RADIUS + 4) / scale}
+					radius={outerR / scale}
 					stroke={
 						snapResult.type === 'corner' ? '#f97316' : '#3B82F6'
 					}
-					strokeWidth={1.5 / scale}
+					strokeWidth={(isTouch ? 2 : 1.5) / scale}
 					opacity={0.4}
 				/>
 			</Group>
@@ -4704,7 +5234,9 @@ export function DesignerCanvas({
 
 		const mid = getMidpoint(cab.start, cab.end);
 		const angle = angleBetween(cab.start, cab.end);
-		const depthPx = cmToPixels(cab.depth);
+		// Flip button sits on the rendered edge (incl. overhang), not on the
+		// logical depth, so it stays flush with the drawn rectangle.
+		const depthPx = cmToPixels(cab.depth + CABINET_RENDER_DEPTH_BONUS);
 		const flipDir = cab.depthFlipped ? -1 : 1;
 		const btnX =
 			mid.x +
@@ -4839,7 +5371,14 @@ export function DesignerCanvas({
 		<div
 			ref={containerRef}
 			className="flex-1 relative bg-background"
-			style={{ cursor: getCursorStyle() }}
+			style={{
+				cursor: getCursorStyle(),
+				// Block browser-native pan/zoom/double-tap on the canvas so
+				// our Konva touch handlers own the gesture space. Anything
+				// outside this element still respects `touch-action:
+				// manipulation` from index.css.
+				touchAction: 'none',
+			}}
 			data-testid="designer-canvas"
 		>
 			<Stage
@@ -4854,6 +5393,9 @@ export function DesignerCanvas({
 				onMouseDown={handleMouseDown}
 				onMouseMove={handleMouseMove}
 				onMouseUp={handleMouseUp}
+				onTouchStart={handleTouchStart}
+				onTouchMove={handleTouchMove}
+				onTouchEnd={handleTouchEnd}
 			>
 				<Layer name="grid">{renderGrid()}</Layer>
 				{refImg && showReferenceOverlay && (
@@ -4946,7 +5488,15 @@ export function DesignerCanvas({
 						(() => {
 							const { anchor, segments } = wallChainState;
 							const firstStart = segments[0]?.start;
-							const livePos = cursorWorld;
+							// Magnetic snap: if the cursor is near an existing
+							// corner / endpoint / midpoint, pull the live cursor
+							// onto it before applying the ortho constraint. This
+							// gives the same "magnetic" feel as cabinet placement.
+							const rawLive = cursorWorld;
+							const livePos =
+								rawLive && drawingState.snapEnabled && snapResult
+									? snapResult.point
+									: rawLive;
 							const previewEnd = livePos
 								? getConstrainedEnd(anchor, livePos, segments)
 								: anchor;
@@ -5057,6 +5607,13 @@ export function DesignerCanvas({
 						const lengthPx = island.lengthCm * PIXELS_PER_CM;
 						const depthPx = island.depthCm * PIXELS_PER_CM;
 						const rotationDeg = (island.rotationRad * 180) / Math.PI;
+						// Map the logical (length, depth) to canvas (width, height)
+						// based on which world axis the length runs along.
+						// Default "h" is the legacy behaviour; "v" swaps them so
+						// vertical islands render as tall narrow rectangles.
+						const isVertical = island.axis === 'v';
+						const rectWidth = isVertical ? depthPx : lengthPx;
+						const rectHeight = isVertical ? lengthPx : depthPx;
 						const isSelected =
 							drawingState.selectedId === island.id ||
 							activeLayerIdFromStore === island.layerId;
@@ -5065,8 +5622,8 @@ export function DesignerCanvas({
 								<Rect
 									x={island.anchorPoint.x}
 									y={island.anchorPoint.y}
-									width={lengthPx}
-									height={depthPx}
+									width={rectWidth}
+									height={rectHeight}
 									rotation={rotationDeg}
 									fill="#F59E0B"
 									opacity={isSelected ? 0.55 : 0.4}
@@ -5613,18 +6170,158 @@ export function DesignerCanvas({
 					/>
 				)}
 
-			<div className="absolute bottom-3 left-3 flex items-center gap-2 select-none pointer-events-none">
-				<div className="bg-card/90 border border-border rounded-md px-2.5 py-1.5 text-[10px] font-mono text-muted-foreground backdrop-blur-sm">
+			{/* Wall chain length indicator: shows the typed value (cm) floating
+			    near the current chain anchor while the user is drawing a wall
+			    segment. Purely informational — the actual Enter/digits are
+			    captured by the global keydown handler above. */}
+			{wallChainState.phase === 'drawingSegment' && (
+				<div
+					className="absolute z-50 pointer-events-none"
+					style={{
+						left: `${wallChainState.anchor.x * scale + stagePos.x + 16}px`,
+						top: `${wallChainState.anchor.y * scale + stagePos.y - 20}px`,
+					}}
+					data-testid="wall-typed-length-indicator"
+				>
+					<div className="flex items-center bg-card border border-border rounded-md shadow-lg px-2.5 py-1">
+						<span className="text-sm font-mono text-foreground min-w-[2ch]">
+							{wallTypedInput ?? '—'}
+						</span>
+						<span className="text-[11px] text-muted-foreground font-medium pl-1.5 select-none">
+							{drawingState.unit}
+						</span>
+					</div>
+					<div className="text-[10px] text-muted-foreground mt-1 whitespace-nowrap select-none">
+						Type length · Enter to commit · Esc to cancel
+					</div>
+				</div>
+			)}
+
+			{/* Touch-friendly action pill for the wall-chain flow. Sits at
+			    bottom-center of the canvas so fingers can reach it without
+			    hunting for Escape or Enter on a physical keyboard. Desktop
+			    users keep their keyboard shortcuts (kbd hints below). */}
+			{wallChainState.phase === 'drawingSegment' && (
+				<div
+					className="absolute left-1/2 -translate-x-1/2 bottom-6 z-50 flex items-center gap-2 pointer-events-auto"
+					data-testid="wall-chain-action-pill"
+				>
+					<button
+						type="button"
+						onClick={() => {
+							// Discard the in-progress chain without committing.
+							setWallChainState({ phase: 'idle' });
+							setWallTypedInput(null);
+						}}
+						className="h-11 px-4 rounded-full bg-card border border-border shadow-lg text-sm font-medium text-foreground hover:bg-accent active:bg-accent"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							commitChain();
+							setWallTypedInput(null);
+						}}
+						className="h-11 px-4 rounded-full bg-primary text-primary-foreground shadow-lg text-sm font-medium hover:opacity-90 active:opacity-80 disabled:opacity-40"
+						disabled={wallChainState.segments.length === 0}
+					>
+						Finish
+					</button>
+				</div>
+			)}
+
+			{/* Same pill for the island drawing flow. */}
+			{islandDrawingState.phase !== 'idle' && (
+				<div
+					className="absolute left-1/2 -translate-x-1/2 bottom-6 z-50 flex items-center gap-2 pointer-events-auto"
+					data-testid="island-action-pill"
+				>
+					<button
+						type="button"
+						onClick={() => {
+							cancelIslandDraw();
+							setIslandTypedInput(null);
+						}}
+						className="h-11 px-4 rounded-full bg-card border border-border shadow-lg text-sm font-medium text-foreground hover:bg-accent active:bg-accent"
+					>
+						Cancel island
+					</button>
+				</div>
+			)}
+
+			{/* Long-press context menu — positioned at the press location in
+			    viewport coords. A backdrop captures outside clicks to dismiss. */}
+			{contextMenu && (
+				<>
+					<div
+						className="fixed inset-0 z-[60]"
+						onClick={() => setContextMenu(null)}
+						onTouchStart={() => setContextMenu(null)}
+						data-testid="context-menu-backdrop"
+					/>
+					<div
+						className="fixed z-[61] min-w-[180px] bg-card border border-border rounded-lg shadow-xl overflow-hidden"
+						style={{
+							left: Math.min(contextMenu.screenX, window.innerWidth - 200),
+							top: Math.min(contextMenu.screenY, window.innerHeight - 200),
+						}}
+						data-testid="context-menu"
+						onClick={(e) => e.stopPropagation()}
+					>
+						{contextMenu.itemType === 'cabinet' && (
+							<button
+								type="button"
+								className="w-full h-11 px-4 text-left text-sm text-foreground hover:bg-accent active:bg-accent"
+								onClick={() => {
+									const cab = drawingState.cabinets.find(
+										(c) => c.id === contextMenu.itemId,
+									);
+									if (cab) {
+										onUpdateCabinet(cab.id, { depthFlipped: !cab.depthFlipped });
+										onMoveComplete();
+										haptic('light');
+									}
+									setContextMenu(null);
+								}}
+							>
+								↔ Flip interior side
+							</button>
+						)}
+						<button
+							type="button"
+							className="w-full h-11 px-4 text-left text-sm text-destructive hover:bg-destructive/10 active:bg-destructive/20"
+							onClick={() => {
+								onDeleteItem(contextMenu.itemId);
+								haptic('heavy');
+								setContextMenu(null);
+							}}
+						>
+							🗑 Delete
+						</button>
+						<button
+							type="button"
+							className="w-full h-11 px-4 text-left text-sm text-muted-foreground hover:bg-accent active:bg-accent border-t border-border"
+							onClick={() => setContextMenu(null)}
+						>
+							Cancel
+						</button>
+					</div>
+				</>
+			)}
+
+			<div className="absolute bottom-3 left-3 flex items-center gap-2 select-none pointer-events-none touch:text-sm">
+				<div className="bg-card/90 border border-border rounded-md px-2.5 py-1.5 text-[10px] font-mono text-muted-foreground backdrop-blur-sm touch:text-xs touch:px-3 touch:py-2">
 					Zoom: {(scale * 100).toFixed(0)}%
 				</div>
-				{mousePos && (
+				{mousePos && !isTouch && (
 					<div className="bg-card/90 border border-border rounded-md px-2.5 py-1.5 text-[10px] font-mono text-muted-foreground backdrop-blur-sm">
 						X: {Math.round(mousePos.x / PIXELS_PER_CM)} Y:{' '}
 						{Math.round(mousePos.y / PIXELS_PER_CM)} cm
 					</div>
 				)}
 				{snapResult && (
-					<div className="bg-primary/10 border border-primary/20 rounded-md px-2.5 py-1.5 text-[10px] font-mono text-primary backdrop-blur-sm">
+					<div className="bg-primary/10 border border-primary/20 rounded-md px-2.5 py-1.5 text-[10px] font-mono text-primary backdrop-blur-sm touch:text-xs touch:px-3 touch:py-2">
 						Snap: {snapResult.type}
 					</div>
 				)}
@@ -5715,42 +6412,6 @@ export function DesignerCanvas({
 				);
 			})()}
 
-			{/* Flip-interior button for open wall chains (auto-hides after 10s) */}
-			{lastOpenChain && (() => {
-				const stage = stageRef.current;
-				if (!stage) return null;
-				const screen = stage
-					.getAbsoluteTransform()
-					.point(lastOpenChain.buttonPos);
-				return (
-					<div
-						className="absolute z-50 pointer-events-auto"
-						style={{
-							left: screen.x,
-							top: screen.y,
-							transform: 'translate(-50%, -50%)',
-						}}
-					>
-						<button
-							className="bg-amber-100 border-2 border-amber-500 rounded-full px-3 py-1 shadow-lg hover:bg-amber-200 transition flex items-center gap-1 text-xs font-medium text-amber-900"
-							onClick={() => {
-								lastOpenChain.wallIds.forEach((id) => {
-									const wall = drawingState.walls.find((w) => w.id === id);
-									if (wall) {
-										onUpdateWall(id, {
-											start: { ...wall.end },
-											end: { ...wall.start },
-										});
-									}
-								});
-								setLastOpenChain(null);
-							}}
-						>
-							↔ Flip interior side
-						</button>
-					</div>
-				);
-			})()}
 		</div>
 	);
 }

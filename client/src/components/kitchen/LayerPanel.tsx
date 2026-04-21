@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -5,7 +6,22 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Plus, Trash2, Layers } from "lucide-react";
+import { Plus, Trash2, Layers, GripVertical, ChevronUp, ChevronDown } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
 import { useToast } from "@/hooks/use-toast";
 import { useCanvasStore } from "@/stores/useCanvasStore";
 import type {
@@ -53,7 +69,7 @@ interface LayerPanelProps {
 
 export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
   const { toast } = useToast();
-  const { layers, activeLayerId, addLayer, removeLayer, updateLayer, setActiveLayer } = useCanvasStore();
+  const { layers, activeLayerId, addLayer, removeLayer, updateLayer, setActiveLayer, reorderLayer } = useCanvasStore();
   const islands = useCanvasStore((s) => s.islands);
   const updateIsland = useCanvasStore((s) => s.updateIsland);
   const removeIsland = useCanvasStore((s) => s.removeIsland);
@@ -62,6 +78,21 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
   const { data: prices = [] } = useQuery<DreamHomePrice[]>({ queryKey: ["/api/dream-home/prices"] });
   const { data: tallRows = [] } = useQuery<TallHeight[]>({ queryKey: ["/api/dream-home/tall-heights"] });
   const { data: settings } = useQuery<PricingSettings>({ queryKey: ["/api/pricing-settings"] });
+
+  // Drag-and-drop sensors. `activationConstraint` prevents a stray click on
+  // the layer card (which selects it) from being interpreted as a drag.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const fromIndex = layers.findIndex((l) => l.id === active.id);
+    const toIndex = layers.findIndex((l) => l.id === over.id);
+    if (fromIndex >= 0 && toIndex >= 0) reorderLayer(fromIndex, toIndex);
+  };
 
   const handleAddLayer = (type: LayerType) => {
     // Default finish: "Solid Matte / Soft Touch" (fall back to first if not found)
@@ -150,25 +181,39 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
             </p>
           </div>
         ) : (
-          layers.map((layer, idx) => (
-            <LayerCard
-              key={layer.id}
-              layer={layer}
-              index={idx}
-              isActive={layer.id === activeLayerId}
-              lengthM={getLayerLength(layer)}
-              finishes={finishes}
-              prices={prices}
-              tallRows={tallRows}
-              settings={settings}
-              onSelect={() => setActiveLayer(layer.id)}
-              onUpdate={(updates) => updateLayer(layer.id, updates)}
-              onDelete={() => removeLayer(layer.id)}
-              islands={islands}
-              updateIsland={updateIsland}
-              removeIsland={removeIsland}
-            />
-          ))
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={layers.map((l) => l.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {layers.map((layer, idx) => (
+                <LayerCard
+                  key={layer.id}
+                  layer={layer}
+                  index={idx}
+                  totalLayers={layers.length}
+                  isActive={layer.id === activeLayerId}
+                  lengthM={getLayerLength(layer)}
+                  finishes={finishes}
+                  prices={prices}
+                  tallRows={tallRows}
+                  settings={settings}
+                  onSelect={() => setActiveLayer(layer.id)}
+                  onUpdate={(updates) => updateLayer(layer.id, updates)}
+                  onDelete={() => removeLayer(layer.id)}
+                  onMoveUp={() => reorderLayer(idx, idx - 1)}
+                  onMoveDown={() => reorderLayer(idx, idx + 1)}
+                  islands={islands}
+                  updateIsland={updateIsland}
+                  removeIsland={removeIsland}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
         )}
       </div>
 
@@ -188,6 +233,7 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
 interface LayerCardProps {
   layer: Layer;
   index: number;
+  totalLayers: number;
   isActive: boolean;
   lengthM: number;
   finishes: DreamHomeFinish[];
@@ -197,6 +243,8 @@ interface LayerCardProps {
   onSelect: () => void;
   onUpdate: (u: Partial<Layer>) => void;
   onDelete: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   islands: Island[];
   updateIsland: (id: string, updates: Partial<Island>) => void;
   removeIsland: (id: string) => void;
@@ -205,6 +253,7 @@ interface LayerCardProps {
 function LayerCard({
   layer,
   index,
+  totalLayers,
   isActive,
   lengthM,
   finishes,
@@ -214,10 +263,35 @@ function LayerCard({
   onSelect,
   onUpdate,
   onDelete,
+  onMoveUp,
+  onMoveDown,
   islands,
   updateIsland,
   removeIsland,
 }: LayerCardProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: layer.id });
+  // When cards of different heights swap (a compact collapsed card vs the
+  // tall expanded/active card), dnd-kit's default transform applies a
+  // scaleX/scaleY to match the sibling's bounding box — which visually
+  // squashes/stretches the dragged card. Strip the scale component and
+  // keep only the translate so the card moves cleanly without deforming.
+  const dragStyle: CSSProperties = {
+    transform: transform
+      ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
+      : undefined,
+    transition,
+    opacity: isDragging ? 0.55 : 1,
+    zIndex: isDragging ? 50 : undefined,
+  };
+  const canMoveUp = index > 0;
+  const canMoveDown = index < totalLayers - 1;
   const isDrawable = DRAWABLE_TYPES.includes(layer.type);
   const isCount = COUNT_TYPES.includes(layer.type);
 
@@ -258,9 +332,23 @@ function LayerCard({
   if (!isActive) {
     return (
       <div
-        className="rounded-md border border-border bg-card hover:border-primary/40 cursor-pointer transition-colors p-2 flex items-center gap-2"
+        ref={setNodeRef}
+        style={dragStyle}
+        className="rounded-md border border-border bg-card hover:border-primary/40 cursor-pointer transition-colors p-2 flex items-center gap-1.5"
         onClick={onSelect}
       >
+        {/* Drag handle — only this element carries the dnd listeners, so the
+            rest of the card still receives plain clicks (select / buttons). */}
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing touch-none shrink-0 inline-flex items-center justify-center touch:w-11 touch:h-11 touch:-m-1.5"
+          onClick={(e) => e.stopPropagation()}
+          title="Drag to reorder"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="w-3.5 h-3.5 touch:w-5 touch:h-5" />
+        </button>
         <div
           className="w-2.5 h-2.5 rounded-sm shrink-0"
           style={{ backgroundColor: LAYER_COLORS[layer.type] }}
@@ -274,6 +362,32 @@ function LayerCard({
         <span className="text-[11px] font-semibold font-mono text-primary shrink-0 min-w-[60px] text-right">
           {subtotalLabel}
         </span>
+        <div className="flex flex-col -my-1 shrink-0 touch:flex-row touch:gap-1">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (canMoveUp) onMoveUp();
+            }}
+            disabled={!canMoveUp}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed h-3 leading-none inline-flex items-center justify-center touch:w-11 touch:h-11 touch:border touch:border-border touch:rounded-md"
+            title="Move up"
+          >
+            <ChevronUp className="w-3 h-3 touch:w-5 touch:h-5" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (canMoveDown) onMoveDown();
+            }}
+            disabled={!canMoveDown}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed h-3 leading-none inline-flex items-center justify-center touch:w-11 touch:h-11 touch:border touch:border-border touch:rounded-md"
+            title="Move down"
+          >
+            <ChevronDown className="w-3 h-3 touch:w-5 touch:h-5" />
+          </button>
+        </div>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -282,10 +396,10 @@ function LayerCard({
             }
             onDelete();
           }}
-          className="text-muted-foreground hover:text-red-500 shrink-0"
+          className="text-muted-foreground hover:text-red-500 shrink-0 inline-flex items-center justify-center touch:w-11 touch:h-11"
           title="Delete layer"
         >
-          <Trash2 className="w-3 h-3" />
+          <Trash2 className="w-3 h-3 touch:w-4 touch:h-4" />
         </button>
       </div>
     );
@@ -294,16 +408,54 @@ function LayerCard({
   // Expanded (active) card — full details
   return (
     <div
+      ref={setNodeRef}
+      style={dragStyle}
       className="rounded-md border p-2.5 cursor-pointer transition-colors border-primary bg-primary/5 ring-1 ring-primary/30"
       onClick={onSelect}
     >
       <div className="flex items-center gap-1.5 mb-2">
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground cursor-grab active:cursor-grabbing touch-none shrink-0 inline-flex items-center justify-center touch:w-11 touch:h-11 touch:-m-1.5"
+          onClick={(e) => e.stopPropagation()}
+          title="Drag to reorder"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="w-3.5 h-3.5 touch:w-5 touch:h-5" />
+        </button>
         <div
           className="w-2.5 h-2.5 rounded-sm shrink-0"
           style={{ backgroundColor: LAYER_COLORS[layer.type] }}
         />
         <span className="text-xs font-medium text-card-foreground">{LAYER_LABELS[layer.type]}</span>
         <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0">#{index + 1}</Badge>
+        <div className="flex flex-col -my-1 shrink-0 touch:flex-row touch:gap-1">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (canMoveUp) onMoveUp();
+            }}
+            disabled={!canMoveUp}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed h-3 leading-none inline-flex items-center justify-center touch:w-11 touch:h-11 touch:border touch:border-border touch:rounded-md"
+            title="Move up"
+          >
+            <ChevronUp className="w-3 h-3 touch:w-5 touch:h-5" />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (canMoveDown) onMoveDown();
+            }}
+            disabled={!canMoveDown}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed h-3 leading-none inline-flex items-center justify-center touch:w-11 touch:h-11 touch:border touch:border-border touch:rounded-md"
+            title="Move down"
+          >
+            <ChevronDown className="w-3 h-3 touch:w-5 touch:h-5" />
+          </button>
+        </div>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -312,10 +464,10 @@ function LayerCard({
             }
             onDelete();
           }}
-          className="text-muted-foreground hover:text-red-500 ml-1"
+          className="text-muted-foreground hover:text-red-500 ml-1 inline-flex items-center justify-center touch:w-11 touch:h-11"
           title="Delete layer"
         >
-          <Trash2 className="w-3 h-3" />
+          <Trash2 className="w-3 h-3 touch:w-4 touch:h-4" />
         </button>
       </div>
 
@@ -504,7 +656,11 @@ function LayerCard({
 
       {!result.error && (() => {
         const unit = isCount ? "pc" : "m";
-        const denom = isCount ? (layer.qty ?? 0) : lengthM;
+        // Use the same length that pricing actually used (pricingLengthM),
+        // not the raw `lengthM` prop. For islands, `lengthM` from the parent
+        // is 0 because they aren't counted as drawable walls — but pricing
+        // uses the island's own length, so the rate must divide by that.
+        const denom = isCount ? (layer.qty ?? 0) : pricingLengthM;
         const ratePerUnit = denom > 0 ? result.subtotalAED / denom : 0;
         return (
           <div className="flex justify-between text-[10px] mb-0.5">

@@ -58,6 +58,8 @@ import {
 	FileText,
 	MoreHorizontal,
 	Trash2,
+	Undo2,
+	Redo2,
 } from 'lucide-react';
 
 // ─── Space type config ────────────────────────────────────────────────────────
@@ -301,6 +303,33 @@ export default function ProjectDetail({ id }: { id: number }) {
 	const [addSpaceOpen, setAddSpaceOpen] = useState(false);
 	const [showSidePanel, setShowSidePanel] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
+	// Sidebar collapse state — persisted per-session so the layout survives
+	// navigating between projects. Keyed simply because this is per-user
+	// preference, not per-project design data.
+	const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState<boolean>(
+		() => {
+			if (typeof window === 'undefined') return false;
+			return window.localStorage.getItem('nivra:leftCollapsed') === '1';
+		},
+	);
+	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState<boolean>(
+		() => {
+			if (typeof window === 'undefined') return false;
+			return window.localStorage.getItem('nivra:rightCollapsed') === '1';
+		},
+	);
+	useEffect(() => {
+		window.localStorage.setItem(
+			'nivra:leftCollapsed',
+			leftSidebarCollapsed ? '1' : '0',
+		);
+	}, [leftSidebarCollapsed]);
+	useEffect(() => {
+		window.localStorage.setItem(
+			'nivra:rightCollapsed',
+			rightSidebarCollapsed ? '1' : '0',
+		);
+	}, [rightSidebarCollapsed]);
 	const [spaceNotes, setSpaceNotes] = useState('');
 	const [elementDefs, setElementDefs] = useState<ElementDef[]>([]);
 	const [activeElementDefId, setActiveElementDefId] = useState<number | null>(
@@ -672,7 +701,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 
 	const handleExport = useCallback(async () => {
 		try {
-			const { drawingState, selectedFinishing, layers } = canvasStore;
+			const { drawingState, selectedFinishing, layers, islands } = canvasStore;
 			const layoutImage = captureCanvasImage();
 			await exportToPDF(
 				drawingState.walls,
@@ -683,7 +712,8 @@ export default function ProjectDetail({ id }: { id: number }) {
 				currentProject?.clientPhone,
 				drawingState.openings,
 				layoutImage,
-				layers
+				layers,
+				islands
 			);
 			toast({ title: 'PDF exported successfully' });
 		} catch {
@@ -842,18 +872,6 @@ export default function ProjectDetail({ id }: { id: number }) {
 					canvasStore.setTool('wall');
 					setActiveCustomTool(null);
 					break;
-				case 'b':
-					canvasStore.setTool('base');
-					setActiveCustomTool(null);
-					break;
-				case 'u':
-					canvasStore.setTool('wall_cabinet');
-					setActiveCustomTool(null);
-					break;
-				case 't':
-					canvasStore.setTool('tall');
-					setActiveCustomTool(null);
-					break;
 				case 'r':
 					canvasStore.setTool('door');
 					setActiveCustomTool(null);
@@ -869,10 +887,6 @@ export default function ProjectDetail({ id }: { id: number }) {
 				case 'm':
 					canvasStore.setTool('select');
 					setActiveCustomTool('measure_tape');
-					break;
-				case 'i':
-					canvasStore.setTool('select');
-					setActiveCustomTool('island');
 					break;
 			}
 		};
@@ -968,6 +982,30 @@ export default function ProjectDetail({ id }: { id: number }) {
 						</Button>
 					)}
 
+					{/* Touch-only undo/redo — keyboard users have Ctrl+Z/Y already.
+					    Hidden on fine-pointer devices with `touch:` prefix +
+					    `hidden` default. */}
+					<Button
+						size="sm"
+						variant="ghost"
+						onClick={handleUndo}
+						disabled={!canvasStore.canUndo()}
+						className="hidden touch:inline-flex touch:h-11 touch:w-11"
+						title="Undo"
+					>
+						<Undo2 className="h-4 w-4 touch:h-5 touch:w-5" />
+					</Button>
+					<Button
+						size="sm"
+						variant="ghost"
+						onClick={handleRedo}
+						disabled={!canvasStore.canRedo()}
+						className="hidden touch:inline-flex touch:h-11 touch:w-11"
+						title="Redo"
+					>
+						<Redo2 className="h-4 w-4 touch:h-5 touch:w-5" />
+					</Button>
+
 					<Button
 						size="sm"
 						variant="ghost"
@@ -1000,7 +1038,10 @@ export default function ProjectDetail({ id }: { id: number }) {
 							{spaces.length > 1 && (
 								<button
 									onClick={() => handleDeleteSpace(space.id)}
-									className="absolute -top-1 -right-1 hidden group-hover:flex h-4 w-4 items-center justify-center rounded-full bg-red-100 text-red-500 hover:bg-red-200 text-xs"
+									// Always visible (previously hover-only, invisible on touch
+									// devices). Ghosted by default; opaque on focus/hover/tablets.
+									className="absolute -top-1 -right-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-red-100 text-red-500 hover:bg-red-200 text-xs opacity-40 hover:opacity-100 focus-visible:opacity-100 transition-opacity touch:opacity-100 touch:h-7 touch:w-7"
+									title="Remove space"
 								>
 									×
 								</button>
@@ -1019,8 +1060,32 @@ export default function ProjectDetail({ id }: { id: number }) {
 
 			{/* Main workspace */}
 			<div className="flex flex-1 overflow-hidden">
-				{/* Toolbar */}
-				<div className="w-[220px] shrink-0">
+				{/* Toolbar (left sidebar) — collapsible to a 48px rail on tablets
+				    so the canvas can use more horizontal space. */}
+				<div
+					className={`shrink-0 relative transition-[width] duration-200 ${
+						leftSidebarCollapsed ? 'w-[48px]' : 'w-[220px]'
+					}`}
+				>
+					{/* Collapse toggle — always visible on touch, subtle on desktop. */}
+					<button
+						type="button"
+						onClick={() => setLeftSidebarCollapsed((v) => !v)}
+						className="absolute top-1/2 -translate-y-1/2 right-[-12px] z-20 w-6 h-11 rounded-r-md bg-card border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground"
+						title={leftSidebarCollapsed ? 'Expand tools' : 'Collapse tools'}
+						aria-label={leftSidebarCollapsed ? 'Expand tools sidebar' : 'Collapse tools sidebar'}
+					>
+						<ChevronDown
+							className={`h-3.5 w-3.5 transition-transform ${
+								leftSidebarCollapsed ? '-rotate-90' : 'rotate-90'
+							}`}
+						/>
+					</button>
+					<div
+						className={
+							leftSidebarCollapsed ? 'pointer-events-none opacity-0' : 'h-full'
+						}
+					>
 					<Toolbar
 						activeTool={drawingState.tool}
 						onToolChange={(tool) => {
@@ -1064,6 +1129,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 						activeElementDefId={activeElementDefId}
 						onElementSelect={setActiveElementDefId}
 					/>
+					</div>
 				</div>
 
 				{/* Canvas */}
@@ -1125,13 +1191,38 @@ export default function ProjectDetail({ id }: { id: number }) {
 					}}
 				/>
 
-				{/* Layer panel (hidden for technicians) */}
+				{/* Layer panel (hidden for technicians) — collapsible to a rail */}
 				{canEditPricing && (
-					<div className="w-[280px] shrink-0">
-						<LayerPanel
-							cabinets={drawingState.cabinets}
-							walls={drawingState.walls}
-						/>
+					<div
+						className={`shrink-0 relative transition-[width] duration-200 ${
+							rightSidebarCollapsed ? 'w-[48px]' : 'w-[280px]'
+						}`}
+					>
+						<button
+							type="button"
+							onClick={() => setRightSidebarCollapsed((v) => !v)}
+							className="absolute top-1/2 -translate-y-1/2 left-[-12px] z-20 w-6 h-11 rounded-l-md bg-card border border-border shadow-sm flex items-center justify-center text-muted-foreground hover:text-foreground"
+							title={rightSidebarCollapsed ? 'Expand layers' : 'Collapse layers'}
+							aria-label={rightSidebarCollapsed ? 'Expand layers sidebar' : 'Collapse layers sidebar'}
+						>
+							<ChevronDown
+								className={`h-3.5 w-3.5 transition-transform ${
+									rightSidebarCollapsed ? 'rotate-90' : '-rotate-90'
+								}`}
+							/>
+						</button>
+						<div
+							className={
+								rightSidebarCollapsed
+									? 'pointer-events-none opacity-0'
+									: 'h-full'
+							}
+						>
+							<LayerPanel
+								cabinets={drawingState.cabinets}
+								walls={drawingState.walls}
+							/>
+						</div>
 					</div>
 				)}
 

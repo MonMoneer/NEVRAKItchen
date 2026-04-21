@@ -286,3 +286,51 @@
     inset: -1px;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tablet / touch foundations
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Safe-area inset vars fall back to 0 on non-notched devices */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/* Kill the 300ms tap delay on iOS Safari and remove double-tap zoom on chrome
+   UI; the Konva canvas container sets `touch-action: none` locally to capture
+   pinch/pan gestures itself. */
+html,
+body {
+  touch-action: manipulation;
+}
+
+/* Reusable touch-target utility: wrap any small icon button with this and the
+   tappable area grows to the 44×44 HIG minimum without changing the icon. */
+.touch-target {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* On primarily-touch devices, enforce the 44px floor on ANY button/anchor as
+   a safety net even if a component forgot to apply .touch-target. Uses coarse
+   pointer so hybrid setups (iPad + mouse) keep their desktop density. */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  a {
+    min-height: 44px;
+  }
+  button.icon-sm,
+  [role="button"].icon-sm {
+    /* Explicit opt-out for truly tiny UI (e.g. inline chips); components that
+       need smaller must declare `icon-sm` intentionally. */
+    min-height: revert;
+    min-width: revert;
+  }
+}
