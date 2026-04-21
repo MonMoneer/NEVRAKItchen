@@ -2039,3 +2039,117 @@ export function findIslandHit(p: Point, islands: Island[]): Island | null {
   }
   return null;
 }
+
+// ─── Wall chain drawing helpers (2026-04-21) ────────────────────────────────
+
+/** Axis-lock helper for wall chain drawing.
+ *  First segment: H or V based on dominant cursor delta from anchor.
+ *  Subsequent: perpendicular to the previous segment.
+ */
+export function getConstrainedEnd(
+  anchor: Point,
+  cursor: Point,
+  segments: Array<{ start: Point; end: Point }>,
+): Point {
+  if (segments.length === 0) {
+    const dx = cursor.x - anchor.x;
+    const dy = cursor.y - anchor.y;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      return { x: cursor.x, y: anchor.y }; // horizontal
+    }
+    return { x: anchor.x, y: cursor.y }; // vertical
+  }
+  const prev = segments[segments.length - 1];
+  const prevIsHorizontal = Math.abs(prev.end.y - prev.start.y) < 0.01;
+  if (prevIsHorizontal) {
+    return { x: anchor.x, y: cursor.y }; // must be vertical
+  }
+  return { x: cursor.x, y: anchor.y }; // must be horizontal
+}
+
+/** Bounding-box midpoint of a set of walls. Used to position the flip-interior button. */
+export function computeChainMidpoint(walls: Wall[]): Point {
+  if (walls.length === 0) return { x: 0, y: 0 };
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  for (const w of walls) {
+    minX = Math.min(minX, w.start.x, w.end.x);
+    maxX = Math.max(maxX, w.start.x, w.end.x);
+    minY = Math.min(minY, w.start.y, w.end.y);
+    maxY = Math.max(maxY, w.start.y, w.end.y);
+  }
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+/** Graph traversal: returns all closed wall cycles.
+ *  A cycle is a list of walls where each wall's endpoint meets the next wall's start
+ *  and the last wall's end meets the first wall's start (within tolerance).
+ */
+export function findAllClosedCycles(walls: Wall[]): Wall[][] {
+  const tol = 0.5;
+  const used = new Set<string>();
+  const cycles: Wall[][] = [];
+
+  for (const startWall of walls) {
+    if (used.has(startWall.id)) continue;
+
+    // Try to grow a cycle starting from this wall
+    const cycle: Wall[] = [startWall];
+    let currentEnd = startWall.end;
+    const cycleSet = new Set<string>([startWall.id]);
+
+    while (true) {
+      // Find a wall (not yet in this cycle) whose endpoint connects to currentEnd
+      const next = walls.find(
+        (w) =>
+          !cycleSet.has(w.id) &&
+          !used.has(w.id) &&
+          (distanceBetween(w.start, currentEnd) < tol ||
+            distanceBetween(w.end, currentEnd) < tol),
+      );
+      if (!next) break;
+
+      // Normalize so next.start aligns with currentEnd
+      const nextNormalized: Wall =
+        distanceBetween(next.start, currentEnd) < tol
+          ? next
+          : { ...next, start: next.end, end: next.start };
+
+      cycle.push(nextNormalized);
+      cycleSet.add(next.id);
+      currentEnd = nextNormalized.end;
+
+      // Check closure
+      if (distanceBetween(currentEnd, cycle[0].start) < tol && cycle.length >= 3) {
+        // Closed cycle found
+        for (const w of cycle) used.add(w.id);
+        cycles.push(cycle);
+        break;
+      }
+    }
+  }
+
+  return cycles;
+}
+
+/** Given a closed cycle of walls (already ordered head-to-tail), return the
+ *  ordered vertex list (polygon path). Returns null if the walls don't close.
+ */
+export function getClosedPolygonPath(cycleWalls: Wall[]): Point[] | null {
+  if (cycleWalls.length < 3) return null;
+  const tol = 0.5;
+  const vertices: Point[] = [];
+  vertices.push(cycleWalls[0].start);
+  for (const w of cycleWalls) {
+    vertices.push(w.end);
+  }
+  // Verify closure
+  if (distanceBetween(vertices[vertices.length - 1], vertices[0]) > tol) {
+    return null;
+  }
+  // Drop the duplicate closing vertex
+  vertices.pop();
+  return vertices;
+}
