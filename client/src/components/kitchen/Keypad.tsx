@@ -176,10 +176,24 @@ export function Keypad() {
 			const inputActive = focused && document.activeElement === focused;
 
 			if (key.kind === "clear") {
+				// Canvas-drawing path: synthesize one Backspace per character of
+				// the current expression so the canvas's wallTypedInput /
+				// islandTypedInput listener (DesignerCanvas.tsx:3041) clears in
+				// step with the keypad display. The local writeExpression call
+				// keeps the keypad's own display in sync regardless of focus.
+				if (!inputActive && current.length > 0) {
+					for (let i = 0; i < current.length; i++) {
+						dispatchKey(document.body, "Backspace");
+					}
+				}
 				writeExpression("");
 				return;
 			}
 			if (key.kind === "ce") {
+				// Single-char delete: mirrored to canvas via one Backspace.
+				if (!inputActive && current.length > 0) {
+					dispatchKey(document.body, "Backspace");
+				}
 				writeExpression(current.slice(0, -1));
 				return;
 			}
