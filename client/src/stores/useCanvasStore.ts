@@ -63,6 +63,14 @@ interface CanvasState {
   history: HistoryState<DesignData>;
   selectedFinishing: string;
   showReferenceOverlay: boolean;
+  /**
+   * Wall drawing input mode.
+   *  - "drag": traditional click-and-drag direction selection (desktop default)
+   *  - "cross": tap-anchor → tap one of 4 cardinal arrows → type length → "="
+   *    commits. Tablet-friendly. See DirectionalCross.tsx and the
+   *    lockedDirection state in DesignerCanvas for the implementation.
+   */
+  wallDrawMode: "drag" | "cross";
 
   // Computed
   canUndo: () => boolean;
@@ -92,6 +100,7 @@ interface CanvasState {
   clear: () => void;
   moveComplete: () => void;
   setSelectedFinishing: (id: string) => void;
+  setWallDrawMode: (mode: "drag" | "cross") => void;
   toggleReferenceOverlay: () => void;
   addLayer: (layer: Layer) => void;
   removeLayer: (id: string) => void;
@@ -151,6 +160,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [], islands: [] }),
   selectedFinishing: "1",
   showReferenceOverlay: false,
+  wallDrawMode:
+    typeof window !== "undefined"
+      ? ((localStorage.getItem("nivra.wallDrawMode") as "drag" | "cross" | null) ??
+        (window.matchMedia?.("(pointer: coarse)").matches ? "cross" : "drag"))
+      : "drag",
 
   canUndo: () => checkCanUndo(get().history),
   canRedo: () => checkCanRedo(get().history),
@@ -451,6 +465,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   setSelectedFinishing: (id) => set({ selectedFinishing: id }),
+  setWallDrawMode: (mode) => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("nivra.wallDrawMode", mode);
+      } catch {
+        // localStorage unavailable
+      }
+    }
+    set({ wallDrawMode: mode });
+  },
 
   toggleReferenceOverlay: () =>
     set((state) => ({ showReferenceOverlay: !state.showReferenceOverlay })),

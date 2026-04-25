@@ -92,10 +92,11 @@ const KEYS: KeyDef[] = [
 	{ label: "1", kind: "digit" },
 	{ label: "2", kind: "digit" },
 	{ label: "3", kind: "digit" },
-	{ label: "=", kind: "eq", rowSpan: 2, className: "bg-slate-800 hover:bg-slate-900 text-white" },
+	{ label: "=", kind: "eq", className: "bg-slate-800 hover:bg-slate-900 text-white" },
 	{ label: "%", send: "%", kind: "op", className: "bg-amber-50 hover:bg-amber-100 text-amber-700" },
 	{ label: "0", kind: "digit" },
 	{ label: ".", kind: "digit" },
+	{ label: "Esc", kind: "esc", className: "bg-red-600 hover:bg-red-700 text-white" },
 ];
 
 export function Keypad() {
@@ -274,28 +275,7 @@ export function Keypad() {
 				</div>
 			</div>
 
-			{/* Esc button — sits above the calculator grid because Escape is
-				not part of the calculator. Mirrors physical Esc on the canvas
-				(walks back drawing phase, clears typed input, etc.). */}
-			<button
-				type="button"
-				onMouseDown={(e) => {
-					// Don't steal focus from any active input
-					e.preventDefault();
-				}}
-				onClick={() =>
-					handleKey({
-						label: "Esc",
-						kind: "esc",
-					})
-				}
-				className="w-full h-9 rounded-md text-sm font-semibold select-none active:scale-95 transition-transform touch-manipulation bg-red-600 hover:bg-red-700 text-white"
-				data-testid="keypad-key-Esc"
-			>
-				Esc
-			</button>
-
-			{/* Button grid: 4 columns, 5 rows. = spans rows 4-5 in col 4. */}
+			{/* Button grid: 4 columns, 5 rows. Esc sits under = in col 4. */}
 			<div className="grid grid-cols-4 grid-rows-5 gap-1">
 				{KEYS.map((k, idx) => {
 					const baseStyle =

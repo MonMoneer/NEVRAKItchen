@@ -29,6 +29,8 @@ import {
 import { useState, useEffect } from "react";
 import type { DrawingState } from "@/lib/kitchen-engine";
 import { Keypad } from "./Keypad";
+import { useCanvasStore } from "@/stores/useCanvasStore";
+import { Move, Crosshair } from "lucide-react";
 
 // ── Accordion persistence ────────────────────────────────────────────────
 type AccordionKey = "basic" | "architecture" | "kitchen" | null;
@@ -170,6 +172,9 @@ export function Toolbar({
     onElementSelect?.(null);
     onToolChange(tool);
   };
+
+  const wallDrawMode = useCanvasStore((s) => s.wallDrawMode);
+  const setWallDrawMode = useCanvasStore((s) => s.setWallDrawMode);
 
   const handleCustomTool = (tool: CustomTool) => {
     if (activeCustomTool === tool) {
@@ -349,6 +354,46 @@ export function Toolbar({
           </TooltipTrigger>
           <TooltipContent side="right" className="text-xs">Draw Wall (W)</TooltipContent>
         </Tooltip>
+
+        {/* Wall input mode toggle: drag (desktop) ↔ cross (tablet) */}
+        {isToolActive("wall") && (
+          <div className="flex gap-1 px-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  data-testid="wall-mode-drag"
+                  onClick={() => setWallDrawMode("drag")}
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
+                    wallDrawMode === "drag"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-sidebar-foreground/70 hover:bg-accent"
+                  }`}
+                >
+                  <Move className="w-3 h-3" />
+                  Drag
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs">Drag to aim direction</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  data-testid="wall-mode-cross"
+                  onClick={() => setWallDrawMode("cross")}
+                  className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-medium transition-colors ${
+                    wallDrawMode === "cross"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-sidebar-foreground/70 hover:bg-accent"
+                  }`}
+                >
+                  <Crosshair className="w-3 h-3" />
+                  Arrows
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs">Tap arrow → length → = (tablet)</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
 
         {/* Door */}
         <Tooltip>

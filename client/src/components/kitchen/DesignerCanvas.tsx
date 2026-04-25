@@ -927,6 +927,7 @@ export function DesignerCanvas({
 	const setActiveLayerFromStore = useCanvasStore((s) => s.setActiveLayer);
 	const layersFromStore = useCanvasStore((s) => s.layers);
 	const showReferenceOverlay = useCanvasStore((s) => s.showReferenceOverlay);
+	const wallDrawMode = useCanvasStore((s) => s.wallDrawMode);
 	const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(null);
 	// Typed input for length/depth during island draw (null = not typing, mouse drag is live)
 	const [islandTypedInput, setIslandTypedInput] = useState<string | null>(null);
@@ -1019,6 +1020,18 @@ export function DesignerCanvas({
 	// current segment; on Enter we commit the segment at that length along the
 	// snapped direction from the chain anchor.
 	const [wallTypedInput, setWallTypedInput] = useState<string | null>(null);
+
+	// Tablet "directional cross" wall input. When the user is in cross mode
+	// (Toolbar toggle, store.wallDrawMode === "cross") and has tapped one of
+	// the 4 cardinal arrows after dropping the chain anchor, this records the
+	// chosen axis. On Enter (or "=" on the on-screen keypad) the commit logic
+	// builds a virtual cursor offset from the anchor in this direction so the
+	// existing getConstrainedEnd path produces the same axis-aligned segment
+	// as if the user had dragged in that direction. Reset to null after each
+	// segment commits so the user picks a fresh direction for the next leg.
+	const [lockedDirection, setLockedDirection] = useState<
+		"left" | "right" | "up" | "down" | null
+	>(null);
 
 	const [closedChainIds, setClosedChainIds] = useState<Set<string>>(new Set());
 	const lastWallClickRef = useRef<{ time: number; pos: Point } | null>(null);
@@ -3063,7 +3076,27 @@ export function DesignerCanvas({
 					// Direction = snapped end from cursor relative to anchor.
 					// This respects ortho snapping (H/V) and the rule that
 					// alternating segments must flip axis.
-					const cursor = cursorWorld ?? state.anchor;
+					// In cross mode (lockedDirection set), synthesize a virtual
+					// cursor far from the anchor along the chosen axis so
+					// getConstrainedEnd resolves to the locked direction.
+					const cursor = lockedDirection
+						? {
+								x:
+									state.anchor.x +
+									(lockedDirection === 'right'
+										? 1000
+										: lockedDirection === 'left'
+										? -1000
+										: 0),
+								y:
+									state.anchor.y +
+									(lockedDirection === 'down'
+										? 1000
+										: lockedDirection === 'up'
+										? -1000
+										: 0),
+						  }
+						: cursorWorld ?? state.anchor;
 					const snapped = getConstrainedEnd(
 						state.anchor,
 						cursor,
@@ -3098,14 +3131,20 @@ export function DesignerCanvas({
 						segments: newSegments,
 					});
 					setWallTypedInput(null);
+					setLockedDirection(null);
 					if (willAutoClose) {
 						setTimeout(() => commitChain(), 0);
 					}
 					e.preventDefault();
 					return;
 				}
-				// Escape: clear typed input first (if any), otherwise fall through
-				// to the chain-commit logic below.
+				// Escape: 3-tier — first clear lockedDirection (cross mode), then
+				// typed input, then fall through to chain-commit below.
+				if (e.key === 'Escape' && lockedDirection !== null) {
+					setLockedDirection(null);
+					e.preventDefault();
+					return;
+				}
 				if (e.key === 'Escape' && wallTypedInput !== null) {
 					setWallTypedInput(null);
 					e.preventDefault();
@@ -5589,6 +5628,102 @@ export function DesignerCanvas({
 											opacity={0.7}
 										/>
 									)}
+								</Group>
+							);
+						})()}
+					{/* Directional cross: tablet input mode for wall drawing.
+						4 cardinal arrows around the chain anchor. Tap one to
+						lock a direction; the preview line + typed length
+						commit (via "=" or Enter) produce that exact segment. */}
+					{wallDrawMode === 'cross' &&
+						wallChainState.phase === 'drawingSegment' &&
+						(() => {
+							const { anchor } = wallChainState;
+							const offset = 60 / scale;
+							const hit = 26 / scale;
+							const arrowR = 22 / scale;
+							const previewLen = Math.max(2000, 4000 / scale);
+							const dirs: Array<{
+								key: 'left' | 'right' | 'up' | 'down';
+								dx: number;
+								dy: number;
+								tri: number[];
+							}> = [
+								{ key: 'right', dx: 1, dy: 0, tri: [arrowR * 0.5, 0, -arrowR * 0.3, -arrowR * 0.4, -arrowR * 0.3, arrowR * 0.4] },
+								{ key: 'left', dx: -1, dy: 0, tri: [-arrowR * 0.5, 0, arrowR * 0.3, -arrowR * 0.4, arrowR * 0.3, arrowR * 0.4] },
+								{ key: 'down', dx: 0, dy: 1, tri: [0, arrowR * 0.5, -arrowR * 0.4, -arrowR * 0.3, arrowR * 0.4, -arrowR * 0.3] },
+								{ key: 'up', dx: 0, dy: -1, tri: [0, -arrowR * 0.5, -arrowR * 0.4, arrowR * 0.3, arrowR * 0.4, arrowR * 0.3] },
+							];
+							return (
+								<Group>
+									{lockedDirection &&
+										(() => {
+											const d = dirs.find((x) => x.key === lockedDirection)!;
+											return (
+												<Line
+													points={[
+														anchor.x,
+														anchor.y,
+														anchor.x + d.dx * previewLen,
+														anchor.y + d.dy * previewLen,
+													]}
+													stroke="#3B82F6"
+													strokeWidth={2 / scale}
+													dash={[10 / scale, 6 / scale]}
+													listening={false}
+												/>
+											);
+										})()}
+									{dirs.map((d) => {
+										const cx = anchor.x + d.dx * offset;
+										const cy = anchor.y + d.dy * offset;
+										const active = lockedDirection === d.key;
+										return (
+											<Group
+												key={d.key}
+												x={cx}
+												y={cy}
+												onMouseDown={(e) => {
+													e.cancelBubble = true;
+												}}
+												onTouchStart={(e) => {
+													e.cancelBubble = true;
+												}}
+												onClick={(e) => {
+													e.cancelBubble = true;
+													setLockedDirection(d.key);
+												}}
+												onTap={(e) => {
+													e.cancelBubble = true;
+													setLockedDirection(d.key);
+												}}
+											>
+												<Circle radius={hit} fill="rgba(0,0,0,0.001)" />
+												<Circle
+													radius={arrowR}
+													fill={active ? '#3B82F6' : '#FFFFFF'}
+													stroke={active ? '#1D4ED8' : '#3B82F6'}
+													strokeWidth={2 / scale}
+													shadowColor="rgba(0,0,0,0.2)"
+													shadowBlur={4 / scale}
+													shadowOffsetY={1 / scale}
+												/>
+												<Line
+													points={d.tri}
+													closed
+													fill={active ? '#FFFFFF' : '#3B82F6'}
+													listening={false}
+												/>
+											</Group>
+										);
+									})}
+									<Circle
+										x={anchor.x}
+										y={anchor.y}
+										radius={4 / scale}
+										fill="#3B82F6"
+										listening={false}
+									/>
 								</Group>
 							);
 						})()}
