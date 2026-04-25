@@ -15,21 +15,47 @@ function setNativeInputValue(el: HTMLInputElement, value: string): void {
 }
 
 /**
- * Simulates pressing Enter on an input so forms advance to next field.
- * Dispatches both keydown and keyup so React handlers listening on either fire.
+ * Map from a key character/name to (code, keyCode) so dispatched events look
+ * close enough to real ones for React handlers and the canvas-level
+ * document keydown listener.
  */
-function dispatchEnter(el: HTMLInputElement): void {
+function keyMeta(key: string): { code: string; keyCode: number } {
+	if (key === "Enter") return { code: "Enter", keyCode: 13 };
+	if (key === "Escape") return { code: "Escape", keyCode: 27 };
+	if (key === "Backspace") return { code: "Backspace", keyCode: 8 };
+	if (key === ".") return { code: "Period", keyCode: 190 };
+	if (/^[0-9]$/.test(key)) return { code: `Digit${key}`, keyCode: 48 + Number(key) };
+	return { code: key, keyCode: 0 };
+}
+
+/**
+ * Dispatches a synthetic key event sequence (keydown + keyup) on the given
+ * target so React handlers fire as if the user pressed a real key. Used to
+ * route on-screen keypad presses to either a focused <input> (form-input
+ * behavior) or document.body (canvas-drawing flow at DesignerCanvas.tsx
+ * which listens for keydown on document/window).
+ */
+function dispatchKey(target: EventTarget, key: string): void {
+	const { code, keyCode } = keyMeta(key);
 	const common = {
-		key: "Enter",
-		code: "Enter",
-		keyCode: 13,
-		which: 13,
+		key,
+		code,
+		keyCode,
+		which: keyCode,
 		bubbles: true,
 		cancelable: true,
 	};
-	el.dispatchEvent(new KeyboardEvent("keydown", common));
-	el.dispatchEvent(new KeyboardEvent("keypress", common));
-	el.dispatchEvent(new KeyboardEvent("keyup", common));
+	target.dispatchEvent(new KeyboardEvent("keydown", common));
+	if (key === "Enter") {
+		// keypress is legacy but some handlers still listen for it
+		target.dispatchEvent(new KeyboardEvent("keypress", common));
+	}
+	target.dispatchEvent(new KeyboardEvent("keyup", common));
+}
+
+/** Back-compat shim — preserves the old call site for Enter-on-input. */
+function dispatchEnter(el: HTMLInputElement): void {
+	dispatchKey(el, "Enter");
 }
 
 function isNumberInput(el: Element | null): el is HTMLInputElement {
@@ -44,7 +70,7 @@ function isNumberInput(el: Element | null): el is HTMLInputElement {
 type KeyDef = {
 	label: string;
 	send?: string; // character to append (if different from label)
-	kind: "digit" | "op" | "eq" | "clear" | "ce";
+	kind: "digit" | "op" | "eq" | "clear" | "ce" | "esc";
 	colSpan?: number;
 	rowSpan?: number;
 	className?: string;
@@ -145,6 +171,9 @@ export function Keypad() {
 	const handleKey = useCallback(
 		(key: KeyDef) => {
 			const current = activeExpression;
+			const focused = lastFocusedInputRef.current;
+			const inputActive = focused && document.activeElement === focused;
+
 			if (key.kind === "clear") {
 				writeExpression("");
 				return;
@@ -153,23 +182,42 @@ export function Keypad() {
 				writeExpression(current.slice(0, -1));
 				return;
 			}
+			if (key.kind === "esc") {
+				// Mirrors physical Escape. With a focused input, deliver Escape to
+				// it (panel-specific handlers may close/clear). Without one, deliver
+				// at document level so the canvas drawing flow's keydown listener
+				// (DesignerCanvas wallTypedInput / island phase walk-back) sees it.
+				if (inputActive) {
+					dispatchKey(focused, "Escape");
+				} else {
+					dispatchKey(document.body, "Escape");
+				}
+				// Always clear the keypad's own expression — Escape means "abandon".
+				writeExpression("");
+				return;
+			}
 			if (key.kind === "eq") {
 				if (current.length === 0) return;
 				const result = evaluateExpression(current);
 				if (result === null) return;
 				const formatted = formatResult(result);
-				// If focused input: write result + dispatch Enter to advance form.
-				// If an input was recently focused (scratchpad transfer case): same.
-				// Otherwise: store result in scratchpad for next focused input.
-				const el = lastFocusedInputRef.current;
-				if (el) {
-					setNativeInputValue(el, formatted);
+				if (inputActive) {
+					// Focused input path (existing behavior): write result + Enter.
+					setNativeInputValue(focused, formatted);
 					setMirroredValue(formatted);
 					setScratchpad("");
-					// Dispatch Enter so form handlers (e.g. IslandDimensionPanel) advance phase
-					dispatchEnter(el);
+					dispatchEnter(focused);
 				} else {
-					setScratchpad(formatted);
+					// Canvas-drawing path: the canvas reads digits via document
+					// keydown, so re-emit each digit of the evaluated result and
+					// then Enter. This makes `500-200` then `=` behave as if the
+					// user had typed `300<Enter>` on a physical keyboard.
+					for (const ch of formatted) {
+						if (/^[0-9.]$/.test(ch)) dispatchKey(document.body, ch);
+					}
+					dispatchKey(document.body, "Enter");
+					setScratchpad("");
+					setMirroredValue(null);
 				}
 				return;
 			}
@@ -197,6 +245,13 @@ export function Keypad() {
 				if (operand.includes(".")) return;
 			}
 			writeExpression(current + ch);
+			// Mirror digits/decimal at document level so the canvas's drawing
+			// keydown listener sees them. Operators stay keypad-local: the canvas
+			// only consumes pure-numeric typed input, and `=` resolves the
+			// expression via evaluateExpression above before re-emitting digits.
+			if (!inputActive && (key.kind === "digit" || ch === ".")) {
+				dispatchKey(document.body, ch);
+			}
 		},
 		[activeExpression, writeExpression]
 	);
@@ -218,6 +273,27 @@ export function Keypad() {
 					{liveResultText || "\u00A0"}
 				</div>
 			</div>
+
+			{/* Esc button — sits above the calculator grid because Escape is
+				not part of the calculator. Mirrors physical Esc on the canvas
+				(walks back drawing phase, clears typed input, etc.). */}
+			<button
+				type="button"
+				onMouseDown={(e) => {
+					// Don't steal focus from any active input
+					e.preventDefault();
+				}}
+				onClick={() =>
+					handleKey({
+						label: "Esc",
+						kind: "esc",
+					})
+				}
+				className="w-full h-9 rounded-md text-sm font-semibold select-none active:scale-95 transition-transform touch-manipulation bg-red-600 hover:bg-red-700 text-white"
+				data-testid="keypad-key-Esc"
+			>
+				Esc
+			</button>
 
 			{/* Button grid: 4 columns, 5 rows. = spans rows 4-5 in col 4. */}
 			<div className="grid grid-cols-4 grid-rows-5 gap-1">
