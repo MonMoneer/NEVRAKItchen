@@ -1,334 +1,646 @@
 import jsPDF from "jspdf";
-import { PDFDocument } from "pdf-lib";
 import type { Wall, Cabinet, Opening, Layer, Island } from "./kitchen-engine";
-import { pixelsToCm, OPENING_STYLES, computeEffectiveLengths } from "./kitchen-engine";
+import { pixelsToCm, computeEffectiveLengths } from "./kitchen-engine";
 import { calculateLayerPrice, type PricingLayer } from "./dream-home-pricing";
-import type { DreamHomeFinish, DreamHomePrice, TallHeight, PricingSettings } from "@shared/schema";
-import letterheadUrl from "@assets/NIVRA_LETTERHEAD_V1.1_(1)_1772051682721.pdf?url";
+import type {
+	DreamHomeFinish,
+	DreamHomePrice,
+	TallHeight,
+	PricingSettings,
+	SavedProject,
+	Space,
+} from "@shared/schema";
 
-const cabinetLabels: Record<string, string> = {
-  base: "Base Cabinet",
-  wall_cabinet: "Wall Cabinet",
-  tall: "Tall Cabinet",
-  island: "Island",
-  end_panel: "End Panel",
-  filler: "Filler",
-  drawer: "Drawer",
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface SpaceExportData {
+	space: Space;
+	walls: Wall[];
+	cabinets: Cabinet[];
+	openings: Opening[];
+	layers: Layer[];
+	islands: Island[];
+	canvasImage: string | undefined;
+}
+
+export interface ExportInput {
+	project: SavedProject;
+	spaces: SpaceExportData[];
+	notesText: string;
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// A4 landscape (mm)
+const PAGE_W = 297;
+const PAGE_H = 210;
+
+// NIVRA brand palette pulled from the Canva template
+const COLOR_BEIGE = [240, 235, 226] as const; // page accent boxes
+const COLOR_ORANGE = [217, 130, 90] as const; // NIVRA wordmark / accents
+const COLOR_DARK = [40, 40, 40] as const;
+const COLOR_MUTED = [120, 120, 120] as const;
+
+// Layer color swatches for the drawing-page legend
+const SWATCH_BASE = [...hexToRgb("#3B82F6")] as const;
+const SWATCH_WALL = [...hexToRgb("#22C55E")] as const;
+const SWATCH_TALL = [...hexToRgb("#A855F7")] as const;
+const SWATCH_ISLAND = [...hexToRgb("#F59E0B")] as const;
+
+const SECTION_LABELS: Record<string, string> = {
+	base: "Base Cabinet",
+	wall_cabinet: "Wall Cabinet",
+	tall: "Tall Cabinet",
+	island: "Island",
 };
 
-async function fetchSettings() {
-  const [settingsRes, finishesRes, pricesRes, tallRes, pricingSettingsRes] = await Promise.all([
-    fetch("/api/admin/settings"),
-    fetch("/api/dream-home/finishes"),
-    fetch("/api/dream-home/prices"),
-    fetch("/api/dream-home/tall-heights"),
-    fetch("/api/pricing-settings"),
-  ]);
-  return {
-    settings: await settingsRes.json(),
-    finishes: (await finishesRes.json()) as DreamHomeFinish[],
-    dreamHomePrices: (await pricesRes.json()) as DreamHomePrice[],
-    tallHeights: (await tallRes.json()) as TallHeight[],
-    pricingSettings: (await pricingSettingsRes.json()) as PricingSettings,
-  };
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function hexToRgb(hex: string): [number, number, number] {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return [r, g, b];
+	const r = parseInt(hex.slice(1, 3), 16);
+	const g = parseInt(hex.slice(3, 5), 16);
+	const b = parseInt(hex.slice(5, 7), 16);
+	return [r, g, b];
 }
 
-function generateQuoteNumber(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const seq = Math.floor(10000 + Math.random() * 90000);
-  return `NIVRA-${year}-${seq}`;
+async function fetchSettings() {
+	const [settingsRes, finishesRes, pricesRes, tallRes, pricingSettingsRes] =
+		await Promise.all([
+			fetch("/api/admin/settings"),
+			fetch("/api/dream-home/finishes"),
+			fetch("/api/dream-home/prices"),
+			fetch("/api/dream-home/tall-heights"),
+			fetch("/api/pricing-settings"),
+		]);
+	return {
+		settings: await settingsRes.json(),
+		finishes: (await finishesRes.json()) as DreamHomeFinish[],
+		dreamHomePrices: (await pricesRes.json()) as DreamHomePrice[],
+		tallHeights: (await tallRes.json()) as TallHeight[],
+		pricingSettings: (await pricingSettingsRes.json()) as PricingSettings,
+	};
 }
 
-export async function exportToPDF(
-  walls: Wall[],
-  cabinets: Cabinet[],
-  selectedFinishingId: string,
-  projectName?: string,
-  clientName?: string,
-  clientPhone?: string,
-  openings: Opening[] = [],
-  layoutImageDataUrl?: string,
-  layers: Layer[] = [],
-  islands: Island[] = [],
+function formatDateDDMMMYYYY(d: Date): string {
+	const day = String(d.getDate()).padStart(2, "0");
+	const month = d
+		.toLocaleString("en-GB", { month: "short" })
+		.toUpperCase();
+	const year = d.getFullYear();
+	return `${day} ${month} ${year}`;
+}
+
+function formatAED(n: number): string {
+	return `${Math.round(n).toLocaleString("en-US")} AED`;
+}
+
+// ── Pricing ───────────────────────────────────────────────────────────────────
+
+interface PricingCtx {
+	dreamHomePrices: DreamHomePrice[];
+	tallHeights: TallHeight[];
+	pricingSettings: PricingSettings;
+	finishes: DreamHomeFinish[];
+}
+
+/**
+ * Mirrors the loop in the legacy single-space exporter: prices each layer using
+ * the same logic the sidebar shows. Returns per-layer subtotals plus the total.
+ */
+function priceSpaceLayers(
+	layers: Layer[],
+	cabinets: Cabinet[],
+	walls: Wall[],
+	islands: Island[],
+	ctx: PricingCtx,
 ) {
-  const { finishes, dreamHomePrices, tallHeights, pricingSettings } = await fetchSettings();
-  void selectedFinishingId; // finish is now per-layer, project-level selection unused
-  const currency = "AED";
-  const quoteNo = generateQuoteNumber();
-  const dateStr = new Date().toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+	let total = 0;
+	const perLayer = new Map<string, number>();
 
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const pageWidth = 210;
-  const margin = 18;
-  const contentWidth = pageWidth - margin * 2;
+	for (const layer of layers) {
+		const isIsland = layer.type === "island";
+		const boundIsland = isIsland
+			? islands.find((i) => i.layerId === layer.id) ?? null
+			: null;
 
-  const topSafe = 30;
+		const layerCabinets = cabinets.filter(
+			(c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id),
+		);
+		const effLengths = computeEffectiveLengths(
+			layerCabinets,
+			walls,
+			layer.depth ?? undefined,
+		);
+		const cabinetsLengthM = layerCabinets.reduce((sum, c) => {
+			const effPx = effLengths.get(c.id) ?? 0;
+			return sum + pixelsToCm(effPx) / 100;
+		}, 0);
+		const lengthM = boundIsland ? boundIsland.lengthCm / 100 : cabinetsLengthM;
 
-  let y = topSafe;
+		const pricingLayerInput = boundIsland
+			? { ...layer, depth: boundIsland.depthCm, height: boundIsland.heightCm }
+			: layer;
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.setTextColor(37, 99, 235);
-  doc.text("QUOTATION", margin, y);
-  y += 10;
+		const result = calculateLayerPrice({
+			layer: pricingLayerInput as unknown as PricingLayer,
+			lengthM,
+			settings: ctx.pricingSettings,
+			dreamHomePrices: ctx.dreamHomePrices,
+			tallHeights: ctx.tallHeights,
+		});
+		const subtotal = result.error ? 0 : result.subtotalAED;
+		perLayer.set(layer.id, subtotal);
+		total += subtotal;
+	}
 
-  const infoFontSize = 8.5;
-  const infoLineHeight = 5;
+	return { total, perLayer };
+}
 
-  const col2X = margin + contentWidth * 0.55;
+// ── Static images for pages 2 & 3 ─────────────────────────────────────────────
 
-  const leftInfo: [string, string][] = [
-    ["Project:", projectName || "Kitchen Layout"],
-    ["Quote No:", quoteNo],
-    ["Date:", dateStr],
-  ];
+/**
+ * Pages 2 & 3 are user-provided full A4 landscape composites exported from
+ * Canva. We discover them via Vite's `import.meta.glob` so the export keeps
+ * working with placeholders until both files are dropped in.
+ *
+ * To activate the real images, drop the files into attached_assets/:
+ *   - NIVRA_about_page.png   (page 2 — About Us)
+ *   - NIVRA_history_page.png (page 3 — History)
+ * The build picks them up automatically; no code change required.
+ */
+const staticPageModules = import.meta.glob<{ default: string }>(
+	"../../../attached_assets/NIVRA_about_page.*",
+	{ eager: false, query: "?url", import: "default" },
+);
+const staticHistoryModules = import.meta.glob<{ default: string }>(
+	"../../../attached_assets/NIVRA_history_page.*",
+	{ eager: false, query: "?url", import: "default" },
+);
 
-  const rightInfo: [string, string][] = [];
-  if (clientName) rightInfo.push(["Client:", clientName]);
-  if (clientPhone) rightInfo.push(["Phone:", clientPhone]);
+async function tryLoadAssetUrl(
+	modules: Record<string, () => Promise<unknown>>,
+): Promise<string | null> {
+	const keys = Object.keys(modules);
+	if (keys.length === 0) return null;
+	try {
+		const url = (await modules[keys[0]]()) as unknown as string;
+		const res = await fetch(url);
+		if (!res.ok) return null;
+		const blob = await res.blob();
+		return await new Promise((resolve) => {
+			const reader = new FileReader();
+			reader.onloadend = () => resolve(reader.result as string);
+			reader.readAsDataURL(blob);
+		});
+	} catch {
+		return null;
+	}
+}
 
-  const maxLines = Math.max(leftInfo.length, rightInfo.length);
-  for (let i = 0; i < maxLines; i++) {
-    if (i < leftInfo.length) {
-      const [label, value] = leftInfo[i];
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(infoFontSize);
-      doc.setTextColor(100, 100, 100);
-      doc.text(label, margin, y);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(40, 40, 40);
-      doc.text(value, margin + 22, y);
-    }
-    if (i < rightInfo.length) {
-      const [label, value] = rightInfo[i];
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(infoFontSize);
-      doc.setTextColor(100, 100, 100);
-      doc.text(label, col2X, y);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(40, 40, 40);
-      doc.text(value, col2X + 18, y);
-    }
-    y += infoLineHeight;
-  }
+// ── Builder ───────────────────────────────────────────────────────────────────
 
-  y += 3;
-  doc.setDrawColor(200, 200, 200);
-  doc.line(margin, y, pageWidth - margin, y);
-  y += 6;
+class NivraPdfBuilder {
+	private doc: jsPDF;
+	private pageNo = 0;
 
-  if (layoutImageDataUrl) {
-    const viewW = contentWidth;
-    const viewH = 145;
+	constructor() {
+		this.doc = new jsPDF({
+			orientation: "landscape",
+			unit: "mm",
+			format: "a4",
+		});
+	}
 
-    const img = new Image();
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = reject;
-      img.src = layoutImageDataUrl;
-    });
+	/** First page is auto-created by jsPDF; subsequent pages need `addPage`. */
+	private newPage() {
+		if (this.pageNo > 0) this.doc.addPage();
+		this.pageNo += 1;
+	}
 
-    const imgAspect = img.width / img.height;
-    const boxAspect = viewW / viewH;
-    let drawW: number, drawH: number;
-    if (imgAspect > boxAspect) {
-      drawW = viewW;
-      drawH = viewW / imgAspect;
-    } else {
-      drawH = viewH;
-      drawW = viewH * imgAspect;
-    }
+	private drawFooter() {
+		// Bottom-right NIVRA wordmark + page number
+		const x = PAGE_W - 20;
+		const y = PAGE_H - 10;
+		this.doc.setFont("helvetica", "bold");
+		this.doc.setFontSize(11);
+		this.doc.setTextColor(...COLOR_ORANGE);
+		this.doc.text("NIVRA", x, y, { align: "right" });
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(8);
+		this.doc.setTextColor(...COLOR_MUTED);
+		this.doc.text(String(this.pageNo).padStart(2, "0"), PAGE_W - 8, y, {
+			align: "right",
+		});
+	}
 
-    const imgX = margin + (viewW - drawW) / 2;
-    const imgY = y + (viewH - drawH) / 2;
+	private drawWordmarkTopLeft() {
+		this.doc.setFont("helvetica", "bold");
+		this.doc.setFontSize(20);
+		this.doc.setTextColor(...COLOR_ORANGE);
+		this.doc.text("NIVRA", 18, 22);
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(7);
+		this.doc.setTextColor(...COLOR_MUTED);
+		this.doc.text("THE ART OF LIVING", 18, 27);
+	}
 
-    doc.addImage(layoutImageDataUrl, "PNG", imgX, imgY, drawW, drawH);
+	// ── Cover (page 1) ────────────────────────────────────────────────────────
+	addCoverPage(project: SavedProject) {
+		this.newPage();
+		this.drawWordmarkTopLeft();
 
-    y += viewH + 4;
-  }
+		// Big "Kitchen Estimation" title (right side)
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(38);
+		this.doc.setTextColor(...COLOR_DARK);
+		this.doc.text("Kitchen Estimation", PAGE_W - 18, 80, { align: "right" });
 
-  doc.setFontSize(7);
-  const legendY = y;
-  const legendItems: { label: string; color: number[] }[] = [
-    { label: "Wall", color: [55, 65, 81] },
-    { label: "Base Cabinet", color: [...hexToRgb("#3B82F6")] },
-    { label: "Wall Cabinet", color: [...hexToRgb("#22C55E")] },
-    { label: "Tall Cabinet", color: [...hexToRgb("#A855F7")] },
-  ];
-  if (openings.some((o) => o.type === "door")) {
-    legendItems.push({ label: "Door", color: [...hexToRgb(OPENING_STYLES.door.stroke)] });
-  }
-  if (openings.some((o) => o.type === "window")) {
-    legendItems.push({ label: "Window", color: [...hexToRgb(OPENING_STYLES.window.stroke)] });
-  }
-  let lx = margin;
-  legendItems.forEach((item) => {
-    const c = item.color;
-    doc.setFillColor(c[0], c[1], c[2]);
-    doc.rect(lx, legendY - 2, 3, 3, "F");
-    doc.setTextColor(80, 80, 80);
-    doc.text(item.label, lx + 5, legendY);
-    lx += 33;
-  });
-  y += 8;
+		// Info card (beige background)
+		const cardX = 165;
+		const cardY = 92;
+		const cardW = 114;
+		const cardH = 70;
+		this.doc.setFillColor(...COLOR_BEIGE);
+		this.doc.rect(cardX, cardY, cardW, cardH, "F");
 
-  doc.setDrawColor(200, 200, 200);
-  doc.line(margin, y, pageWidth - margin, y);
-  y += 6;
+		const clientName = project.clientName || "—";
+		const location = project.address || "—";
+		const date = formatDateDDMMMYYYY(new Date());
+		const mob = project.clientPhone || "—";
 
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(30, 30, 30);
-  doc.text("Cost Estimation", margin, y);
-  y += 6;
+		// CLIENT (underlined label) — top of card
+		let y = cardY + 12;
+		this.doc.setFont("helvetica", "bold");
+		this.doc.setFontSize(11);
+		this.doc.setTextColor(...COLOR_DARK);
+		this.doc.text("CLIENT:", cardX + 6, y);
+		const clientLabelW = this.doc.getTextWidth("CLIENT:");
+		this.doc.setLineWidth(0.3);
+		this.doc.setDrawColor(...COLOR_DARK);
+		this.doc.line(cardX + 6, y + 0.8, cardX + 6 + clientLabelW, y + 0.8);
+		this.doc.setFont("helvetica", "normal");
+		this.doc.text(clientName, cardX + 6 + clientLabelW + 2, y);
 
-  const colX = [margin, margin + contentWidth * 0.25, margin + contentWidth * 0.45, margin + contentWidth * 0.65, margin + contentWidth * 0.82];
-  const headers = ["Layer", "Qty", "Depth×Height", "Finish", "Subtotal"];
+		// Separator line under client
+		this.doc.setDrawColor(180, 180, 180);
+		this.doc.setLineWidth(0.2);
+		this.doc.line(cardX + 6, y + 4, cardX + cardW - 6, y + 4);
 
-  doc.setFillColor(242, 242, 247);
-  doc.rect(margin, y - 3.5, contentWidth, 6, "F");
+		// Other fields
+		const fields: [string, string][] = [
+			["LOCATION:", location],
+			["DATE:", date],
+			["MOB.:", mob],
+		];
 
-  doc.setFontSize(7);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(100, 100, 100);
-  headers.forEach((h, i) => doc.text(h, colX[i], y));
-  y += 5;
+		y += 12;
+		this.doc.setFontSize(10);
+		for (const [label, value] of fields) {
+			this.doc.setFont("helvetica", "bold");
+			this.doc.setTextColor(...COLOR_DARK);
+			this.doc.text(label, cardX + 6, y);
+			const labelW = this.doc.getTextWidth(label);
+			this.doc.line(cardX + 6, y + 0.8, cardX + 6 + labelW, y + 0.8);
+			this.doc.setFont("helvetica", "normal");
+			this.doc.text(value, cardX + 6 + labelW + 2, y);
+			y += 8;
+		}
 
-  doc.setFont("helvetica", "normal");
-  doc.setTextColor(50, 50, 50);
+		// Footer URL
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(8);
+		this.doc.setTextColor(...COLOR_MUTED);
+		this.doc.text("http://www.nivra.ae", PAGE_W - 18, PAGE_H - 10, {
+			align: "right",
+		});
+	}
 
-  let total = 0;
+	// ── Static image page (pages 2 & 3) ───────────────────────────────────────
+	addStaticImagePage(dataUrl: string) {
+		this.newPage();
+		this.doc.addImage(dataUrl, "PNG", 0, 0, PAGE_W, PAGE_H);
+	}
 
-  for (let idx = 0; idx < layers.length; idx++) {
-    const layer = layers[idx];
-    const isCountType = layer.type === "end_panel" || layer.type === "filler" || layer.type === "drawer";
-    const isIsland = layer.type === "island";
+	addPlaceholderPage(title: string, body: string) {
+		this.newPage();
+		this.drawWordmarkTopLeft();
+		this.doc.setFont("helvetica", "bold");
+		this.doc.setFontSize(28);
+		this.doc.setTextColor(...COLOR_DARK);
+		this.doc.text(title, 30, 70);
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(10);
+		this.doc.setTextColor(...COLOR_MUTED);
+		const wrapped = this.doc.splitTextToSize(body, 230);
+		this.doc.text(wrapped, 30, 90);
+		this.doc.setFontSize(8);
+		this.doc.setTextColor(200, 100, 100);
+		this.doc.text(
+			"Placeholder — replace with Canva export at attached_assets/",
+			30,
+			PAGE_H - 18,
+		);
+		this.drawFooter();
+	}
 
-    // Islands live in a separate `islands` array, not as cabinets. Look up
-    // the one bound to this layer (if any) — mirrors LayerPanel.tsx so the
-    // PDF shows the same length / depth / height / pricing the user sees
-    // in the sidebar.
-    const boundIsland = isIsland
-      ? islands.find((i) => i.layerId === layer.id) ?? null
-      : null;
+	// ── Drawing page (one per space) ──────────────────────────────────────────
+	addSpaceDrawingPage(s: SpaceExportData) {
+		this.newPage();
 
-    const layerCabinets = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
-    const effLengths = computeEffectiveLengths(layerCabinets, walls, layer.depth ?? undefined);
-    const cabinetsLengthM = layerCabinets.reduce((sum, c) => {
-      const effPx = effLengths.get(c.id) ?? 0;
-      return sum + pixelsToCm(effPx) / 100;
-    }, 0);
-    const lengthM = boundIsland ? boundIsland.lengthCm / 100 : cabinetsLengthM;
-    const effectiveDepth = boundIsland
-      ? boundIsland.depthCm
-      : isIsland && layerCabinets.length > 0
-        ? pixelsToCm(layerCabinets[0].depth)
-        : (layer.depth ?? 0);
+		// "PLAN" heading (bottom-left, lowercase italic-ish like template)
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(20);
+		this.doc.setTextColor(...COLOR_MUTED);
+		this.doc.text("PLAN", 18, PAGE_H - 14);
+		this.doc.setDrawColor(...COLOR_MUTED);
+		this.doc.setLineWidth(0.3);
+		this.doc.line(18, PAGE_H - 11, 60, PAGE_H - 11);
 
-    // For islands, feed pricing the island's own depth/height (mirrors
-    // LayerPanel.tsx:229-232) — the Layer record itself may not have depth
-    // set when an island was drawn freehand.
-    const pricingLayerInput = boundIsland
-      ? { ...layer, depth: boundIsland.depthCm, height: boundIsland.heightCm }
-      : layer;
+		// Legend (left column)
+		const legendX = 22;
+		let ly = 50;
+		this.doc.setFontSize(13);
+		this.doc.setTextColor(...COLOR_DARK);
 
-    const result = calculateLayerPrice({
-      layer: pricingLayerInput as unknown as PricingLayer,
-      lengthM,
-      settings: pricingSettings,
-      dreamHomePrices,
-      tallHeights,
-    });
-    const subtotal = result.error ? 0 : result.subtotalAED;
-    total += subtotal;
+		const types = new Set(s.layers.map((l) => l.type));
+		const legendRows: { color: readonly [number, number, number]; label: string }[] = [];
+		if (types.has("base")) legendRows.push({ color: SWATCH_BASE, label: "Base Cabinet" });
+		if (types.has("wall_cabinet"))
+			legendRows.push({ color: SWATCH_WALL, label: "WallCabinet" });
+		if (types.has("tall")) legendRows.push({ color: SWATCH_TALL, label: "TallCabinet" });
+		if (types.has("island")) legendRows.push({ color: SWATCH_ISLAND, label: "Island" });
 
-    const layerFinish = finishes.find((f) => f.id === layer.finishId);
+		for (const row of legendRows) {
+			this.doc.setFillColor(row.color[0], row.color[1], row.color[2]);
+			this.doc.setDrawColor(row.color[0], row.color[1], row.color[2]);
+			this.doc.roundedRect(legendX, ly - 5, 10, 8, 1.5, 1.5, "FD");
+			this.doc.setFont("helvetica", "normal");
+			this.doc.setFontSize(14);
+			this.doc.setTextColor(...COLOR_DARK);
+			this.doc.text(row.label, legendX + 14, ly);
+			ly += 14;
+		}
 
-    if (idx % 2 === 1) {
-      doc.setFillColor(250, 250, 252);
-      doc.rect(margin, y - 3.5, contentWidth, 5.5, "F");
-    }
+		// Drawing area (right of legend)
+		const drawX = 90;
+		const drawY = 25;
+		const drawW = 190;
+		const drawH = 150;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(50, 50, 50);
+		if (s.canvasImage) {
+			// Fit image inside the box preserving aspect ratio
+			// We need actual pixel dims to compute aspect — load via Image element.
+			// jsPDF's addImage accepts dataURL and will use given mm box; we want
+			// to letter-box it so the canvas isn't distorted.
+			this.fitImageInto(s.canvasImage, drawX, drawY, drawW, drawH);
+		} else {
+			this.doc.setDrawColor(200, 200, 200);
+			this.doc.setLineDashPattern([2, 2], 0);
+			this.doc.rect(drawX, drawY, drawW, drawH);
+			this.doc.setLineDashPattern([], 0);
+			this.doc.setFont("helvetica", "normal");
+			this.doc.setFontSize(11);
+			this.doc.setTextColor(...COLOR_MUTED);
+			this.doc.text(
+				`No drawing yet for ${s.space.name}`,
+				drawX + drawW / 2,
+				drawY + drawH / 2,
+				{ align: "center" },
+			);
+		}
 
-    const heightCm = boundIsland ? boundIsland.heightCm : (layer.height ?? 0);
-    doc.text(cabinetLabels[layer.type] || layer.type, colX[0], y);
-    doc.text(isCountType ? `${layer.qty ?? 0} pcs` : `${lengthM.toFixed(2)} m`, colX[1], y);
-    doc.text(`${effectiveDepth}×${heightCm} cm`, colX[2], y);
-    doc.text(layerFinish?.name ?? "—", colX[3], y);
+		this.drawFooter();
+	}
 
-    doc.setFont("helvetica", "bold");
-    doc.text(`${subtotal.toFixed(0)} ${currency}`, colX[4], y);
-    y += 5.5;
-  }
+	private fitImageInto(
+		dataUrl: string,
+		x: number,
+		y: number,
+		w: number,
+		h: number,
+	) {
+		// Pull pixel dims from the dataURL header so we can preserve aspect ratio.
+		// Synchronous-ish via Image() — but addImage itself accepts dimensions, so
+		// we just need a quick measurement. jsPDF lets us pass undefined for one
+		// axis but to letterbox cleanly we measure first.
+		try {
+			const img = new (window as any).Image();
+			img.src = dataUrl;
+			// Decoded synchronously for already-loaded dataURLs in modern browsers;
+			// when not, naturalWidth/Height are 0 and we fall back to filling the box.
+			const iw = img.naturalWidth || img.width;
+			const ih = img.naturalHeight || img.height;
+			if (iw > 0 && ih > 0) {
+				const boxAspect = w / h;
+				const imgAspect = iw / ih;
+				let dw: number;
+				let dh: number;
+				if (imgAspect > boxAspect) {
+					dw = w;
+					dh = w / imgAspect;
+				} else {
+					dh = h;
+					dw = h * imgAspect;
+				}
+				const dx = x + (w - dw) / 2;
+				const dy = y + (h - dh) / 2;
+				this.doc.addImage(dataUrl, "PNG", dx, dy, dw, dh);
+				return;
+			}
+		} catch {
+			// fall through
+		}
+		this.doc.addImage(dataUrl, "PNG", x, y, w, h);
+	}
 
-  if (layers.length === 0) {
-    doc.setTextColor(150, 150, 150);
-    doc.text("No layers configured", margin, y);
-    y += 5;
-  }
+	// ── Items page (one per space) ────────────────────────────────────────────
+	addSpaceItemsPage(
+		s: SpaceExportData,
+		notesText: string,
+		ctx: PricingCtx,
+	) {
+		this.newPage();
 
-  y += 2;
-  doc.setDrawColor(37, 99, 235);
-  doc.setLineWidth(0.5);
-  doc.line(margin, y, pageWidth - margin, y);
-  y += 6;
+		const { total } = priceSpaceLayers(
+			s.layers,
+			s.cabinets,
+			s.walls,
+			s.islands,
+			ctx,
+		);
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(30, 30, 30);
-  doc.text("Total Estimated Price:", margin, y);
+		// Left column: items grouped by type
+		const colX = 30;
+		let y = 36;
 
-  doc.setFontSize(12);
-  doc.setTextColor(37, 99, 235);
-  const totalText = `${total.toFixed(0)} ${currency}`;
-  doc.text(totalText, pageWidth - margin, y, { align: "right" });
+		// Build groups
+		const groups: Record<"base" | "wall_cabinet" | "tall" | "island", Layer[]> = {
+			base: [],
+			wall_cabinet: [],
+			tall: [],
+			island: [],
+		};
+		for (const layer of s.layers) {
+			if (layer.type in groups) {
+				groups[layer.type as keyof typeof groups].push(layer);
+			}
+		}
 
-  const contentPdfBytes = doc.output("arraybuffer");
+		const sectionOrder: (keyof typeof groups)[] = [
+			"base",
+			"wall_cabinet",
+			"tall",
+			"island",
+		];
 
-  const letterheadBytes = await fetch(letterheadUrl).then(r => r.arrayBuffer());
-  const letterheadDoc = await PDFDocument.load(letterheadBytes);
-  const contentDoc = await PDFDocument.load(contentPdfBytes);
+		// Count drawer layers for "Including N drawers" note on base
+		const drawerCount = s.layers
+			.filter((l) => l.type === "drawer")
+			.reduce((sum, l) => sum + (l.qty ?? 0), 0);
 
-  const outputDoc = await PDFDocument.create();
+		for (const key of sectionOrder) {
+			const layersInGroup = groups[key];
+			if (layersInGroup.length === 0) continue;
 
-  const [letterheadEmbed] = await outputDoc.embedPages(letterheadDoc.getPages());
-  const [contentEmbed] = await outputDoc.embedPages(contentDoc.getPages());
+			// Section heading
+			this.doc.setFont("helvetica", "normal");
+			this.doc.setFontSize(18);
+			this.doc.setTextColor(...COLOR_DARK);
+			this.doc.text(SECTION_LABELS[key], colX, y);
+			y += 7;
 
-  const a4Width = 595.28;
-  const a4Height = 841.89;
+			// De-duplicate spec lines across layers in this group
+			const seen = new Set<string>();
+			this.doc.setFont("helvetica", "italic");
+			this.doc.setFontSize(10);
+			this.doc.setTextColor(60, 60, 60);
 
-  const page = outputDoc.addPage([a4Width, a4Height]);
+			for (const layer of layersInGroup) {
+				const depth = layer.depth ?? 0;
+				const height = layer.height ?? 0;
+				const finish = ctx.finishes.find((f) => f.id === layer.finishId);
+				const finishName = finish?.name || "—";
+				const sig = `${depth}|${height}|${finishName}`;
+				if (seen.has(sig)) continue;
+				seen.add(sig);
 
-  page.drawPage(letterheadEmbed, { x: 0, y: 0, width: a4Width, height: a4Height });
-  page.drawPage(contentEmbed, { x: 0, y: 0, width: a4Width, height: a4Height });
+				this.doc.text(
+					`-Depth ${depth} × Height ${height} cm`,
+					colX + 8,
+					y,
+				);
+				y += 5;
+				// Skirting note for base / tall / island (matches template)
+				if (key === "base" || key === "tall" || key === "island") {
+					this.doc.text("+10cm skirting", colX + 8, y);
+					y += 5;
+				}
+				this.doc.text(`-${finishName}`, colX + 8, y);
+				y += 5;
+				if (key === "base" && drawerCount > 0 && seen.size === 1) {
+					this.doc.text(`-Including ${drawerCount} drawers`, colX + 8, y);
+					y += 5;
+				}
+			}
+			y += 4;
+		}
 
-  const pdfBytes = await outputDoc.save();
-  const blob = new Blob([pdfBytes], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
+		// TOTAL (bottom-left)
+		const totalY = PAGE_H - 32;
+		this.doc.setFont("helvetica", "bold");
+		this.doc.setFontSize(16);
+		this.doc.setTextColor(...COLOR_DARK);
+		this.doc.text(`TOTAL:  ${formatAED(total)}`, colX + 30, totalY);
 
-  const a = document.createElement("a");
-  a.href = url;
-  const filename = projectName
-    ? `NIVRA-${projectName.replace(/\s+/g, "-")}.pdf`
-    : "NIVRA-Kitchen-Layout.pdf";
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+		// "Kitchen Estimation" tab bottom-left (matches template)
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(14);
+		this.doc.setTextColor(...COLOR_MUTED);
+		this.doc.text("Kitchen Estimation", 18, PAGE_H - 14);
+		this.doc.setDrawColor(...COLOR_MUTED);
+		this.doc.setLineWidth(0.3);
+		this.doc.line(18, PAGE_H - 11, 70, PAGE_H - 11);
+
+		// Right column: note box + signature
+		const noteX = 180;
+		let ny = 60;
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(13);
+		this.doc.setTextColor(...COLOR_DARK);
+		this.doc.text("note:", noteX, ny);
+		ny += 6;
+
+		this.doc.setFont("helvetica", "italic");
+		this.doc.setFontSize(10);
+		this.doc.setTextColor(60, 60, 60);
+		const wrapped = this.doc.splitTextToSize(notesText, 90);
+		this.doc.text(wrapped, noteX, ny);
+		ny += wrapped.length * 5 + 30;
+
+		this.doc.setFont("helvetica", "normal");
+		this.doc.setFontSize(13);
+		this.doc.setTextColor(...COLOR_DARK);
+		this.doc.text(
+			"Signature: .............................................",
+			noteX,
+			ny,
+		);
+
+		this.drawFooter();
+	}
+
+	finalize(filename: string) {
+		this.doc.save(filename);
+	}
+}
+
+// ── Public entry ──────────────────────────────────────────────────────────────
+
+export async function exportToPDF(input: ExportInput): Promise<void> {
+	const { finishes, dreamHomePrices, tallHeights, pricingSettings } =
+		await fetchSettings();
+	const pricingCtx: PricingCtx = {
+		finishes,
+		dreamHomePrices,
+		tallHeights,
+		pricingSettings,
+	};
+
+	const builder = new NivraPdfBuilder();
+
+	// Page 1 — Cover
+	builder.addCoverPage(input.project);
+
+	// Pages 2 & 3 — static composites (Canva). Falls back to placeholders until
+	// the user drops the real images into attached_assets/.
+	const aboutUrl = await tryLoadAssetUrl(staticPageModules);
+	if (aboutUrl) {
+		builder.addStaticImagePage(aboutUrl);
+	} else {
+		builder.addPlaceholderPage(
+			"BUILT ONCE — LASTS FOREVER",
+			"Replace this page by exporting the full A4-landscape \"About Us\" page from Canva and saving it as attached_assets/NIVRA_about_page.png. The image will then appear here full-bleed on every export.",
+		);
+	}
+
+	const historyUrl = await tryLoadAssetUrl(staticHistoryModules);
+	if (historyUrl) {
+		builder.addStaticImagePage(historyUrl);
+	} else {
+		builder.addPlaceholderPage(
+			"HISTORY OF NIVRA",
+			"Replace this page by exporting the full A4-landscape \"History\" page from Canva and saving it as attached_assets/NIVRA_history_page.png. The image will then appear here full-bleed on every export.",
+		);
+	}
+
+	// Drawing + items pages, interleaved per space
+	for (const s of input.spaces) {
+		builder.addSpaceDrawingPage(s);
+		builder.addSpaceItemsPage(s, input.notesText, pricingCtx);
+	}
+
+	const safeName = (input.project.name || input.project.clientName || "Estimation")
+		.trim()
+		.replace(/\s+/g, "-");
+	builder.finalize(`NIVRA-${safeName}.pdf`);
 }

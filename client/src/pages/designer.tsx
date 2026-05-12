@@ -286,7 +286,48 @@ export default function Designer() {
   const handleExport = useCallback(async () => {
     try {
       const layoutImage = captureCanvasImage();
-      await exportToPDF(drawingState.walls, drawingState.cabinets, selectedFinishing, currentProjectName || undefined, currentClientName || undefined, currentClientPhone || undefined, drawingState.openings, layoutImage, []);
+      const now = new Date();
+      await exportToPDF({
+        project: {
+          id: 0,
+          name: currentProjectName || "Kitchen Layout",
+          clientName: currentClientName || "",
+          clientEmail: "",
+          clientPhone: currentClientPhone || "",
+          address: "",
+          stage: "estimated_price",
+          notes: "",
+          projectData: null,
+          createdAt: now,
+          updatedAt: now,
+        } as any,
+        spaces: [
+          {
+            space: {
+              id: 0,
+              projectId: 0,
+              name: currentProjectName || "Kitchen",
+              type: "kitchen",
+              sortOrder: 0,
+              canvasData: null,
+              siteMeasurementData: null,
+              referenceImage: null,
+              finishing: selectedFinishing,
+              notes: "",
+              createdAt: now,
+              updatedAt: now,
+            } as any,
+            walls: drawingState.walls,
+            cabinets: drawingState.cabinets,
+            openings: drawingState.openings,
+            layers: [],
+            islands: [],
+            canvasImage: layoutImage,
+          },
+        ],
+        notesText:
+          "All prices provided are estimated and may vary by\napproximately 10–20% based on final measurements\nand material selection. Appliances and accessories\nare not included.",
+      });
       toast({ title: "PDF exported successfully" });
     } catch {
       toast({ title: "Export failed", variant: "destructive" });

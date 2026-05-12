@@ -30,7 +30,8 @@ import {
 	cmToPixels,
 	WALL_THICKNESS,
 } from '@/lib/kitchen-engine';
-import { exportToPDF } from '@/lib/export';
+import { exportToPDF, type SpaceExportData } from '@/lib/export';
+import { ExportNotesDialog } from '@/components/ExportNotesDialog';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -340,6 +341,8 @@ export default function ProjectDetail({ id }: { id: number }) {
 		open: boolean;
 		targetStage: 'estimated_price' | 'site_measurement';
 	}>({ open: false, targetStage: 'estimated_price' });
+	const [exportDialogOpen, setExportDialogOpen] = useState(false);
+	const [isExporting, setIsExporting] = useState(false);
 	const konvaStageRef = useRef<Konva.Stage | null>(null);
 	const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -699,27 +702,90 @@ export default function ProjectDetail({ id }: { id: number }) {
 
 	// ── Export ─────────────────────────────────────────────────────────────────
 
-	const handleExport = useCallback(async () => {
-		try {
-			const { drawingState, selectedFinishing, layers, islands } = canvasStore;
-			const layoutImage = captureCanvasImage();
-			await exportToPDF(
-				drawingState.walls,
-				drawingState.cabinets,
-				selectedFinishing,
-				currentProject?.name,
-				currentProject?.clientName,
-				currentProject?.clientPhone,
-				drawingState.openings,
-				layoutImage,
-				layers,
-				islands
-			);
-			toast({ title: 'PDF exported successfully' });
-		} catch {
-			toast({ title: 'Export failed', variant: 'destructive' });
-		}
-	}, [canvasStore, captureCanvasImage, currentProject, toast]);
+	const handleExport = useCallback(() => {
+		setExportDialogOpen(true);
+	}, []);
+
+	const handleExportConfirm = useCallback(
+		async (notesText: string) => {
+			setExportDialogOpen(false);
+			if (!currentProject) {
+				toast({ title: 'Export failed', variant: 'destructive' });
+				return;
+			}
+			setIsExporting(true);
+
+			const waitTwoFrames = () =>
+				new Promise<void>((resolve) =>
+					requestAnimationFrame(() =>
+						requestAnimationFrame(() => resolve())
+					)
+				);
+			const sleep = (ms: number) =>
+				new Promise((resolve) => setTimeout(resolve, ms));
+
+			const originalActiveId = activeSpaceId;
+			const collected: SpaceExportData[] = [];
+
+			try {
+				// Flush any pending save for the current space before snapshotting.
+				if (saveTimeout.current) {
+					clearTimeout(saveTimeout.current);
+					saveTimeout.current = null;
+					if (activeSpaceId) {
+						saveCanvasNow(activeSpaceId, canvasSourceField);
+					}
+				}
+
+				for (const sp of spaces) {
+					// Switching activeSpaceId triggers the load effect, which calls
+					// canvasStore.loadFromCanvasData() and schedules a Konva redraw.
+					setActiveSpaceId(sp.id);
+					await waitTwoFrames();
+					await sleep(60);
+
+					const { drawingState, layers, islands } = canvasStore;
+					const canvasImage = captureCanvasImage();
+					collected.push({
+						space: sp as any,
+						walls: drawingState.walls,
+						cabinets: drawingState.cabinets,
+						openings: drawingState.openings,
+						layers,
+						islands,
+						canvasImage,
+					});
+				}
+
+				await exportToPDF({
+					project: currentProject as any,
+					spaces: collected,
+					notesText,
+				});
+				toast({ title: 'PDF exported successfully' });
+			} catch (err) {
+				console.error('[export] failed:', err);
+				toast({ title: 'Export failed', variant: 'destructive' });
+			} finally {
+				// Restore original active space
+				if (originalActiveId && originalActiveId !== activeSpaceId) {
+					setActiveSpaceId(originalActiveId);
+				}
+				setIsExporting(false);
+			}
+		},
+		[
+			activeSpaceId,
+			canvasSourceField,
+			canvasStore,
+			captureCanvasImage,
+			currentProject,
+			saveCanvasNow,
+			setActiveSpaceId,
+			spaces,
+			toast,
+		]
+	);
 
 	// ── Stage transitions ───────────────────────────────────────────────────────
 
@@ -1293,6 +1359,25 @@ export default function ProjectDetail({ id }: { id: number }) {
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+
+			{/* Export notes dialog */}
+			<ExportNotesDialog
+				open={exportDialogOpen}
+				onCancel={() => setExportDialogOpen(false)}
+				onConfirm={handleExportConfirm}
+			/>
+
+			{/* Export-in-progress overlay (blocks UI during multi-space capture) */}
+			{isExporting && (
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+					<div className="rounded-lg border bg-card p-6 shadow-lg">
+						<p className="text-sm font-medium">Preparing PDF…</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							Capturing each space — please don't close this tab.
+						</p>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
