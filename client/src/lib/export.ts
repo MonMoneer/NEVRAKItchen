@@ -31,9 +31,13 @@ export interface ExportInput {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-// A4 landscape (mm)
+// Page size matches the Canva template aspect ratio (~849×478 px ≈ 16:9).
+// We keep the 297mm width of A4 landscape as the long edge so printed pages
+// still fit comfortably on an A4 sheet with margins; the height is derived
+// from the template aspect to avoid the squashed look caused by forcing the
+// images into a 297×210 A4 frame.
 const PAGE_W = 297;
-const PAGE_H = 210;
+const PAGE_H = 167; // 297 × (478 / 849) ≈ 167.2 mm
 
 // NIVRA brand palette pulled from the Canva template
 const COLOR_ORANGE = [217, 130, 90] as const; // NIVRA wordmark / accents
@@ -188,6 +192,36 @@ const thankYouModules = import.meta.glob<{ default: string }>(
 	{ eager: false, query: "?url", import: "default" },
 );
 
+/**
+ * Decode a WebP (or any browser-supported image) into a JPEG dataURL via an
+ * offscreen canvas. jsPDF 4.x bundles JPEG/PNG handling natively but its WebP
+ * support is inconsistent, so we always normalize to JPEG before embedding.
+ */
+function imageUrlToJpegDataUrl(url: string): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const img = new Image();
+		img.crossOrigin = "anonymous";
+		img.onload = () => {
+			const canvas = document.createElement("canvas");
+			canvas.width = img.naturalWidth || img.width;
+			canvas.height = img.naturalHeight || img.height;
+			const ctx = canvas.getContext("2d");
+			if (!ctx) {
+				reject(new Error("2D context unavailable"));
+				return;
+			}
+			// Paint a white background under the image so any transparent
+			// areas in the WebP don't show as black in the rendered PDF.
+			ctx.fillStyle = "#ffffff";
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			ctx.drawImage(img, 0, 0);
+			resolve(canvas.toDataURL("image/jpeg", 0.92));
+		};
+		img.onerror = () => reject(new Error("image load failed"));
+		img.src = url;
+	});
+}
+
 async function tryLoadAssetUrl(
 	modules: Record<string, () => Promise<unknown>>,
 ): Promise<string | null> {
@@ -195,14 +229,7 @@ async function tryLoadAssetUrl(
 	if (keys.length === 0) return null;
 	try {
 		const url = (await modules[keys[0]]()) as unknown as string;
-		const res = await fetch(url);
-		if (!res.ok) return null;
-		const blob = await res.blob();
-		return await new Promise((resolve) => {
-			const reader = new FileReader();
-			reader.onloadend = () => resolve(reader.result as string);
-			reader.readAsDataURL(blob);
-		});
+		return await imageUrlToJpegDataUrl(url);
 	} catch {
 		return null;
 	}
@@ -239,7 +266,7 @@ class NivraPdfBuilder {
 		this.doc = new jsPDF({
 			orientation: "landscape",
 			unit: "mm",
-			format: "a4",
+			format: [PAGE_W, PAGE_H],
 		});
 	}
 
@@ -251,7 +278,9 @@ class NivraPdfBuilder {
 
 	private drawBackground(dataUrl: string | null) {
 		if (!dataUrl) return;
-		this.doc.addImage(dataUrl, "PNG", 0, 0, PAGE_W, PAGE_H);
+		// All template backgrounds are normalized to JPEG by the loader so
+		// jsPDF embeds them in one consistent path regardless of source format.
+		this.doc.addImage(dataUrl, "JPEG", 0, 0, PAGE_W, PAGE_H);
 	}
 
 	/**
@@ -263,7 +292,8 @@ class NivraPdfBuilder {
 		this.doc.setFont("helvetica", "bold");
 		this.doc.setFontSize(9);
 		this.doc.setTextColor(255, 255, 255);
-		this.doc.text(text, 287, 201, { align: "right" });
+		// y = PAGE_H - 7mm puts the number in the badge box bottom-right
+		this.doc.text(text, 287, PAGE_H - 7, { align: "right" });
 	}
 
 	// ── Cover (page 1) ────────────────────────────────────────────────────────
@@ -292,15 +322,17 @@ class NivraPdfBuilder {
 		this.doc.setFont("helvetica", "normal");
 		this.doc.setTextColor(...COLOR_DARK);
 
-		// CLIENT — larger, sits on the underlined line
-		this.doc.setFontSize(13);
-		this.doc.text(clientName, 198, 110);
+		// CLIENT — larger, sits on the underlined line at ~y=94mm of the 167mm page
+		this.doc.setFontSize(12);
+		this.doc.text(clientName, 185, 94);
 
-		// LOCATION / DATE / MOBILE rows
-		this.doc.setFontSize(11);
-		this.doc.text(location, 211, 127);
-		this.doc.text(date, 197, 140);
-		this.doc.text(mobile, 207, 154);
+		// LOCATION / DATE / MOBILE rows, inline after each baked-in label.
+		// Coordinates were eyeballed against the 849×479 cover.webp and converted
+		// at the page's 297mm × 167mm scale.
+		this.doc.setFontSize(10);
+		this.doc.text(location, 192, 106);
+		this.doc.text(date, 187, 117);
+		this.doc.text(mobile, 193, 129);
 	}
 
 	// ── Static full-bleed page (About / History / Thank You) ─────────────────
@@ -331,9 +363,10 @@ class NivraPdfBuilder {
 		this.newPage();
 		this.drawBackground(bg);
 
-		// Legend (left column)
+		// Legend (left column) — fits comfortably above the "Kitchen Estimation"
+		// footer line that's baked into 412.webp.
 		const legendX = 22;
-		let ly = 50;
+		let ly = 40;
 
 		const types = new Set(s.layers.map((l) => l.type));
 		const legendRows: {
@@ -352,19 +385,20 @@ class NivraPdfBuilder {
 		for (const row of legendRows) {
 			this.doc.setFillColor(row.color[0], row.color[1], row.color[2]);
 			this.doc.setDrawColor(row.color[0], row.color[1], row.color[2]);
-			this.doc.roundedRect(legendX, ly - 5, 10, 8, 1.5, 1.5, "FD");
+			this.doc.roundedRect(legendX, ly - 5, 9, 7, 1.5, 1.5, "FD");
 			this.doc.setFont("helvetica", "normal");
-			this.doc.setFontSize(14);
+			this.doc.setFontSize(12);
 			this.doc.setTextColor(...COLOR_DARK);
-			this.doc.text(row.label, legendX + 14, ly);
-			ly += 14;
+			this.doc.text(row.label, legendX + 13, ly);
+			ly += 11;
 		}
 
-		// Drawing area (right of legend)
-		const drawX = 90;
-		const drawY = 25;
-		const drawW = 190;
-		const drawH = 150;
+		// Drawing area (right of legend) — fits in the open template space
+		// above the bottom footer line.
+		const drawX = 80;
+		const drawY = 18;
+		const drawW = 200;
+		const drawH = 125;
 
 		if (s.canvasImage) {
 			this.fitImageInto(s.canvasImage, drawX, drawY, drawW, drawH);
@@ -441,8 +475,8 @@ class NivraPdfBuilder {
 		);
 
 		// Left column: items grouped by type
-		const colX = 30;
-		let y = 36;
+		const colX = 28;
+		let y = 24;
 
 		const groups: Record<"base" | "wall_cabinet" | "tall" | "island", Layer[]> = {
 			base: [],
@@ -473,10 +507,10 @@ class NivraPdfBuilder {
 
 			// Section heading
 			this.doc.setFont("helvetica", "normal");
-			this.doc.setFontSize(18);
+			this.doc.setFontSize(15);
 			this.doc.setTextColor(...COLOR_DARK);
 			this.doc.text(SECTION_LABELS[key], colX, y);
-			y += 7;
+			y += 6;
 
 			// De-duplicate spec lines across layers in this group
 			const seen = new Set<string>();
@@ -494,47 +528,48 @@ class NivraPdfBuilder {
 				seen.add(sig);
 
 				this.doc.text(`-Depth ${depth} × Height ${height} cm`, colX + 8, y);
-				y += 5;
+				y += 4;
 				if (key === "base" || key === "tall" || key === "island") {
 					this.doc.text("+10cm skirting", colX + 8, y);
-					y += 5;
+					y += 4;
 				}
 				this.doc.text(`-${finishName}`, colX + 8, y);
-				y += 5;
+				y += 4;
 				if (key === "base" && drawerCount > 0 && seen.size === 1) {
 					this.doc.text(`-Including ${drawerCount} drawers`, colX + 8, y);
-					y += 5;
+					y += 4;
 				}
 			}
-			y += 4;
+			y += 3;
 		}
 
-		// TOTAL (bottom-left)
+		// TOTAL — sits above the "Kitchen Estimation" footer line.
 		this.doc.setFont("helvetica", "bold");
-		this.doc.setFontSize(16);
+		this.doc.setFontSize(14);
 		this.doc.setTextColor(...COLOR_DARK);
-		this.doc.text(`TOTAL:  ${formatAED(total)}`, colX + 30, 178);
+		this.doc.text(`TOTAL:  ${formatAED(total)}`, colX + 25, PAGE_H - 25);
 
-		// Right column: note box + signature
-		const noteX = 180;
+		// Right column: note box + signature, anchored to roughly half the
+		// content height so it sits clear of the left-column items.
+		const noteX = 175;
 		this.doc.setFont("helvetica", "normal");
-		this.doc.setFontSize(13);
+		this.doc.setFontSize(12);
 		this.doc.setTextColor(...COLOR_DARK);
-		this.doc.text("note:", noteX, 80);
+		this.doc.text("note:", noteX, 60);
 
 		this.doc.setFont("helvetica", "italic");
-		this.doc.setFontSize(10);
+		this.doc.setFontSize(9);
 		this.doc.setTextColor(...COLOR_SPEC);
-		const wrapped = this.doc.splitTextToSize(notesText, 90);
-		this.doc.text(wrapped, noteX, 86);
+		const wrapped = this.doc.splitTextToSize(notesText, 95);
+		this.doc.text(wrapped, noteX, 66);
 
 		this.doc.setFont("helvetica", "normal");
-		this.doc.setFontSize(13);
+		this.doc.setFontSize(12);
 		this.doc.setTextColor(...COLOR_DARK);
 		this.doc.text(
 			"Signature: .............................................",
 			noteX,
-			140,
+			110,
 		);
 
 		this.overlayPageNumber();
