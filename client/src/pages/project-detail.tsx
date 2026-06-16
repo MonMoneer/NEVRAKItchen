@@ -649,7 +649,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 		if (!konvaStage) {
 			return undefined;
 		}
-		const { drawingState } = canvasStore;
+		// Read live store state — during the multi-space export loop the closure's
+		// `canvasStore` snapshot is stale (it predates the space switch).
+		const { drawingState } = useCanvasStore.getState();
 
 		const allPoints: { x: number; y: number }[] = [];
 		drawingState.walls.forEach((w) => {
@@ -698,7 +700,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 		}
 		konvaStage.batchDraw();
 		return dataUrl;
-	}, [canvasStore]);
+	}, []);
 
 	// ── Export ─────────────────────────────────────────────────────────────────
 
@@ -744,7 +746,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 					await waitTwoFrames();
 					await sleep(60);
 
-					const { drawingState, layers, islands } = canvasStore;
+					// Read live state (not the stale closure snapshot) so each space
+					// is captured with its own geometry, layers and drawing.
+					const { drawingState, layers, islands } = useCanvasStore.getState();
 					const canvasImage = captureCanvasImage();
 					collected.push({
 						space: sp as any,
