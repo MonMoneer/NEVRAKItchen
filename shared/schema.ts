@@ -211,3 +211,118 @@ export type TallHeight = typeof tallHeights.$inferSelect;
 export type InsertTallHeight = z.infer<typeof insertTallHeightSchema>;
 export type PricingSettings = typeof pricingSettings.$inferSelect;
 export type InsertPricingSettings = z.infer<typeof insertPricingSettingsSchema>;
+
+// ─── Project Timelines (client-facing delivery schedule) ──────────────────────
+//
+// Stored as a single jsonb `data` blob per project. The public page is rendered
+// server-side from this structure (see server/timeline-template.ts) and
+// self-advances by date on the client. Statuses for steps are derived from
+// today vs start/end; payment status is stored explicitly.
+
+export const timelineStepSchema = z.object({
+  kind: z.literal("step"),
+  title: z.string(),
+  detail: z.string().default(""),
+  start: z.string().default(""), // ISO yyyy-mm-dd
+  end: z.string().default(""),
+  dateLabel: z.string().default(""),
+});
+
+export const timelinePaymentSchema = z.object({
+  kind: z.literal("payment"),
+  eyebrow: z.string(),
+  amount: z.string(),
+  detail: z.string().default(""),
+  when: z.string().default(""),
+  status: z.enum(["paid", "due", "pending"]).default("pending"),
+  pillLabel: z.string().default(""), // e.g. "Overdue" / "✓ Paid" / "Pending"
+  start: z.string().default(""),
+  end: z.string().default(""),
+});
+
+export const timelineTransitSchema = z.object({
+  kind: z.literal("transit"),
+  text: z.string(),
+});
+
+export const timelineDaysSchema = z.object({
+  kind: z.literal("days"),
+  title: z.string(),
+  detail: z.string().default(""),
+  start: z.string().default(""),
+  end: z.string().default(""),
+  dateLabel: z.string().default(""),
+  days: z.array(z.string()).default([]),
+});
+
+export const timelineItemSchema = z.discriminatedUnion("kind", [
+  timelineStepSchema,
+  timelinePaymentSchema,
+  timelineTransitSchema,
+  timelineDaysSchema,
+]);
+
+export const timelinePhaseSchema = z.object({
+  num: z.string(),
+  title: z.string(),
+  sub: z.string().default(""),
+  items: z.array(timelineItemSchema).default([]),
+});
+
+export const timelineDataSchema = z.object({
+  docRef: z.string().default(""),
+  issuedDate: z.string().default(""),
+  eyebrow: z.string().default("Project Schedule & Payment Plan"),
+  title: z.string().default(""),
+  subtitle: z.string().default(""),
+  note: z.string().default(""),
+  theme: z.enum(["orange", "charcoal", "blue"]).default("orange"),
+  client: z.object({
+    name: z.string().default(""),
+    tag: z.string().default("Client · Residential"),
+    phone: z.string().default(""),
+    address: z.string().default(""),
+    projectValue: z.string().default(""),
+    approval: z.string().default(""),
+  }),
+  phases: z.array(timelinePhaseSchema).default([]),
+  completion: z.object({
+    title: z.string().default("Kitchen fully installed & handed over"),
+    dateBig: z.string().default(""),
+    dateSub: z.string().default(""),
+  }),
+  summary: z.object({
+    total: z.string().default(""),
+    payments: z.array(z.object({
+      label: z.string(),
+      amount: z.string(),
+      status: z.enum(["paid", "due", "pending"]).default("pending"),
+      when: z.string().default(""),
+    })).default([]),
+  }),
+  footer: z.string().default(""),
+});
+
+export type TimelineStep = z.infer<typeof timelineStepSchema>;
+export type TimelinePayment = z.infer<typeof timelinePaymentSchema>;
+export type TimelineTransit = z.infer<typeof timelineTransitSchema>;
+export type TimelineDays = z.infer<typeof timelineDaysSchema>;
+export type TimelineItem = z.infer<typeof timelineItemSchema>;
+export type TimelinePhase = z.infer<typeof timelinePhaseSchema>;
+export type TimelineData = z.infer<typeof timelineDataSchema>;
+
+export const projectTimelines = pgTable("project_timelines", {
+  id: serial("id").primaryKey(),
+  projectId: integer("project_id")
+    .notNull()
+    .references(() => savedProjects.id, { onDelete: "cascade" })
+    .unique(), // one timeline per project
+  shareToken: text("share_token").notNull().unique(), // nanoid(12) — public link
+  data: jsonb("timeline_data").$type<TimelineData>().notNull(),
+  createdByUserId: integer("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type ProjectTimeline = typeof projectTimelines.$inferSelect;
+export type InsertProjectTimeline = typeof projectTimelines.$inferInsert;

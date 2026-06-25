@@ -11,10 +11,12 @@ import {
   type DreamHomePrice, type InsertDreamHomePrice,
   type TallHeight, type InsertTallHeight,
   type PricingSettings, type InsertPricingSettings,
+  type ProjectTimeline, type TimelineData,
   adminSettings, savedProjects,
   spaces, spacePhotos, elementDefinitions, wallPoints, users,
   projectAttachments,
   dreamHomeFinishes, dreamHomePrices, tallHeights, pricingSettings,
+  projectTimelines,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, desc, and, sql } from "drizzle-orm";
@@ -403,6 +405,47 @@ export class DatabaseStorage implements IStorage {
       .where(eq(pricingSettings.id, current.id))
       .returning();
     return updated;
+  }
+
+  // ── Project Timelines ────────────────────────────────────────────────────────
+
+  async getTimelineByProject(projectId: number): Promise<ProjectTimeline | undefined> {
+    const [row] = await db
+      .select()
+      .from(projectTimelines)
+      .where(eq(projectTimelines.projectId, projectId));
+    return row;
+  }
+
+  async getTimelineByShareToken(token: string): Promise<ProjectTimeline | undefined> {
+    const [row] = await db
+      .select()
+      .from(projectTimelines)
+      .where(eq(projectTimelines.shareToken, token));
+    return row;
+  }
+
+  /** Insert on first save, update thereafter (one timeline per project). */
+  async upsertTimeline(
+    projectId: number,
+    data: TimelineData,
+    token: string,
+    userId: number | null,
+  ): Promise<ProjectTimeline> {
+    const existing = await this.getTimelineByProject(projectId);
+    if (existing) {
+      const [updated] = await db
+        .update(projectTimelines)
+        .set({ data, updatedAt: new Date() })
+        .where(eq(projectTimelines.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db
+      .insert(projectTimelines)
+      .values({ projectId, shareToken: token, data, createdByUserId: userId })
+      .returning();
+    return created;
   }
 }
 

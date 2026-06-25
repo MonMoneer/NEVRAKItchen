@@ -96,6 +96,18 @@ async function runMigrations() {
         drawer_flat_aed numeric(10,2) NOT NULL DEFAULT '500'
       )
     `);
+    // Client-facing project timelines (delivery schedule + payment plan)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS project_timelines (
+        id serial PRIMARY KEY,
+        project_id integer NOT NULL UNIQUE REFERENCES saved_projects(id) ON DELETE CASCADE,
+        share_token text NOT NULL UNIQUE,
+        timeline_data jsonb NOT NULL,
+        created_by_user_id integer REFERENCES users(id),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
     // ─── 2026-04-21: Inner-face wall model migration ─────────────────────
     // Wipe all canvas data so users start fresh under the new wall model.
     // Project shells (CRM cards, client info, stage, notes, attachments,

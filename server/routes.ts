@@ -14,8 +14,11 @@ import {
   insertDreamHomePriceSchema,
   insertTallHeightSchema,
   insertPricingSettingsSchema,
+  timelineDataSchema,
 } from "@shared/schema";
 import type { User } from "@shared/schema";
+import { nanoid } from "nanoid";
+import { renderTimeline, renderTimelineNotFound } from "./timeline-template";
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
@@ -151,6 +154,40 @@ export async function registerRoutes(
     const deleted = await storage.deleteSavedProject(id);
     if (!deleted) return res.status(404).json({ error: "Project not found" });
     res.json({ success: true });
+  });
+
+  // ── Project Timeline (client-facing delivery schedule) ──────────────────────
+
+  // Admin: load a project's timeline for editing (404 if none yet).
+  app.get("/api/projects/:projectId/timeline", requireAuth, async (req, res) => {
+    const projectId = parseInt(req.params.projectId as string);
+    if (isNaN(projectId)) return res.status(400).json({ error: "Invalid id" });
+    const timeline = await storage.getTimelineByProject(projectId);
+    if (!timeline) return res.status(404).json({ error: "No timeline" });
+    res.json(timeline);
+  });
+
+  // Admin: create-or-update the timeline; mints a shareToken on first save.
+  app.put("/api/projects/:projectId/timeline", requireAuth, async (req, res) => {
+    const projectId = parseInt(req.params.projectId as string);
+    if (isNaN(projectId)) return res.status(400).json({ error: "Invalid id" });
+    const parsed = timelineDataSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    const existing = await storage.getTimelineByProject(projectId);
+    const token = existing?.shareToken ?? nanoid(12);
+    const userId = (req.user as User | undefined)?.id ?? null;
+    const saved = await storage.upsertTimeline(projectId, parsed.data, token, userId);
+    res.json(saved);
+  });
+
+  // PUBLIC: client-facing timeline page (no auth). Top-level route so it wins
+  // over the SPA fallback (registerRoutes runs before serveStatic/vite).
+  app.get("/timeline/:token", async (req, res) => {
+    const timeline = await storage.getTimelineByShareToken(req.params.token);
+    res
+      .status(timeline ? 200 : 404)
+      .type("html")
+      .send(timeline ? renderTimeline(timeline.data) : renderTimelineNotFound());
   });
 
   // ── Spaces ────────────────────────────────────────────────────────────────

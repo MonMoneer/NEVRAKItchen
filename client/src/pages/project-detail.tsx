@@ -32,6 +32,7 @@ import {
 } from '@/lib/kitchen-engine';
 import { exportToPDF, type SpaceExportData } from '@/lib/export';
 import { ExportNotesDialog } from '@/components/ExportNotesDialog';
+import { TimelineDialog } from '@/components/TimelineDialog';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -61,6 +62,7 @@ import {
 	Trash2,
 	Undo2,
 	Redo2,
+	CalendarClock,
 } from 'lucide-react';
 
 // ─── Space type config ────────────────────────────────────────────────────────
@@ -342,6 +344,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 		targetStage: 'estimated_price' | 'site_measurement';
 	}>({ open: false, targetStage: 'estimated_price' });
 	const [exportDialogOpen, setExportDialogOpen] = useState(false);
+	const [timelineOpen, setTimelineOpen] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
 	const konvaStageRef = useRef<Konva.Stage | null>(null);
 	const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1083,6 +1086,14 @@ export default function ProjectDetail({ id }: { id: number }) {
 					>
 						<FileText className="h-4 w-4" />
 					</Button>
+					<Button
+						size="sm"
+						variant="ghost"
+						onClick={() => setTimelineOpen(true)}
+						title="Client timeline / delivery schedule"
+					>
+						<CalendarClock className="h-4 w-4" />
+					</Button>
 				</div>
 			</header>
 
@@ -1369,6 +1380,14 @@ export default function ProjectDetail({ id }: { id: number }) {
 				open={exportDialogOpen}
 				onCancel={() => setExportDialogOpen(false)}
 				onConfirm={handleExportConfirm}
+			/>
+
+			{/* Client timeline / delivery schedule */}
+			<TimelineDialog
+				open={timelineOpen}
+				onClose={() => setTimelineOpen(false)}
+				projectId={currentProject.id}
+				project={currentProject}
 			/>
 
 			{/* Export-in-progress overlay (blocks UI during multi-space capture) */}
