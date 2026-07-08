@@ -198,7 +198,12 @@ export async function registerRoutes(
     if (!req.isAuthenticated() || (req.user as User).role !== "admin") {
       return res.redirect("/login");
     }
-    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+    // esbuild's CJS production bundle provides a real __dirname; tsx's dev-time
+    // ESM execution doesn't, so fall back to import.meta.url there.
+    const moduleDir =
+      typeof __dirname !== "undefined"
+        ? __dirname
+        : path.dirname(fileURLToPath(import.meta.url));
     res.type("html").sendFile(path.resolve(moduleDir, "schedule-builder.html"));
   });
 
