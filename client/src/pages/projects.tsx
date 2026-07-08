@@ -19,7 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Search, LogOut, Settings, ChevronDown, Plus, FolderOpen } from "lucide-react";
+import { Search, LogOut, Settings, ChevronDown, Plus, FolderOpen, CalendarClock } from "lucide-react";
 
 const STAGES = [
   { id: "estimated_price", label: "Estimated Price", color: "bg-blue-100 text-blue-700" },
@@ -223,6 +223,17 @@ export default function Projects() {
             <Button variant="ghost" size="sm" onClick={() => navigate("/admin")}>
               <Settings className="h-4 w-4 mr-1" />
               Admin
+            </Button>
+          )}
+
+          {user?.role === "admin" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => window.open("/schedule-builder", "_blank", "noopener,noreferrer")}
+            >
+              <CalendarClock className="h-4 w-4 mr-1" />
+              Schedule Builder
             </Button>
           )}
 

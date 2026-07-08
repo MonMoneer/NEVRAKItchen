@@ -1,5 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
+import path from "path";
+import { fileURLToPath } from "url";
 import { storage } from "./storage";
 import { passport, hashPassword } from "./auth";
 import {
@@ -188,6 +190,16 @@ export async function registerRoutes(
       .status(timeline ? 200 : 404)
       .type("html")
       .send(timeline ? renderTimeline(timeline.data) : renderTimelineNotFound());
+  });
+
+  // Admin-only internal tool. Top-level route so it wins over the SPA fallback
+  // (registerRoutes runs before serveStatic/vite).
+  app.get("/schedule-builder", (req, res) => {
+    if (!req.isAuthenticated() || (req.user as User).role !== "admin") {
+      return res.redirect("/login");
+    }
+    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+    res.type("html").sendFile(path.resolve(moduleDir, "schedule-builder.html"));
   });
 
   // ── Spaces ────────────────────────────────────────────────────────────────
