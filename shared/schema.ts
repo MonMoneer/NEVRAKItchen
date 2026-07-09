@@ -326,3 +326,17 @@ export const projectTimelines = pgTable("project_timelines", {
 
 export type ProjectTimeline = typeof projectTimelines.$inferSelect;
 export type InsertProjectTimeline = typeof projectTimelines.$inferInsert;
+
+// ─── Schedule Builder (internal tool) ─────────────────────────────────────────
+//
+// Single shared row holding every project the Schedule Builder tool manages,
+// as one jsonb array. The server never interprets the array's contents — it's
+// opaque storage for the tool's own client-side data model.
+
+export const scheduleBuilderData = pgTable("schedule_builder_data", {
+  id: serial("id").primaryKey(),
+  projects: jsonb("projects").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type ScheduleBuilderData = typeof scheduleBuilderData.$inferSelect;

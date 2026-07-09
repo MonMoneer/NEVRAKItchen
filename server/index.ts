@@ -108,6 +108,15 @@ async function runMigrations() {
         updated_at timestamp NOT NULL DEFAULT now()
       )
     `);
+    // Schedule Builder internal tool — one shared row of projects, replacing
+    // each device's own localStorage as the source of truth.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS schedule_builder_data (
+        id serial PRIMARY KEY,
+        projects jsonb NOT NULL DEFAULT '[]'::jsonb,
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
     // ─── 2026-04-21: Inner-face wall model migration ─────────────────────
     // Wipe all canvas data so users start fresh under the new wall model.
     // Project shells (CRM cards, client info, stage, notes, attachments,

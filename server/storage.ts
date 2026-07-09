@@ -17,6 +17,7 @@ import {
   projectAttachments,
   dreamHomeFinishes, dreamHomePrices, tallHeights, pricingSettings,
   projectTimelines,
+  scheduleBuilderData,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, desc, and, sql } from "drizzle-orm";
@@ -446,6 +447,29 @@ export class DatabaseStorage implements IStorage {
       .values({ projectId, shareToken: token, data, createdByUserId: userId })
       .returning();
     return created;
+  }
+
+  // ── Schedule Builder (internal tool) ─────────────────────────────────────────
+
+  async getScheduleBuilderProjects(): Promise<unknown[]> {
+    const [row] = await db.select().from(scheduleBuilderData).limit(1);
+    if (row) return row.projects as unknown[];
+    const [created] = await db.insert(scheduleBuilderData).values({ projects: [] }).returning();
+    return created.projects as unknown[];
+  }
+
+  async saveScheduleBuilderProjects(projects: unknown[]): Promise<unknown[]> {
+    const [row] = await db.select().from(scheduleBuilderData).limit(1);
+    if (row) {
+      const [updated] = await db
+        .update(scheduleBuilderData)
+        .set({ projects, updatedAt: new Date() })
+        .where(eq(scheduleBuilderData.id, row.id))
+        .returning();
+      return updated.projects as unknown[];
+    }
+    const [created] = await db.insert(scheduleBuilderData).values({ projects }).returning();
+    return created.projects as unknown[];
   }
 }
 

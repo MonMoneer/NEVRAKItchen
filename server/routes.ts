@@ -207,6 +207,27 @@ export async function registerRoutes(
     res.type("html").sendFile(path.resolve(moduleDir, "schedule-builder.html"));
   });
 
+  // Schedule Builder data — one shared list of projects for every admin, backed
+  // by Postgres instead of each device's own localStorage.
+  app.get("/api/schedule-builder/projects", async (req, res) => {
+    if (!req.isAuthenticated() || (req.user as User).role !== "admin") {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const projects = await storage.getScheduleBuilderProjects();
+    res.json({ projects });
+  });
+
+  app.put("/api/schedule-builder/projects", async (req, res) => {
+    if (!req.isAuthenticated() || (req.user as User).role !== "admin") {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (!Array.isArray(req.body?.projects)) {
+      return res.status(400).json({ error: "projects must be an array" });
+    }
+    const saved = await storage.saveScheduleBuilderProjects(req.body.projects);
+    res.json({ projects: saved });
+  });
+
   // ── Spaces ────────────────────────────────────────────────────────────────
 
   app.get("/api/projects/:projectId/spaces", async (req, res) => {
