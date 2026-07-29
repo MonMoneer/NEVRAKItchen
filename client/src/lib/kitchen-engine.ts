@@ -11,7 +11,7 @@ export interface Wall {
 }
 
 export type CabinetType = "base" | "wall_cabinet" | "tall" | "island";
-export type LayerType = CabinetType | "end_panel" | "filler" | "drawer";
+export type LayerType = CabinetType | "end_panel" | "filler" | "drawer" | "countertop";
 export type OpeningType = "door" | "window";
 
 export interface Cabinet {
@@ -50,16 +50,30 @@ export interface Island {
   axis?: "h" | "v";
 }
 
+export type ShelfMaterial = "glass" | "ss" | "none";
+
 export interface Layer {
   id: string;
   type: LayerType;
+  // User-editable label shown instead of the generic type name (e.g. "Base
+  // Cabinet") when set -- e.g. "Perimeter Run" vs "Island Run".
+  name?: string;
   depth: number | null;
   height: number | null;
   finishId: number | null;
+  // base/wall_cabinet default "glass" (included, free); tall defaults "none"
+  // (no shelves); island/end_panel/filler/drawer never use this field.
+  shelfMaterial?: ShelfMaterial;
   endPanelVariant?: "base" | "wall" | "decorative";
   endPanelWallArea?: number;
   endPanelDecorHeight?: number;
   qty?: number;
+  // Countertop only: not drawn on canvas, so its length is a manually-entered
+  // value (pre-filled once from the total base cabinet length at creation,
+  // then freely editable) instead of being derived from cabinet geometry.
+  manualLengthM?: number;
+  // Countertop only: a flat AED/m rate typed in directly (no CNY/FX conversion).
+  priceAedPerM?: number;
   cabinetIds: string[];
 }
 
@@ -134,6 +148,7 @@ export const DEFAULT_HEIGHTS: Record<LayerType, number> = {
   end_panel: 90,
   filler: 90,
   drawer: 90,
+  countertop: 90,
 };
 
 export function normalizeLayer(raw: any): Layer {
@@ -151,6 +166,12 @@ export function normalizeLayer(raw: any): Layer {
   }
   // Ensure cabinetIds exists
   if (!Array.isArray(out.cabinetIds)) out.cabinetIds = [];
+  // Legacy layers (saved before shelves were configurable) get the defaults
+  // this feature always assumed: base/wall included glass, tall had none.
+  if (out.shelfMaterial == null) {
+    if (out.type === "base" || out.type === "wall_cabinet") out.shelfMaterial = "glass";
+    else if (out.type === "tall") out.shelfMaterial = "none";
+  }
   return out as Layer;
 }
 

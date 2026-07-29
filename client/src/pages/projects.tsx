@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +34,17 @@ function stageColor(stage: string) {
   return STAGES.find((s) => s.id === stage)?.color ?? "bg-gray-100 text-gray-600";
 }
 
+export const CLIENT_REFERENCE_PREFIX = "NV-";
+
+export const PREPARED_BY_OPTIONS = [
+  "Fami Hasiri",
+  "Fatima Al Koussa",
+  "Yahia Al Koussa",
+  "Roaa Sawas",
+  "Saher Obaidat",
+  "NIVRA",
+];
+
 // ─── New Project Dialog ───────────────────────────────────────────────────────
 
 function NewProjectDialog({
@@ -49,6 +61,8 @@ function NewProjectDialog({
   const [clientPhone, setClientPhone] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [address, setAddress] = useState("");
+  const [clientReferenceSuffix, setClientReferenceSuffix] = useState("");
+  const [preparedBy, setPreparedBy] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -58,6 +72,8 @@ function NewProjectDialog({
     setClientPhone("");
     setClientEmail("");
     setAddress("");
+    setClientReferenceSuffix("");
+    setPreparedBy("");
     setError("");
   };
 
@@ -67,10 +83,22 @@ function NewProjectDialog({
     setIsLoading(true);
 
     try {
+      const clientReference = clientReferenceSuffix.trim()
+        ? `${CLIENT_REFERENCE_PREFIX}${clientReferenceSuffix.trim()}`
+        : "";
+
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, clientName, clientPhone, clientEmail, address }),
+        body: JSON.stringify({
+          name,
+          clientName,
+          clientPhone,
+          clientEmail,
+          address,
+          clientReference,
+          preparedBy,
+        }),
       });
 
       if (!res.ok) {
@@ -141,6 +169,37 @@ function NewProjectDialog({
               placeholder="Villa / flat address"
             />
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Client reference</Label>
+              <div className="flex items-center rounded-md border border-input focus-within:ring-1 focus-within:ring-ring">
+                <span className="pl-3 text-sm text-muted-foreground select-none">
+                  {CLIENT_REFERENCE_PREFIX}
+                </span>
+                <Input
+                  value={clientReferenceSuffix}
+                  onChange={(e) =>
+                    setClientReferenceSuffix(e.target.value.replace(/^NV-/i, ""))
+                  }
+                  placeholder="001"
+                  className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 pl-1"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Prepared by</Label>
+              <Select value={preparedBy} onValueChange={setPreparedBy}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PREPARED_BY_OPTIONS.map((n) => (
+                    <SelectItem key={n} value={n}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
 
@@ -190,7 +249,8 @@ export default function Projects() {
       return (
         p.name.toLowerCase().includes(q) ||
         (p.clientName ?? "").toLowerCase().includes(q) ||
-        (p.clientPhone ?? "").includes(q)
+        (p.clientPhone ?? "").includes(q) ||
+        (p.clientReference ?? "").toLowerCase().includes(q)
       );
     })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -212,7 +272,7 @@ export default function Projects() {
           <div className="relative w-56">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search name, phone…"
+              placeholder="Search name, phone, reference…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 h-8 text-sm"
@@ -308,6 +368,9 @@ export default function Projects() {
                     <p className="text-xs text-muted-foreground truncate">{project.clientName}</p>
                   )}
                 </div>
+                {project.clientReference && (
+                  <span className="text-xs font-mono text-muted-foreground hidden md:block">{project.clientReference}</span>
+                )}
                 {project.clientPhone && (
                   <span className="text-xs text-muted-foreground hidden sm:block">{project.clientPhone}</span>
                 )}

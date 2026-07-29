@@ -57,7 +57,7 @@
       <rect class="cls-1" x="2.62" y="-1.22" width="595.2" height="841.92"/>
     </clipPath>
     <clipPath id="clippath-1">
-      <rect class="cls-1" x="39.59" y="254.51" width="508.29" height="131.18"/>
+      <rect class="cls-1" x="39.59" y="254.51" width="508.29" height="189.58"/>
     </clipPath>
   </defs>
   <rect class="cls-1" x=".79" y="-2.56" width="593.7" height="847"/>
@@ -67,15 +67,17 @@
   <g>
     <g class="cls-9">
       <g class="cls-7">
-        <rect class="cls-8" x="-84.92" y="252.09" width="639.88" height="136.01"/>
+        <rect class="cls-8" x="-84.92" y="252.09" width="639.88" height="194.41"/>
       </g>
     </g>
     <g>
-      <text class="cls-6" transform="translate(49.02 280.48)"><tspan x="0" y="0">CUSTOMER: </tspan><tspan x="0" y="29.2">LOCATION: </tspan><tspan x="0" y="58.4">DATE: </tspan><tspan x="0" y="87.6">MOBILE: </tspan></text>
+      <text class="cls-6" transform="translate(49.02 280.48)"><tspan x="0" y="0">CUSTOMER: </tspan><tspan x="0" y="29.2">LOCATION: </tspan><tspan x="0" y="58.4">DATE: </tspan><tspan x="0" y="87.6">MOBILE: </tspan><tspan x="0" y="116.8">REFERENCE: </tspan><tspan x="0" y="146">PREPARED BY: </tspan></text>
       <text class="cls-4" id="qt-customer" transform="translate(144.44 280.11)"><tspan x="0" y="0">Ahmed Moneer Ali</tspan></text>
       <text class="cls-4" id="qt-location" transform="translate(144.44 309.28)"><tspan x="0" y="0">Dubai</tspan></text>
       <text class="cls-4" id="qt-date" transform="translate(144.44 338.73)"><tspan x="0" y="0">15</tspan><tspan x="11.52" y="0">, june </tspan><tspan x="39.13" y="0">2026</tspan></text>
       <text class="cls-4" id="qt-mobile" transform="translate(144.44 367.94)"><tspan x="0" y="0">971547060743</tspan></text>
+      <text class="cls-4" id="qt-reference" transform="translate(144.44 397.14)"><tspan x="0" y="0">NV-001</tspan></text>
+      <text class="cls-4" id="qt-prepared-by" transform="translate(144.44 426.34)"><tspan x="0" y="0">NIVRA</tspan></text>
     </g>
     <g>
       <path class="cls-2" d="M39.34,218.56c1.07-.32,1.43-1.15,1.43-4.08v-15.97c0-2.94-.36-3.76-1.43-4.08v-.46h5.8v.46c-1.11.32-1.43,1.15-1.43,4.08v9.1l9.38-9.6c2.26-2.33,2.58-3.51,1.18-3.72v-.32h4.98v.46c-1.15.32-2.65.68-4.69,2.79l-7.63,7.81.82-.04c5.34-.36,6.16,1.58,8.59,7.7,1.83,4.58,2.61,5.84,3.76,5.84.21,0,.39,0,.61-.04v.47c-.61.18-1.4.25-2.15.25-2.61,0-3.26-1.54-4.98-5.73-2.36-5.8-2.9-7.99-6.52-7.88h-.72l-2.65,2.72v6.16c0,2.94.32,3.76,1.43,4.08v.47h-5.8v-.47Z"/>

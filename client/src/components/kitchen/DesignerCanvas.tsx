@@ -3701,8 +3701,10 @@ export function DesignerCanvas({
 					const ghostClearance = checkClearanceViolation(
 						offsetPosition, lengthEndPt, cabType, drawingState.openings, drawingState.walls
 					);
+					// Only base cabinets are blocked on same-type overlap; wall cabinets
+					// are allowed to overlap other wall/tall cabinets (see project-detail.tsx).
 					let ghostOverlap = false;
-					if (cabType === 'base' || cabType === 'wall_cabinet') {
+					if (cabType === 'base') {
 						ghostOverlap = findOverlappingCabinets(
 							offsetPosition, lengthEndPt, drawingState.cabinets, [cabType]
 						).length > 0;

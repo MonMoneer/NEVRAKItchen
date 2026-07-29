@@ -42,6 +42,7 @@ const LAYER_LABELS: Record<LayerType, string> = {
   end_panel: "End Panel",
   filler: "Filler",
   drawer: "Drawer",
+  countertop: "Countertop",
 };
 
 const LAYER_COLORS: Record<LayerType, string> = {
@@ -52,11 +53,12 @@ const LAYER_COLORS: Record<LayerType, string> = {
   end_panel: "#6B7280",
   filler: "#9CA3AF",
   drawer: "#64748B",
+  countertop: "#0EA5E9",
 };
 
 const DRAWABLE_TYPES: LayerType[] = ["base", "wall_cabinet", "tall", "island"];
 const COUNT_TYPES: LayerType[] = ["end_panel", "filler", "drawer"];
-const ALL_TYPES: LayerType[] = ["base", "wall_cabinet", "tall", "island", "end_panel", "filler", "drawer"];
+const ALL_TYPES: LayerType[] = ["base", "wall_cabinet", "tall", "island", "end_panel", "filler", "drawer", "countertop"];
 
 function generateId() {
   return `layer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -65,14 +67,33 @@ function generateId() {
 interface LayerPanelProps {
   cabinets: Cabinet[];
   walls: Wall[];
+  // Called after any layer/island edit (finish, depth, add/remove/reorder, ...)
+  // so the page can persist the change -- without this, edits made here never
+  // reach the autosave and are silently lost on switching spaces/tabs.
+  onLayersChanged?: () => void;
 }
 
-export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
+export function LayerPanel({ cabinets, walls, onLayersChanged }: LayerPanelProps) {
   const { toast } = useToast();
-  const { layers, activeLayerId, addLayer, removeLayer, updateLayer, setActiveLayer, reorderLayer } = useCanvasStore();
+  const {
+    layers,
+    activeLayerId,
+    addLayer: addLayerRaw,
+    removeLayer: removeLayerRaw,
+    updateLayer: updateLayerRaw,
+    setActiveLayer,
+    reorderLayer: reorderLayerRaw,
+  } = useCanvasStore();
   const islands = useCanvasStore((s) => s.islands);
-  const updateIsland = useCanvasStore((s) => s.updateIsland);
-  const removeIsland = useCanvasStore((s) => s.removeIsland);
+  const updateIslandRaw = useCanvasStore((s) => s.updateIsland);
+  const removeIslandRaw = useCanvasStore((s) => s.removeIsland);
+
+  const addLayer = (layer: Layer) => { addLayerRaw(layer); onLayersChanged?.(); };
+  const removeLayer = (id: string) => { removeLayerRaw(id); onLayersChanged?.(); };
+  const updateLayer = (id: string, updates: Partial<Layer>) => { updateLayerRaw(id, updates); onLayersChanged?.(); };
+  const reorderLayer = (from: number, to: number) => { reorderLayerRaw(from, to); onLayersChanged?.(); };
+  const updateIsland = (id: string, updates: Partial<Island>) => { updateIslandRaw(id, updates); onLayersChanged?.(); };
+  const removeIsland = (id: string) => { removeIslandRaw(id); onLayersChanged?.(); };
 
   const { data: finishes = [] } = useQuery<DreamHomeFinish[]>({ queryKey: ["/api/dream-home/finishes"] });
   const { data: prices = [] } = useQuery<DreamHomePrice[]>({ queryKey: ["/api/dream-home/prices"] });
@@ -116,6 +137,9 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
       depth: COUNT_TYPES.includes(type) ? null : d?.depth ?? 60,
       height: COUNT_TYPES.includes(type) ? null : d?.height ?? 90,
       finishId: DRAWABLE_TYPES.includes(type) ? defaultFinish : null,
+      // Base/wall normally come with glass shelves (included); tall normally
+      // has none at all.
+      shelfMaterial: type === "base" || type === "wall_cabinet" ? "glass" : type === "tall" ? "none" : undefined,
       cabinetIds: [],
     };
     if (type === "end_panel") {
@@ -124,6 +148,15 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
     }
     if (type === "filler" || type === "drawer") {
       newLayer.qty = 1;
+    }
+    if (type === "countertop") {
+      // Pre-fill from the total base cabinet LM already drawn -- a one-time
+      // default the rep can then freely overwrite; it doesn't stay linked.
+      const totalBaseLM = layers
+        .filter((l) => l.type === "base")
+        .reduce((sum, l) => sum + getLayerLength(l), 0);
+      newLayer.manualLengthM = Math.round(totalBaseLM * 100) / 100;
+      newLayer.priceAedPerM = 0;
     }
     addLayer(newLayer);
 
@@ -137,6 +170,7 @@ export function LayerPanel({ cabinets, walls }: LayerPanelProps) {
     cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
 
   const getLayerLength = (layer: Layer): number => {
+    if (layer.type === "countertop") return layer.manualLengthM ?? 0;
     if (!DRAWABLE_TYPES.includes(layer.type)) return 0;
     const cabs = getLayerCabinets(layer);
     if (cabs.length === 0) return 0;
@@ -324,7 +358,7 @@ function LayerCard({
   const qtyOrLength =
     layer.type === "island" && boundIsland
       ? `${(boundIsland.lengthCm / 100).toFixed(2)} m`
-      : isDrawable
+      : isDrawable || layer.type === "countertop"
       ? `${lengthM.toFixed(2)} m`
       : `${layer.qty ?? 0} pcs`;
 
@@ -354,7 +388,7 @@ function LayerCard({
           style={{ backgroundColor: LAYER_COLORS[layer.type] }}
         />
         <span className="text-xs font-medium text-card-foreground truncate flex-1">
-          {LAYER_LABELS[layer.type]}
+          {layer.name || LAYER_LABELS[layer.type]}
         </span>
         <span className="text-[10px] font-mono text-muted-foreground shrink-0">
           {qtyOrLength}
@@ -428,8 +462,14 @@ function LayerCard({
           className="w-2.5 h-2.5 rounded-sm shrink-0"
           style={{ backgroundColor: LAYER_COLORS[layer.type] }}
         />
-        <span className="text-xs font-medium text-card-foreground">{LAYER_LABELS[layer.type]}</span>
-        <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0">#{index + 1}</Badge>
+        <Input
+          value={layer.name ?? LAYER_LABELS[layer.type]}
+          className="h-6 text-xs font-medium border-transparent bg-transparent px-1 hover:border-input focus:border-input"
+          onChange={(e) => onUpdate({ name: e.target.value })}
+          onClick={(e) => e.stopPropagation()}
+          title="Click to rename this layer"
+        />
+        <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0 shrink-0">#{index + 1}</Badge>
         <div className="flex flex-col -my-1 shrink-0 touch:flex-row touch:gap-1">
           <button
             type="button"
@@ -509,6 +549,21 @@ function LayerCard({
                     {f.name}
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+
+            <span className="text-muted-foreground self-center">Shelf</span>
+            <Select
+              value={layer.shelfMaterial ?? (layer.type === "tall" ? "none" : "glass")}
+              onValueChange={(v) => onUpdate({ shelfMaterial: v as Layer["shelfMaterial"] })}
+            >
+              <SelectTrigger className="h-6 text-xs" onClick={(e) => e.stopPropagation()}>
+                <SelectValue placeholder="Select shelf" />
+              </SelectTrigger>
+              <SelectContent>
+                {layer.type === "tall" && <SelectItem value="none">None</SelectItem>}
+                <SelectItem value="glass">Glass{layer.type !== "tall" ? " (included)" : ""}</SelectItem>
+                <SelectItem value="ss">SS (stainless steel)</SelectItem>
               </SelectContent>
             </Select>
           </>
@@ -637,6 +692,43 @@ function LayerCard({
           </>
         )}
 
+        {layer.type === "countertop" && (
+          <>
+            <span className="text-muted-foreground self-center">Length (m)</span>
+            <Input
+              type="number"
+              step="0.01"
+              value={layer.manualLengthM ?? ""}
+              className="h-6 text-xs text-right"
+              onChange={(e) =>
+                onUpdate({ manualLengthM: e.target.value === "" ? undefined : parseFloat(e.target.value) })
+              }
+              onClick={(e) => e.stopPropagation()}
+            />
+
+            <span className="text-muted-foreground self-center">Depth (cm)</span>
+            <Input
+              type="number"
+              value={layer.depth ?? ""}
+              className="h-6 text-xs text-right"
+              onChange={(e) => onUpdate({ depth: e.target.value === "" ? null : parseInt(e.target.value) })}
+              onClick={(e) => e.stopPropagation()}
+            />
+
+            <span className="text-muted-foreground self-center">Price (AED/m)</span>
+            <Input
+              type="number"
+              step="0.01"
+              value={layer.priceAedPerM ?? ""}
+              className="h-6 text-xs text-right"
+              onChange={(e) =>
+                onUpdate({ priceAedPerM: e.target.value === "" ? undefined : parseFloat(e.target.value) })
+              }
+              onClick={(e) => e.stopPropagation()}
+            />
+          </>
+        )}
+
         {isCount && (
           <>
             <span className="text-muted-foreground self-center">Qty</span>
@@ -717,6 +809,7 @@ function TotalFooter({ layers, cabinets, walls, islands, prices, tallRows, setti
       const bound = islands.find((i) => i.layerId === layer.id);
       return bound ? bound.lengthCm / 100 : 0;
     }
+    if (layer.type === "countertop") return layer.manualLengthM ?? 0;
     if (!DRAWABLE_TYPES.includes(layer.type)) return 0;
     const cabs = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
     if (cabs.length === 0) return 0;

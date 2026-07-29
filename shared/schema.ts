@@ -40,6 +40,8 @@ export const savedProjects = pgTable("saved_projects", {
   clientPhone: text("client_phone").notNull().default(""),
   clientEmail: text("client_email").notNull().default(""),
   address: text("address").notNull().default(""),
+  clientReference: text("client_reference").notNull().default(""),
+  preparedBy: text("prepared_by").notNull().default(""),
   stage: text("stage").notNull().default("estimated_price"),
   // estimated_price | site_measurement
   notes: text("notes").notNull().default(""),
@@ -160,6 +162,13 @@ export const pricingSettings = pgTable("pricing_settings", {
   marginDiv: numeric("margin_div", { precision: 4, scale: 2 }).notNull().default("0.50"),
   decorativeCnyPerM2: numeric("decorative_cny_per_m2", { precision: 10, scale: 2 }).notNull().default("880"),
   drawerFlatAed: numeric("drawer_flat_aed", { precision: 10, scale: 2 }).notNull().default("500"),
+  // Shelf upgrades: SS is priced by area (rate × cabinet depth × length), same
+  // rate for base/wall (1 shelf) and tall (shelfCount shelves) -- glass is only
+  // a per-piece charge for tall (base/wall glass shelves are included, free).
+  shelfSsRateCnyPerM2: numeric("shelf_ss_rate_cny_per_m2", { precision: 10, scale: 2 }).notNull().default("610"),
+  shelfGlassRateCnyPerPc: numeric("shelf_glass_rate_cny_per_pc", { precision: 10, scale: 2 }).notNull().default("190"),
+  tallShelfCountMin: numeric("tall_shelf_count_min", { precision: 3, scale: 0 }).notNull().default("5"),
+  tallShelfCountMax: numeric("tall_shelf_count_max", { precision: 3, scale: 0 }).notNull().default("6"),
 });
 
 // ─── Insert schemas ──────────────────────────────────────────────────────────

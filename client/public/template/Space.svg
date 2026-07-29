@@ -102,6 +102,8 @@
     <text class="cls-11" id="qt-base-depth" transform="translate(119.92 472.59)"><tspan x="0" y="0">60</tspan><tspan x="11.52" y="0" xml:space="preserve"> cm</tspan></text>
     <text class="cls-11" id="qt-base-lbl-including" transform="translate(51.17 511.46)"><tspan x="0" y="0">Including</tspan></text>
     <text class="cls-11" id="qt-base-drawers" transform="translate(119.92 511.46)"><tspan x="0" y="0">8</tspan><tspan x="5.76" y="0" xml:space="preserve"> drawers</tspan></text>
+    <text class="cls-11" id="qt-base-lbl-shelf" transform="translate(51.17 524.46)"><tspan x="0" y="0">Shelf</tspan></text>
+    <text class="cls-11" id="qt-base-shelf" transform="translate(119.92 524.46)"><tspan x="0" y="0">Glass</tspan></text>
     <text class="cls-11" id="qt-base-lbl-skirting" transform="translate(51.17 485.94)"><tspan x="0" y="0">Skirting</tspan></text>
     <text class="cls-11" id="qt-base-skirting" transform="translate(119.92 485.94)"><tspan x="0" y="0">+</tspan><tspan x="7.08" y="0">10</tspan><tspan x="18.6" y="0" xml:space="preserve"> cm</tspan></text>
     <text class="cls-11" id="qt-base-finish" transform="translate(51.17 498.93)"><tspan x="0" y="0">Solid Matte / Soft Touch</tspan></text>
@@ -118,6 +120,10 @@
     <text class="cls-11" id="qt-tall-depth" transform="translate(120.86 574.75)"><tspan x="0" y="0">60</tspan><tspan x="11.52" y="0" xml:space="preserve"> cm</tspan></text>
     <text class="cls-11" id="qt-tall-lbl-including" transform="translate(52.11 613.62)"><tspan x="0" y="0">Including</tspan></text>
     <text class="cls-5" id="qt-tall-drawers" transform="translate(120.86 613.25)"><tspan x="0" y="0">8 drawers</tspan></text>
+    <text class="cls-11" id="qt-tall-lbl-shelf" transform="translate(52.11 626.25)"><tspan x="0" y="0">Shelf</tspan></text>
+    <text class="cls-11" id="qt-tall-shelf" transform="translate(120.86 626.25)"><tspan x="0" y="0">None</tspan></text>
+    <text class="cls-4" id="qt-countertop-title" transform="translate(51.24 646)"><tspan x="0" y="0">COUNTERTOP</tspan></text>
+    <text class="cls-11" id="qt-countertop" transform="translate(51.17 659)"><tspan x="0" y="0">—</tspan></text>
     <text class="cls-11" id="qt-tall-lbl-skirting" transform="translate(52.11 588.1)"><tspan x="0" y="0">Skirting</tspan></text>
     <text class="cls-11" id="qt-tall-skirting" transform="translate(120.86 588.1)"><tspan x="0" y="0">+</tspan><tspan x="7.08" y="0">10</tspan><tspan x="18.6" y="0" xml:space="preserve"> cm</tspan></text>
     <text class="cls-11" id="qt-tall-finish" transform="translate(52.11 601.09)"><tspan x="0" y="0">Solid Matte / Soft Touch</tspan></text>
@@ -142,6 +148,8 @@
     <text class="cls-11" id="qt-wall-depth" transform="translate(342.49 472.59)"><tspan x="0" y="0">60</tspan><tspan x="11.52" y="0" xml:space="preserve"> cm</tspan></text>
     <text class="cls-11" id="qt-wall-lbl-including" transform="translate(273.73 511.46)"><tspan x="0" y="0">Including</tspan></text>
     <text class="cls-11" id="qt-wall-drawers" transform="translate(342.49 511.46)"><tspan x="0" y="0">8</tspan><tspan x="5.76" y="0" xml:space="preserve"> drawers</tspan></text>
+    <text class="cls-11" id="qt-wall-lbl-shelf" transform="translate(273.73 524.46)"><tspan x="0" y="0">Shelf</tspan></text>
+    <text class="cls-11" id="qt-wall-shelf" transform="translate(342.49 524.46)"><tspan x="0" y="0">Glass</tspan></text>
     <text class="cls-11" id="qt-wall-lbl-skirting" transform="translate(273.73 485.94)"><tspan x="0" y="0">Skirting</tspan></text>
     <text class="cls-11" id="qt-wall-skirting" transform="translate(342.49 485.94)"><tspan x="0" y="0">+</tspan><tspan x="7.08" y="0">10</tspan><tspan x="18.6" y="0" xml:space="preserve"> cm</tspan></text>
     <text class="cls-11" id="qt-wall-finish" transform="translate(273.73 498.93)"><tspan x="0" y="0">Solid Matte / Soft Touch</tspan></text>

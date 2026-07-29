@@ -232,7 +232,11 @@ function priceSpaceLayers(
 			const effPx = effLengths.get(c.id) ?? 0;
 			return sum + pixelsToCm(effPx) / 100;
 		}, 0);
-		const lengthM = boundIsland ? boundIsland.lengthCm / 100 : cabinetsLengthM;
+		const lengthM = boundIsland
+			? boundIsland.lengthCm / 100
+			: layer.type === "countertop"
+			? layer.manualLengthM ?? 0
+			: cabinetsLengthM;
 
 		const pricingLayerInput = boundIsland
 			? { ...layer, depth: boundIsland.depthCm, height: boundIsland.heightCm }
@@ -260,9 +264,22 @@ interface BlockSpec {
 	skirting: string;
 	finish: string;
 	drawers: string;
+	shelf: string;
 }
 
 const SKIRTING_TYPES: ReadonlySet<TypeKey> = new Set(["base", "tall", "island"]);
+const SHELF_TYPES: ReadonlySet<TypeKey> = new Set(["base", "wall_cabinet", "tall"]);
+
+const SHELF_LABEL: Record<string, string> = {
+	glass: "Glass",
+	ss: "SS (Stainless Steel)",
+	none: "None",
+};
+
+function shelfLabel(key: TypeKey, shelfMaterial: string | undefined): string {
+	const material = shelfMaterial || (key === "tall" ? "none" : "glass");
+	return SHELF_LABEL[material] ?? "Glass";
+}
 
 /**
  * The template has one fixed slot per cabinet type. We surface the representative
@@ -296,6 +313,7 @@ function buildSpecs(s: SpaceExportData, finishes: DreamHomeFinish[]) {
 			skirting: SKIRTING_TYPES.has(key) ? "+10 cm" : "",
 			finish: finishName(layer.finishId),
 			drawers: key === "base" && drawerCount > 0 ? `${drawerCount} drawers` : "",
+			shelf: SHELF_TYPES.has(key) ? shelfLabel(key, layer.shelfMaterial) : "",
 		};
 	}
 	return specs;
@@ -368,11 +386,13 @@ function fillRoomSvg(
 				`${prefix}-lbl-depth`,
 				`${prefix}-lbl-skirting`,
 				`${prefix}-lbl-including`,
+				`${prefix}-lbl-shelf`,
 				`${prefix}-height`,
 				`${prefix}-depth`,
 				`${prefix}-skirting`,
 				`${prefix}-finish`,
 				`${prefix}-drawers`,
+				`${prefix}-shelf`,
 			].forEach((id) => hide(doc, id));
 			continue;
 		}
@@ -381,6 +401,28 @@ function fillRoomSvg(
 		setText(doc, `${prefix}-skirting`, spec.skirting);
 		setText(doc, `${prefix}-finish`, spec.finish);
 		setText(doc, `${prefix}-drawers`, spec.drawers);
+		if (spec.shelf) {
+			setText(doc, `${prefix}-shelf`, spec.shelf);
+		} else {
+			hide(doc, `${prefix}-lbl-shelf`);
+			hide(doc, `${prefix}-shelf`);
+		}
+	}
+
+	// 4b. Countertop -- not a fixed-slot cabinet type, so summed across every
+	// countertop layer in the space (each can have its own length/rate) rather
+	// than surfacing just one representative layer like the blocks above.
+	const countertopLayers = s.layers.filter((l) => l.type === "countertop");
+	if (countertopLayers.length > 0) {
+		const lengthM = countertopLayers.reduce((sum, l) => sum + (l.manualLengthM ?? 0), 0);
+		const aed = countertopLayers.reduce(
+			(sum, l) => sum + (l.manualLengthM ?? 0) * (l.priceAedPerM ?? 0),
+			0,
+		);
+		setText(doc, "qt-countertop", `${lengthM.toFixed(2)} m  =  ${formatThousands(aed)} AED`);
+	} else {
+		hide(doc, "qt-countertop-title");
+		hide(doc, "qt-countertop");
 	}
 
 	// 5. Total (number only; "AED" is baked into the artboard).
@@ -466,6 +508,8 @@ function fillIntroSvg(
 	setText(doc, "qt-location", project.address || "—");
 	setText(doc, "qt-date", formatDateDDMMMYYYY(new Date()));
 	setText(doc, "qt-mobile", project.clientPhone || "—");
+	setText(doc, "qt-reference", project.clientReference || "—");
+	setText(doc, "qt-prepared-by", project.preparedBy || "—");
 
 	return new XMLSerializer().serializeToString(doc);
 }
@@ -495,6 +539,8 @@ function drawIntroFallback(doc: jsPDF, project: SavedProject) {
 		["LOCATION", project.address || "—"],
 		["DATE", formatDateDDMMMYYYY(new Date())],
 		["MOBILE", project.clientPhone || "—"],
+		["REFERENCE", project.clientReference || "—"],
+		["PREPARED BY", project.preparedBy || "—"],
 	];
 	let y = 150;
 	const labelX = W / 2 - 55;

@@ -26,6 +26,8 @@ export interface Project {
   clientPhone: string;
   clientEmail: string;
   address: string;
+  clientReference: string;
+  preparedBy: string;
   stage: ProjectStage;
   notes: string;
   selectedFinishing: string | null;

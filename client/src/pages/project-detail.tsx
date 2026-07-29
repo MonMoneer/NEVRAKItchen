@@ -4,6 +4,7 @@ import type Konva from 'konva';
 import { useAuthStore } from '@/stores/useAuthStore';
 import {
 	useProjectStore,
+	type Project,
 	type ProjectStage,
 	ProjectSpace,
 } from '@/stores/useProjectStore';
@@ -50,6 +51,14 @@ import {
 	DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from '@/components/ui/select';
 import {
 	ArrowLeft,
 	Plus,
@@ -63,7 +72,9 @@ import {
 	Undo2,
 	Redo2,
 	CalendarClock,
+	Pencil,
 } from 'lucide-react';
+import { CLIENT_REFERENCE_PREFIX, PREPARED_BY_OPTIONS } from '@/pages/projects';
 
 // ─── Space type config ────────────────────────────────────────────────────────
 
@@ -139,6 +150,161 @@ function AddSpaceDialog({
 					</Button>
 					<Button onClick={handleSubmit}>Add space</Button>
 				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+// ─── Edit Project dialog ───────────────────────────────────────────────────────
+
+function EditProjectDialog({
+	open,
+	onOpenChange,
+	project,
+	onSaved,
+}: {
+	open: boolean;
+	onOpenChange: (v: boolean) => void;
+	project: Project;
+	onSaved: (updates: Partial<Project>) => void;
+}) {
+	const { toast } = useToast();
+	const [name, setName] = useState(project.name);
+	const [clientName, setClientName] = useState(project.clientName);
+	const [clientPhone, setClientPhone] = useState(project.clientPhone);
+	const [clientEmail, setClientEmail] = useState(project.clientEmail);
+	const [address, setAddress] = useState(project.address);
+	const [clientReferenceSuffix, setClientReferenceSuffix] = useState(
+		(project.clientReference || '').replace(new RegExp(`^${CLIENT_REFERENCE_PREFIX}`, 'i'), '')
+	);
+	const [preparedBy, setPreparedBy] = useState(project.preparedBy);
+	const [isSaving, setIsSaving] = useState(false);
+	const [error, setError] = useState('');
+
+	// Re-sync from the project whenever the dialog is (re)opened, so stale
+	// edits from a previous open don't leak in and fresh server data shows.
+	useEffect(() => {
+		if (!open) return;
+		setName(project.name);
+		setClientName(project.clientName);
+		setClientPhone(project.clientPhone);
+		setClientEmail(project.clientEmail);
+		setAddress(project.address);
+		setClientReferenceSuffix(
+			(project.clientReference || '').replace(new RegExp(`^${CLIENT_REFERENCE_PREFIX}`, 'i'), '')
+		);
+		setPreparedBy(project.preparedBy);
+		setError('');
+	}, [open, project]);
+
+	const handleSubmit = async (e: React.FormEvent) => {
+		e.preventDefault();
+		setError('');
+		setIsSaving(true);
+		try {
+			const clientReference = clientReferenceSuffix.trim()
+				? `${CLIENT_REFERENCE_PREFIX}${clientReferenceSuffix.trim()}`
+				: '';
+			const updates = {
+				name,
+				clientName,
+				clientPhone,
+				clientEmail,
+				address,
+				clientReference,
+				preparedBy,
+			};
+			const res = await fetch(`/api/projects/${project.id}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(updates),
+			});
+			if (!res.ok) {
+				const data = await res.json();
+				setError(data.error || 'Failed to save changes');
+				return;
+			}
+			onSaved(updates);
+			onOpenChange(false);
+			toast({ title: 'Project details updated' });
+		} catch {
+			setError('Network error. Please try again.');
+		} finally {
+			setIsSaving(false);
+		}
+	};
+
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent className="sm:max-w-md">
+				<DialogHeader>
+					<DialogTitle>Edit Project Details</DialogTitle>
+				</DialogHeader>
+				<form onSubmit={handleSubmit} className="space-y-3 pt-1">
+					<div className="space-y-1">
+						<Label>Project name *</Label>
+						<Input value={name} onChange={(e) => setName(e.target.value)} required />
+					</div>
+					<div className="space-y-1">
+						<Label>Client name</Label>
+						<Input value={clientName} onChange={(e) => setClientName(e.target.value)} />
+					</div>
+					<div className="grid grid-cols-2 gap-3">
+						<div className="space-y-1">
+							<Label>Phone</Label>
+							<Input value={clientPhone} onChange={(e) => setClientPhone(e.target.value)} />
+						</div>
+						<div className="space-y-1">
+							<Label>Email</Label>
+							<Input type="email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} />
+						</div>
+					</div>
+					<div className="space-y-1">
+						<Label>Address</Label>
+						<Input value={address} onChange={(e) => setAddress(e.target.value)} />
+					</div>
+					<div className="grid grid-cols-2 gap-3">
+						<div className="space-y-1">
+							<Label>Client reference</Label>
+							<div className="flex items-center rounded-md border border-input focus-within:ring-1 focus-within:ring-ring">
+								<span className="pl-3 text-sm text-muted-foreground select-none">
+									{CLIENT_REFERENCE_PREFIX}
+								</span>
+								<Input
+									value={clientReferenceSuffix}
+									onChange={(e) =>
+										setClientReferenceSuffix(e.target.value.replace(/^NV-/i, ''))
+									}
+									className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0 pl-1"
+								/>
+							</div>
+						</div>
+						<div className="space-y-1">
+							<Label>Prepared by</Label>
+							<Select value={preparedBy} onValueChange={setPreparedBy}>
+								<SelectTrigger>
+									<SelectValue placeholder="Select…" />
+								</SelectTrigger>
+								<SelectContent>
+									{PREPARED_BY_OPTIONS.map((n) => (
+										<SelectItem key={n} value={n}>{n}</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+					</div>
+
+					{error && <p className="text-sm text-red-600">{error}</p>}
+
+					<DialogFooter className="pt-2">
+						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={isSaving}>
+							{isSaving ? 'Saving…' : 'Save changes'}
+						</Button>
+					</DialogFooter>
+				</form>
 			</DialogContent>
 		</Dialog>
 	);
@@ -290,7 +456,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 	const [, navigate] = useLocation();
 	const { toast } = useToast();
 	const { user } = useAuthStore();
-	const { currentProject, setCurrentProject, updateCurrentProject } =
+	const { currentProject, setCurrentProject, updateCurrentProject, upsertProject } =
 		useProjectStore();
 	const {
 		spaces,
@@ -304,6 +470,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 	const canvasStore = useCanvasStore();
 
 	const [addSpaceOpen, setAddSpaceOpen] = useState(false);
+	const [editProjectOpen, setEditProjectOpen] = useState(false);
 	const [showSidePanel, setShowSidePanel] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
 	// Sidebar collapse state — persisted per-session so the layout survives
@@ -401,14 +568,22 @@ export default function ProjectDetail({ id }: { id: number }) {
 	);
 
 	useEffect(() => {
-		// Flush pending save for the PREVIOUS space before loading new one.
+		const prev = prevSpaceRef.current;
+		const isSwitch =
+			prev.id !== null &&
+			(prev.id !== activeSpaceId || prev.field !== canvasSourceField);
+
 		if (saveTimeout.current) {
 			clearTimeout(saveTimeout.current);
 			saveTimeout.current = null;
-			const prev = prevSpaceRef.current;
-			if (prev.id) {
-				saveCanvasNow(prev.id, prev.field);
-			}
+		}
+
+		// Always flush the PREVIOUS space's current in-memory canvas state before
+		// loading the new one -- not only when a debounced save happens to be
+		// pending. Some edits (e.g. a Layer's Finish) don't schedule a save, so
+		// relying on saveTimeout alone silently discards those on tab-switch.
+		if (isSwitch) {
+			saveCanvasNow(prev.id as number, prev.field);
 		}
 
 		// Update ref to current values
@@ -436,15 +611,17 @@ export default function ProjectDetail({ id }: { id: number }) {
 		}
 	}, [activeSpaceId, canvasSourceField]); // eslint-disable-line react-hooks/exhaustive-deps
 
-	// Flush pending save on unmount (user clicks Back / navigates away)
+	// Flush current canvas state on unmount (user clicks Back / navigates away),
+	// regardless of whether a debounced save happens to be pending -- some
+	// edits (e.g. a Layer's Finish) don't schedule one.
 	useEffect(() => {
 		return () => {
 			if (saveTimeout.current) {
 				clearTimeout(saveTimeout.current);
 				saveTimeout.current = null;
-				const prev = prevSpaceRef.current;
-				if (prev.id) saveCanvasNow(prev.id, prev.field);
 			}
+			const prev = prevSpaceRef.current;
+			if (prev.id) saveCanvasNow(prev.id, prev.field);
 		};
 	}, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -485,8 +662,12 @@ export default function ProjectDetail({ id }: { id: number }) {
 				return;
 			}
 
-			// Block same-type overlap (base on base, wall_cabinet on wall_cabinet)
-			if (cabinet.type === 'base' || cabinet.type === 'wall_cabinet') {
+			// Block same-type overlap (base on base only). Wall cabinets are freely
+			// allowed to overlap other wall cabinets or tall cabinets -- e.g. a
+			// deeper wall cabinet run drawn over a shallower one -- each cabinet
+			// stays fully intact and priced independently, rendered semi-transparent
+			// (CABINET_STYLES.wall_cabinet.fillOpacity) so both remain visible.
+			if (cabinet.type === 'base') {
 				const sameTypeOverlap = findOverlappingCabinets(
 					cabinet.start,
 					cabinet.end,
@@ -495,7 +676,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 				);
 				if (sameTypeOverlap.length > 0) {
 					toast({
-						title: `Cannot overlap existing ${cabinet.type === 'base' ? 'base' : 'wall'} cabinet`,
+						title: 'Cannot overlap existing base cabinet',
 						variant: 'destructive',
 					});
 					return;
@@ -504,6 +685,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 
 			let newCabinets = [...drawingState.cabinets];
 			if (cabinet.type === 'tall') {
+				// A new tall cabinet clips into existing base/wall cabinets underneath it.
 				const overlapping = findOverlappingCabinets(
 					cabinet.start,
 					cabinet.end,
@@ -531,12 +713,12 @@ export default function ProjectDetail({ id }: { id: number }) {
 				// Read fresh store state (avoid stale closure on activeLayerId)
 				const freshState = useCanvasStore.getState();
 				const activeLayerId = freshState.activeLayerId;
-				console.log("[tall-draw] activeLayerId=", activeLayerId, "layers=", freshState.layers.map((l) => ({ id: l.id, type: l.type })));
+				console.log("[cabinet-draw] activeLayerId=", activeLayerId, "layers=", freshState.layers.map((l) => ({ id: l.id, type: l.type })));
 				const cabinetWithLayer = activeLayerId
 					? { ...cabinet, layerId: activeLayerId }
 					: cabinet;
 				newCabinets.push(cabinetWithLayer);
-				console.log("[tall-draw] pushed cabinet with layerId=", cabinetWithLayer.layerId, "cabinet id=", cabinetWithLayer.id);
+				console.log("[cabinet-draw] pushed cabinet with layerId=", cabinetWithLayer.layerId, "cabinet id=", cabinetWithLayer.id);
 				canvasStore.setDrawingState((prev) => ({
 					...prev,
 					cabinets: newCabinets,
@@ -549,7 +731,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 						(l) => l.id === activeLayerId
 					);
 					if (activeLayer) {
-						console.log("[tall-draw] updating layer cabinetIds from", activeLayer.cabinetIds, "adding", cabinetWithLayer.id);
+						console.log("[cabinet-draw] updating layer cabinetIds from", activeLayer.cabinetIds, "adding", cabinetWithLayer.id);
 						canvasStore.updateLayer(activeLayerId, {
 							cabinetIds: [
 								...activeLayer.cabinetIds,
@@ -557,10 +739,10 @@ export default function ProjectDetail({ id }: { id: number }) {
 							],
 						});
 					} else {
-						console.log("[tall-draw] WARNING: activeLayerId set but layer not found in freshState.layers");
+						console.log("[cabinet-draw] WARNING: activeLayerId set but layer not found in freshState.layers");
 					}
 				} else {
-					console.log("[tall-draw] WARNING: no activeLayerId — cabinet drawn without layer assignment");
+					console.log("[cabinet-draw] WARNING: no activeLayerId — cabinet drawn without layer assignment");
 				}
 			} else {
 				canvasStore.addCabinet(cabinet);
@@ -1000,6 +1182,20 @@ export default function ProjectDetail({ id }: { id: number }) {
 							{currentProject.clientName}
 						</span>
 					)}
+					{currentProject.clientReference && (
+						<span className="text-xs font-mono text-muted-foreground ml-2">
+							{currentProject.clientReference}
+						</span>
+					)}
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-6 w-6 p-0 ml-1"
+						onClick={() => setEditProjectOpen(true)}
+						title="Edit project details"
+					>
+						<Pencil className="h-3.5 w-3.5" />
+					</Button>
 				</div>
 
 				{/* Stage toggle + controls */}
@@ -1302,6 +1498,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 							<LayerPanel
 								cabinets={drawingState.cabinets}
 								walls={drawingState.walls}
+								onLayersChanged={scheduleCanvasSave}
 							/>
 						</div>
 					</div>
@@ -1334,6 +1531,16 @@ export default function ProjectDetail({ id }: { id: number }) {
 				open={addSpaceOpen}
 				onOpenChange={setAddSpaceOpen}
 				onAdd={handleAddSpace}
+			/>
+
+			<EditProjectDialog
+				open={editProjectOpen}
+				onOpenChange={setEditProjectOpen}
+				project={currentProject}
+				onSaved={(updates) => {
+					updateCurrentProject(updates);
+					upsertProject({ ...currentProject, ...updates });
+				}}
 			/>
 
 			{/* Stage switch confirmation dialog */}

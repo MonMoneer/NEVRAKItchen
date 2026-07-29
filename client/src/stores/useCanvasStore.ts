@@ -482,7 +482,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   addLayer: (layer) => {
     const state = get();
     const drawableCabinetTypes = ["base", "wall_cabinet", "tall"];
-    const newLayers = [...state.layers, layer];
+    // Newest layer goes to the front of the array -- index 0 is the top of
+    // the Layers panel AND the front of the canvas (see renderCabinets'
+    // "Photoshop semantics" sort in DesignerCanvas.tsx), so this makes new
+    // layers appear both highest in the panel and on top of the drawing.
+    const newLayers = [layer, ...state.layers];
     const newDrawingState = drawableCabinetTypes.includes(layer.type)
       ? {
           ...state.drawingState,

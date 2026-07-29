@@ -37,6 +37,8 @@ async function runMigrations() {
   try {
     await pool.query(`ALTER TABLE spaces ADD COLUMN IF NOT EXISTS site_measurement_data jsonb`);
     await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS assigned_to integer REFERENCES users(id)`);
+    await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS client_reference text NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS prepared_by text NOT NULL DEFAULT ''`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS project_attachments (
         id serial PRIMARY KEY,
@@ -96,6 +98,11 @@ async function runMigrations() {
         drawer_flat_aed numeric(10,2) NOT NULL DEFAULT '500'
       )
     `);
+    // Shelf upgrade rates (SS priced by area, glass by piece for tall only)
+    await pool.query(`ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS shelf_ss_rate_cny_per_m2 numeric(10,2) NOT NULL DEFAULT '610'`);
+    await pool.query(`ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS shelf_glass_rate_cny_per_pc numeric(10,2) NOT NULL DEFAULT '190'`);
+    await pool.query(`ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS tall_shelf_count_min numeric(3,0) NOT NULL DEFAULT '5'`);
+    await pool.query(`ALTER TABLE pricing_settings ADD COLUMN IF NOT EXISTS tall_shelf_count_max numeric(3,0) NOT NULL DEFAULT '6'`);
     // Client-facing project timelines (delivery schedule + payment plan)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS project_timelines (

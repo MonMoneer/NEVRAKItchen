@@ -180,6 +180,10 @@ function PricingSettingsCard() {
     { key: "marginDiv", label: "Margin Divisor" },
     { key: "decorativeCnyPerM2", label: "Decorative Panel CNY/m²" },
     { key: "drawerFlatAed", label: "Drawer Flat AED" },
+    { key: "shelfSsRateCnyPerM2", label: "SS Shelf Upgrade CNY/m²" },
+    { key: "shelfGlassRateCnyPerPc", label: "Tall Glass Shelf CNY/pc" },
+    { key: "tallShelfCountMin", label: "Tall Shelf Count (≤230cm)" },
+    { key: "tallShelfCountMax", label: "Tall Shelf Count (≥240cm)" },
   ];
 
   return (

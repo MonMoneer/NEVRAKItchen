@@ -54,8 +54,9 @@ export function toAED(cny: number, s: PricingSettings): number {
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type LayerType = "base" | "wall_cabinet" | "tall" | "island" | "end_panel" | "filler" | "drawer";
+export type LayerType = "base" | "wall_cabinet" | "tall" | "island" | "end_panel" | "filler" | "drawer" | "countertop";
 export type EndPanelVariant = "base" | "wall" | "decorative";
+export type ShelfMaterial = "glass" | "ss" | "none";
 
 export interface PricingLayer {
   id: string;
@@ -63,10 +64,13 @@ export interface PricingLayer {
   depth: number | null;
   height: number | null;
   finishId?: number | null;
+  shelfMaterial?: ShelfMaterial;
   endPanelVariant?: EndPanelVariant;
   endPanelWallArea?: number;
   endPanelDecorHeight?: number;
   qty?: number;
+  manualLengthM?: number;
+  priceAedPerM?: number;
 }
 
 export interface PriceInput {
@@ -96,6 +100,43 @@ function lookupTallPrice(tallHeights: TallHeight[], heightMm: number, finishId: 
   return row ? Number(row.priceCnyPerM) : 0;
 }
 
+// ─── Shelf upgrade pricing ──────────────────────────────────────────────────
+//
+// SS shelves are priced by area: rate (CNY/m²) × cabinet depth (m) × length
+// (m) × shelf count. Base/wall have exactly 1 shelf per lm; tall cabinets get
+// `tallShelfCount` shelves (a count set by height bracket). Glass is included
+// free on base/wall (their normal shelf material); on tall, glass is a flat
+// per-piece charge (no depth factor) × shelf count × length.
+
+function tallShelfCount(heightMm: number, settings: PricingSettings): number {
+  return heightMm <= 2300 ? Number(settings.tallShelfCountMin) : Number(settings.tallShelfCountMax);
+}
+
+function shelfCnyForBaseOrWall(
+  material: ShelfMaterial | undefined,
+  depthCm: number,
+  lengthM: number,
+  settings: PricingSettings,
+): number {
+  if (material !== "ss") return 0; // glass (default) is included, no charge
+  return Number(settings.shelfSsRateCnyPerM2) * (depthCm / 100) * lengthM;
+}
+
+function shelfCnyForTall(
+  material: ShelfMaterial | undefined,
+  depthCm: number,
+  lengthM: number,
+  heightMm: number,
+  settings: PricingSettings,
+): { cny: number; count: number } {
+  if (!material || material === "none") return { cny: 0, count: 0 };
+  const count = tallShelfCount(heightMm, settings);
+  if (material === "glass") {
+    return { cny: Number(settings.shelfGlassRateCnyPerPc) * count * lengthM, count };
+  }
+  return { cny: Number(settings.shelfSsRateCnyPerM2) * (depthCm / 100) * lengthM * count, count };
+}
+
 // ─── Settings breakdown suffix (common to all calculations) ─────────────────
 
 function settingsSuffix(s: PricingSettings): string {
@@ -120,6 +161,8 @@ export function calculateLayerPrice(input: PriceInput): PriceResult {
       return calcFiller(input);
     case "drawer":
       return calcDrawer(input);
+    case "countertop":
+      return calcCountertop(input);
     default:
       return { subtotalAED: 0, breakdown: "Unknown layer type" };
   }
@@ -136,10 +179,12 @@ function calcBaseOrWall(input: PriceInput): PriceResult {
 
   const hSur = heightSurcharge(layer.height, std.heightMm);
   const dSur = depthSurcharge(layer.depth, std.depthMm);
-  const cny = base * hSur * dSur * lengthM;
+  const shelfCny = shelfCnyForBaseOrWall(layer.shelfMaterial, layer.depth, lengthM, settings);
+  const cny = base * hSur * dSur * lengthM + shelfCny;
   const aed = toAED(cny, settings);
 
-  const breakdown = `${base} CNY/m × (${hSur.toFixed(2)} × ${dSur.toFixed(2)}) × ${lengthM.toFixed(2)}m ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`;
+  const shelfNote = shelfCny > 0 ? ` + ${shelfCny.toFixed(0)} CNY (SS shelf)` : "";
+  const breakdown = `${base} CNY/m × (${hSur.toFixed(2)} × ${dSur.toFixed(2)}) × ${lengthM.toFixed(2)}m${shelfNote} ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`;
   const rateLabel = `${base} CNY/m × ${hSur.toFixed(2)} (H) × ${dSur.toFixed(2)} (D)`;
   return { subtotalAED: aed, breakdown, rateLabel };
 }
@@ -154,11 +199,13 @@ function calcTall(input: PriceInput): PriceResult {
   if (base === 0) return { subtotalAED: 0, breakdown: "No tall price data" };
 
   const dSur = depthSurcharge(layer.depth, STANDARDS.tall.depthMm);
-  const cny = base * dSur * lengthM;
+  const shelf = shelfCnyForTall(layer.shelfMaterial, layer.depth, lengthM, snapped.heightMm, settings);
+  const cny = base * dSur * lengthM + shelf.cny;
   const aed = toAED(cny, settings);
 
   const sourceLabel = snapped.source === "platinum" ? "Platinum" : "Dream Home";
-  const breakdown = `${sourceLabel} ${snapped.heightMm}mm: ${base} CNY/m × ${dSur.toFixed(2)} × ${lengthM.toFixed(2)}m ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`;
+  const shelfNote = shelf.cny > 0 ? ` + ${shelf.cny.toFixed(0)} CNY (${shelf.count}× ${layer.shelfMaterial} shelf)` : "";
+  const breakdown = `${sourceLabel} ${snapped.heightMm}mm: ${base} CNY/m × ${dSur.toFixed(2)} × ${lengthM.toFixed(2)}m${shelfNote} ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`;
   const rateLabel = `${base} CNY/m (${sourceLabel} ${snapped.heightMm}mm) × ${dSur.toFixed(2)} (D)`;
   return { subtotalAED: aed, breakdown, rateLabel };
 }
@@ -246,6 +293,20 @@ function calcFiller(input: PriceInput): PriceResult {
     subtotalAED: aed,
     breakdown: `${qty} × 0.2m² × ${rate} CNY/m² = ${cny.toFixed(0)} CNY ${settingsSuffix(settings)} = ${aed.toFixed(0)} AED`,
     rateLabel: `${rate} CNY/m² × ${areaM2.toFixed(2)}m²`,
+  };
+}
+
+// Countertop is not drawn on canvas -- its length is a manually-entered value
+// (pre-filled once from the base cabinet total, then freely editable) and its
+// rate is a flat AED/m figure typed in directly, with no CNY/FX conversion.
+function calcCountertop(input: PriceInput): PriceResult {
+  const { layer, lengthM } = input;
+  const rate = Number(layer.priceAedPerM ?? 0);
+  const aed = lengthM * rate;
+  return {
+    subtotalAED: aed,
+    breakdown: `${lengthM.toFixed(2)}m × ${rate.toFixed(2)} AED/m (flat) = ${aed.toFixed(0)} AED`,
+    rateLabel: `${rate.toFixed(2)} AED/m × ${lengthM.toFixed(2)}m`,
   };
 }
 
