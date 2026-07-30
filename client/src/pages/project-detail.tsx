@@ -858,10 +858,30 @@ export default function ProjectDetail({ id }: { id: number }) {
 		);
 		const extraMargin = Math.max(maxDepthPx, WALL_THICKNESS) + 40;
 		const padding = 80 + extraMargin;
-		const minX = Math.min(...allPoints.map((p) => p.x)) - padding;
-		const minY = Math.min(...allPoints.map((p) => p.y)) - padding;
-		const maxX = Math.max(...allPoints.map((p) => p.x)) + padding;
-		const maxY = Math.max(...allPoints.map((p) => p.y)) + padding;
+		let minX = Math.min(...allPoints.map((p) => p.x)) - padding;
+		let minY = Math.min(...allPoints.map((p) => p.y)) - padding;
+		let maxX = Math.max(...allPoints.map((p) => p.x)) + padding;
+		let maxY = Math.max(...allPoints.map((p) => p.y)) + padding;
+
+		// Grow (never crop) the shorter axis so the capture's aspect ratio
+		// matches the PDF's plan frame (qt-plan, 490.39×275.84 in Space.svg).
+		// Otherwise preserveAspectRatio="meet" letterboxes the room inside the
+		// frame, making it look tiny with empty space around it.
+		const FRAME_ASPECT = 490.39 / 275.84;
+		const boxW = maxX - minX;
+		const boxH = maxY - minY;
+		const boxAspect = boxW / boxH;
+		if (boxAspect > FRAME_ASPECT) {
+			const targetH = boxW / FRAME_ASPECT;
+			const extra = (targetH - boxH) / 2;
+			minY -= extra;
+			maxY += extra;
+		} else {
+			const targetW = boxH * FRAME_ASPECT;
+			const extra = (targetW - boxW) / 2;
+			minX -= extra;
+			maxX += extra;
+		}
 
 		const gridLayer = konvaStage.findOne('.grid');
 		const wasGridVisible = gridLayer?.visible();

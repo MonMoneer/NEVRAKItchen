@@ -254,18 +254,16 @@ function priceSpaceLayers(
 	return total;
 }
 
-// ── Per-type spec extraction ────────────────────────────────────────────────────
+// ── Per-layer spec extraction ────────────────────────────────────────────────────
+//
+// Each layer (not just each cabinet TYPE) gets its own named row -- two wall
+// cabinets with different specs each show up separately, labelled with
+// whatever name was set in the Layers panel (falling back to "Wall Cabinet 2"
+// etc. for unnamed ones). Rows are grouped under a shared type heading and
+// laid out in two balanced columns; a single scale factor shrinks font size
+// and line spacing so any number of layers still fits above the TOTAL line.
 
 type TypeKey = "base" | "wall_cabinet" | "tall" | "island";
-
-interface BlockSpec {
-	height: string;
-	depth: string;
-	skirting: string;
-	finish: string;
-	drawers: string;
-	shelf: string;
-}
 
 const SKIRTING_TYPES: ReadonlySet<TypeKey> = new Set(["base", "tall", "island"]);
 const SHELF_TYPES: ReadonlySet<TypeKey> = new Set(["base", "wall_cabinet", "tall"]);
@@ -281,11 +279,24 @@ function shelfLabel(key: TypeKey, shelfMaterial: string | undefined): string {
 	return SHELF_LABEL[material] ?? "Glass";
 }
 
-/**
- * The template has one fixed slot per cabinet type. We surface the representative
- * (first) layer of each type; the page TOTAL still reflects every layer.
- */
-function buildSpecs(s: SpaceExportData, finishes: DreamHomeFinish[]) {
+const TYPE_HEADINGS: Record<TypeKey, string> = {
+	base: "BASE CABINET",
+	wall_cabinet: "WALL CABINET",
+	tall: "TALL CABINET",
+	island: "ISLAND",
+};
+
+interface SpecRow {
+	label: string;
+	detail: string;
+}
+
+interface SpecGroup {
+	heading: string;
+	rows: SpecRow[];
+}
+
+function buildLayerGroups(s: SpaceExportData, finishes: DreamHomeFinish[]): SpecGroup[] {
 	const finishName = (id: number | null | undefined) =>
 		finishes.find((f) => f.id === id)?.name || "—";
 
@@ -293,30 +304,71 @@ function buildSpecs(s: SpaceExportData, finishes: DreamHomeFinish[]) {
 		.filter((l) => l.type === "drawer")
 		.reduce((sum, l) => sum + (l.qty ?? 0), 0);
 
-	const specs: Partial<Record<TypeKey, BlockSpec>> = {};
+	const groups: SpecGroup[] = [];
 
 	for (const key of ["base", "wall_cabinet", "tall", "island"] as TypeKey[]) {
-		const layer = s.layers.find((l) => l.type === key);
-		if (!layer) continue;
+		const layers = s.layers.filter((l) => l.type === key);
+		if (layers.length === 0) continue;
 
-		const island =
-			key === "island"
-				? s.islands.find((i) => i.layerId === layer.id) ?? null
-				: null;
+		const rows: SpecRow[] = layers.map((layer, i) => {
+			const island =
+				key === "island" ? s.islands.find((isl) => isl.layerId === layer.id) ?? null : null;
+			const height = island ? island.heightCm : layer.height ?? 0;
+			const depth = island ? island.depthCm : layer.depth ?? 0;
 
-		const height = island ? island.heightCm : layer.height ?? 0;
-		const depth = island ? island.depthCm : layer.depth ?? 0;
+			const parts = [
+				height ? `H ${height}cm` : null,
+				depth ? `D ${depth}cm` : null,
+				SKIRTING_TYPES.has(key) ? "Skirting +10cm" : null,
+				finishName(layer.finishId),
+				SHELF_TYPES.has(key) ? `Shelf: ${shelfLabel(key, layer.shelfMaterial)}` : null,
+				key === "base" && i === 0 && drawerCount > 0 ? `${drawerCount} drawers` : null,
+			].filter(Boolean) as string[];
 
-		specs[key] = {
-			height: height ? `${height} cm` : "—",
-			depth: depth ? `${depth} cm` : "—",
-			skirting: SKIRTING_TYPES.has(key) ? "+10 cm" : "",
-			finish: finishName(layer.finishId),
-			drawers: key === "base" && drawerCount > 0 ? `${drawerCount} drawers` : "",
-			shelf: SHELF_TYPES.has(key) ? shelfLabel(key, layer.shelfMaterial) : "",
-		};
+			return {
+				label: layer.name || `${TYPE_HEADINGS[key]} ${i + 1}`,
+				detail: parts.join("  ·  "),
+			};
+		});
+		groups.push({ heading: TYPE_HEADINGS[key], rows });
 	}
-	return specs;
+
+	const countertopLayers = s.layers.filter((l) => l.type === "countertop");
+	if (countertopLayers.length > 0) {
+		const rows: SpecRow[] = countertopLayers.map((layer, i) => {
+			const lengthM = layer.manualLengthM ?? 0;
+			const rate = layer.priceAedPerM ?? 0;
+			const aed = lengthM * rate;
+			return {
+				label: layer.name || `Countertop ${i + 1}`,
+				detail: `${lengthM.toFixed(2)}m × ${rate.toFixed(0)} AED/m  =  ${formatThousands(aed)} AED`,
+			};
+		});
+		groups.push({ heading: "COUNTERTOP", rows });
+	}
+
+	return groups;
+}
+
+/** Greedily balance groups across two columns by total line count. */
+function splitIntoColumns(groups: SpecGroup[]): { left: SpecGroup[]; right: SpecGroup[] } {
+	const sized = groups
+		.map((g) => ({ g, size: 1 + g.rows.length }))
+		.sort((a, b) => b.size - a.size);
+	const left: SpecGroup[] = [];
+	const right: SpecGroup[] = [];
+	let leftSize = 0;
+	let rightSize = 0;
+	for (const { g, size } of sized) {
+		if (leftSize <= rightSize) {
+			left.push(g);
+			leftSize += size;
+		} else {
+			right.push(g);
+			rightSize += size;
+		}
+	}
+	return { left, right };
 }
 
 // ── SVG fill + rasterize ────────────────────────────────────────────────────────
@@ -341,12 +393,136 @@ function hide(doc: Document, id: string) {
 	if (el) el.style.display = "none";
 }
 
+// Ids from the original fixed 4-block template layout. All hidden now that
+// specs are rendered dynamically (see below) -- kept here only so the group
+// each belongs to (its parent <g>) can still be located as an anchor point.
+const OLD_FIXED_BLOCK_IDS: string[] = [
+	"qt-base",
+	"qt-wall",
+	"qt-tall",
+	"qt-island",
+].flatMap((prefix) => [
+	`${prefix}-title`,
+	`${prefix}-lbl-height`,
+	`${prefix}-lbl-depth`,
+	`${prefix}-lbl-skirting`,
+	`${prefix}-lbl-including`,
+	`${prefix}-lbl-shelf`,
+	`${prefix}-height`,
+	`${prefix}-depth`,
+	`${prefix}-skirting`,
+	`${prefix}-finish`,
+	`${prefix}-drawers`,
+	`${prefix}-shelf`,
+]).concat(["qt-countertop-title", "qt-countertop"]);
+
+const SPECS_TOP_Y = 444.44; // matches the original qt-base-title baseline
+const SPECS_BOTTOM_Y = 665; // leaves a margin above the TOTAL line (~681)
+const SPECS_LEFT_X = 51.17; // matches the original base/tall column
+const SPECS_RIGHT_X = 273.73; // matches the original wall/island column
+const SPECS_COLUMN_GAP = 14;
+const SPECS_PAGE_RIGHT_MARGIN = 544; // mirrors the left margin inside the 595.28pt-wide artboard
+const BASE_LINE_HEIGHT = 14;
+const BASE_HEADING_SIZE = 13;
+const BASE_ROW_SIZE = 11;
+const CHAR_WIDTH_FACTOR = 0.52; // rough average glyph width as a fraction of font-size, EB Garamond
+
+/** Greedy word-wrap: breaks `text` into lines no longer than `maxChars`. */
+function wrapText(text: string, maxChars: number): string[] {
+	const limit = Math.max(4, maxChars);
+	const words = text.split(" ");
+	const lines: string[] = [];
+	let current = "";
+	for (const word of words) {
+		const candidate = current ? `${current} ${word}` : word;
+		if (candidate.length > limit && current) {
+			lines.push(current);
+			current = word;
+		} else {
+			current = candidate;
+		}
+	}
+	if (current) lines.push(current);
+	return lines.length ? lines : [""];
+}
+
+interface WrappedRow {
+	nameLines: string[];
+	detailLines: string[];
+}
+interface WrappedGroup {
+	group: SpecGroup;
+	rows: WrappedRow[];
+}
+
+function wrapGroups(groups: SpecGroup[], columnWidth: number, fontSize: number): WrappedGroup[] {
+	const maxChars = Math.max(4, Math.floor(columnWidth / (fontSize * CHAR_WIDTH_FACTOR)));
+	return groups.map((group) => ({
+		group,
+		rows: group.rows.map((row) => ({
+			nameLines: wrapText(row.label, maxChars),
+			detailLines: row.detail ? wrapText(row.detail, maxChars) : [],
+		})),
+	}));
+}
+
+function countWrappedLines(wrapped: WrappedGroup[]): number {
+	return wrapped.reduce(
+		(n, g) => n + 1 + g.rows.reduce((rn, r) => rn + r.nameLines.length + r.detailLines.length, 0),
+		0,
+	);
+}
+
+function renderSpecColumn(doc: Document, container: Element, wrapped: WrappedGroup[], x: number, scale: number) {
+	const lineHeight = BASE_LINE_HEIGHT * scale;
+	let y = SPECS_TOP_Y;
+	for (const { group, rows } of wrapped) {
+		const heading = doc.createElementNS(SVGNS, "text");
+		heading.setAttribute("x", String(x));
+		heading.setAttribute("y", String(y));
+		heading.setAttribute("fill", "#cd7a4a");
+		heading.setAttribute("font-family", "TheSeasons-Regular, 'The Seasons'");
+		heading.setAttribute("font-size", String(BASE_HEADING_SIZE * scale));
+		heading.textContent = group.heading;
+		container.appendChild(heading);
+		y += lineHeight * 1.3;
+
+		for (const row of rows) {
+			for (const line of row.nameLines) {
+				const el = doc.createElementNS(SVGNS, "text");
+				el.setAttribute("x", String(x));
+				el.setAttribute("y", String(y));
+				el.setAttribute("fill", "#231f20");
+				el.setAttribute("font-family", "EBGaramond-600, 'EB Garamond'");
+				el.setAttribute("font-weight", "600");
+				el.setAttribute("font-size", String(BASE_ROW_SIZE * scale));
+				el.textContent = line;
+				container.appendChild(el);
+				y += lineHeight;
+			}
+			for (const line of row.detailLines) {
+				const el = doc.createElementNS(SVGNS, "text");
+				el.setAttribute("x", String(x));
+				el.setAttribute("y", String(y));
+				el.setAttribute("fill", "#565253");
+				el.setAttribute("font-family", "EBGaramond-Regular, 'EB Garamond'");
+				el.setAttribute("font-size", String(BASE_ROW_SIZE * scale));
+				el.textContent = line;
+				container.appendChild(el);
+				y += lineHeight;
+			}
+			y += lineHeight * 0.25;
+		}
+		y += lineHeight * 0.5;
+	}
+}
+
 /** Inject one room's data into the template SVG and return the markup string. */
 function fillRoomSvg(
 	templateText: string,
 	s: SpaceExportData,
 	total: number,
-	specs: Partial<Record<TypeKey, BlockSpec>>,
+	groups: SpecGroup[],
 	fontCss: string,
 ): string {
 	const doc = new DOMParser().parseFromString(templateText, "image/svg+xml");
@@ -367,62 +543,32 @@ function fillRoomSvg(
 	setText(doc, "qt-room", roomName);
 	setText(doc, "qt-room2", roomName);
 
-	// 4. Cabinet blocks.
-	const blocks: { key: TypeKey; prefix: string }[] = [
-		{ key: "base", prefix: "qt-base" },
-		{ key: "wall_cabinet", prefix: "qt-wall" },
-		{ key: "tall", prefix: "qt-tall" },
-		{ key: "island", prefix: "qt-island" },
-	];
-	for (const { key, prefix } of blocks) {
-		const spec = specs[key];
-		if (!spec) {
-			// Room doesn't have this cabinet type — hide the whole block
-			// (header + static labels + value fields) so it reads as absent,
-			// not as missing data.
-			[
-				`${prefix}-title`,
-				`${prefix}-lbl-height`,
-				`${prefix}-lbl-depth`,
-				`${prefix}-lbl-skirting`,
-				`${prefix}-lbl-including`,
-				`${prefix}-lbl-shelf`,
-				`${prefix}-height`,
-				`${prefix}-depth`,
-				`${prefix}-skirting`,
-				`${prefix}-finish`,
-				`${prefix}-drawers`,
-				`${prefix}-shelf`,
-			].forEach((id) => hide(doc, id));
-			continue;
-		}
-		setText(doc, `${prefix}-height`, spec.height);
-		setText(doc, `${prefix}-depth`, spec.depth);
-		setText(doc, `${prefix}-skirting`, spec.skirting);
-		setText(doc, `${prefix}-finish`, spec.finish);
-		setText(doc, `${prefix}-drawers`, spec.drawers);
-		if (spec.shelf) {
-			setText(doc, `${prefix}-shelf`, spec.shelf);
-		} else {
-			hide(doc, `${prefix}-lbl-shelf`);
-			hide(doc, `${prefix}-shelf`);
-		}
-	}
+	// 4. Cabinet + countertop specs -- fully dynamic, one row per layer, so
+	// multiple layers of the same type (e.g. two wall cabinet runs) each show
+	// their own name/details instead of being collapsed into one block.
+	OLD_FIXED_BLOCK_IDS.forEach((id) => hide(doc, id));
+	const anchor = doc.getElementById("qt-base-title");
+	const container = anchor?.parentElement;
+	if (container) {
+		const { left, right } = splitIntoColumns(groups);
+		const leftWidth = SPECS_RIGHT_X - SPECS_LEFT_X - SPECS_COLUMN_GAP;
+		const rightWidth = SPECS_PAGE_RIGHT_MARGIN - SPECS_RIGHT_X;
+		const available = SPECS_BOTTOM_Y - SPECS_TOP_Y;
 
-	// 4b. Countertop -- not a fixed-slot cabinet type, so summed across every
-	// countertop layer in the space (each can have its own length/rate) rather
-	// than surfacing just one representative layer like the blocks above.
-	const countertopLayers = s.layers.filter((l) => l.type === "countertop");
-	if (countertopLayers.length > 0) {
-		const lengthM = countertopLayers.reduce((sum, l) => sum + (l.manualLengthM ?? 0), 0);
-		const aed = countertopLayers.reduce(
-			(sum, l) => sum + (l.manualLengthM ?? 0) * (l.priceAedPerM ?? 0),
-			0,
-		);
-		setText(doc, "qt-countertop", `${lengthM.toFixed(2)} m  =  ${formatThousands(aed)} AED`);
-	} else {
-		hide(doc, "qt-countertop-title");
-		hide(doc, "qt-countertop");
+		let scale = 1;
+		for (let i = 0; i < 40; i++) {
+			const fontSize = BASE_ROW_SIZE * scale;
+			const maxLines = Math.max(
+				countWrappedLines(wrapGroups(left, leftWidth, fontSize)),
+				countWrappedLines(wrapGroups(right, rightWidth, fontSize)),
+			);
+			const needed = maxLines * BASE_LINE_HEIGHT * scale * 1.15;
+			if (needed <= available || scale <= 0.55) break;
+			scale *= 0.95;
+		}
+		const fontSize = BASE_ROW_SIZE * scale;
+		renderSpecColumn(doc, container, wrapGroups(left, leftWidth, fontSize), SPECS_LEFT_X, scale);
+		renderSpecColumn(doc, container, wrapGroups(right, rightWidth, fontSize), SPECS_RIGHT_X, scale);
 	}
 
 	// 5. Total (number only; "AED" is baked into the artboard).
@@ -603,8 +749,8 @@ export async function buildQuotationDoc(input: ExportInput): Promise<jsPDF> {
 			s.islands,
 			pricingCtx,
 		);
-		const specs = buildSpecs(s, finishes);
-		const svg = fillRoomSvg(templateText, s, total, specs, fontCss);
+		const groups = buildLayerGroups(s, finishes);
+		const svg = fillRoomSvg(templateText, s, total, groups, fontCss);
 		const jpeg = await svgToJpeg(svg, VIEW_W, VIEW_H);
 		doc.addPage([PAGE_W, PAGE_H], "portrait");
 		doc.addImage(jpeg, "JPEG", 0, 0, PAGE_W, PAGE_H);
