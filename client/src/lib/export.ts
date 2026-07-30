@@ -206,14 +206,21 @@ interface PricingCtx {
 	finishes: DreamHomeFinish[];
 }
 
+interface SpaceTotals {
+	kitchenTotal: number;
+	countertopTotal: number;
+	grandTotal: number;
+}
+
 function priceSpaceLayers(
 	layers: Layer[],
 	cabinets: Cabinet[],
 	walls: Wall[],
 	islands: Island[],
 	ctx: PricingCtx,
-) {
-	let total = 0;
+): SpaceTotals {
+	let kitchenTotal = 0;
+	let countertopTotal = 0;
 	for (const layer of layers) {
 		const isIsland = layer.type === "island";
 		const boundIsland = isIsland
@@ -249,9 +256,14 @@ function priceSpaceLayers(
 			dreamHomePrices: ctx.dreamHomePrices,
 			tallHeights: ctx.tallHeights,
 		});
-		total += result.error ? 0 : result.subtotalAED;
+		const subtotal = result.error ? 0 : result.subtotalAED;
+		if (layer.type === "countertop") {
+			countertopTotal += subtotal;
+		} else {
+			kitchenTotal += subtotal;
+		}
 	}
-	return total;
+	return { kitchenTotal, countertopTotal, grandTotal: kitchenTotal + countertopTotal };
 }
 
 // ── Per-layer spec extraction ────────────────────────────────────────────────────
@@ -517,11 +529,101 @@ function renderSpecColumn(doc: Document, container: Element, wrapped: WrappedGro
 	}
 }
 
+// ── Totals block (subtotals + grand total + estimate range) ─────────────────────
+
+const TOTALS_LEFT_X = 50.33;
+const TOTALS_TOP_Y = 683;
+const TOTALS_SUBTOTAL_GAP = 15;
+const TOTALS_SUBTOTAL_SIZE = 10.5;
+const TOTALS_GRAND_GAP = 26;
+const TOTALS_GRAND_SIZE = 19;
+const TOTALS_RANGE_GAP = 20;
+const TOTALS_RANGE_SIZE = 10;
+
+// The estimate range communicates uncertainty before final measurement/design:
+// low end is 20% under the computed total, high end is 20% over it.
+const ESTIMATE_RANGE_LOW_FACTOR = 0.8;
+const ESTIMATE_RANGE_HIGH_FACTOR = 1.2;
+
+function renderTotalsLine(
+	doc: Document,
+	container: Element,
+	x: number,
+	y: number,
+	label: string,
+	value: string,
+	fontSize: number,
+	labelColor: string,
+	valueColor: string,
+	bold: boolean,
+) {
+	const el = doc.createElementNS(SVGNS, "text");
+	el.setAttribute("x", String(x));
+	el.setAttribute("y", String(y));
+	el.setAttribute("font-family", "EBGaramond-Regular, 'EB Garamond'");
+	el.setAttribute("font-size", String(fontSize));
+
+	const labelSpan = doc.createElementNS(SVGNS, "tspan");
+	labelSpan.setAttribute("fill", labelColor);
+	if (bold) {
+		labelSpan.setAttribute("font-family", "EBGaramond-600, 'EB Garamond'");
+		labelSpan.setAttribute("font-weight", "600");
+	}
+	labelSpan.textContent = label;
+	el.appendChild(labelSpan);
+
+	if (value) {
+		const valueSpan = doc.createElementNS(SVGNS, "tspan");
+		valueSpan.setAttribute("fill", valueColor);
+		if (bold) {
+			valueSpan.setAttribute("font-family", "EBGaramond-600, 'EB Garamond'");
+			valueSpan.setAttribute("font-weight", "600");
+		}
+		valueSpan.textContent = `   ${value}`;
+		el.appendChild(valueSpan);
+	}
+	container.appendChild(el);
+}
+
+function renderTotalsBlock(doc: Document, container: Element, totals: SpaceTotals) {
+	const x = TOTALS_LEFT_X;
+	let y = TOTALS_TOP_Y;
+
+	renderTotalsLine(
+		doc, container, x, y,
+		"KITCHEN CABINETS", `${formatThousands(totals.kitchenTotal)} AED`,
+		TOTALS_SUBTOTAL_SIZE, "#cd7a4a", "#565253", false,
+	);
+	y += TOTALS_SUBTOTAL_GAP;
+
+	renderTotalsLine(
+		doc, container, x, y,
+		"COUNTERTOPS", `${formatThousands(totals.countertopTotal)} AED`,
+		TOTALS_SUBTOTAL_SIZE, "#cd7a4a", "#565253", false,
+	);
+	y += TOTALS_GRAND_GAP;
+
+	renderTotalsLine(
+		doc, container, x, y,
+		"GRAND TOTAL ESTIMATE", `${formatThousands(totals.grandTotal)} AED`,
+		TOTALS_GRAND_SIZE, "#be7446", "#231f20", true,
+	);
+	y += TOTALS_RANGE_GAP;
+
+	const low = Math.round(totals.grandTotal * ESTIMATE_RANGE_LOW_FACTOR);
+	const high = Math.round(totals.grandTotal * ESTIMATE_RANGE_HIGH_FACTOR);
+	renderTotalsLine(
+		doc, container, x, y,
+		"Estimated Range:", `${formatThousands(low)} – ${formatThousands(high)} AED`,
+		TOTALS_RANGE_SIZE, "#8a8586", "#8a8586", false,
+	);
+}
+
 /** Inject one room's data into the template SVG and return the markup string. */
 function fillRoomSvg(
 	templateText: string,
 	s: SpaceExportData,
-	total: number,
+	totals: SpaceTotals,
 	groups: SpecGroup[],
 	fontCss: string,
 ): string {
@@ -571,8 +673,15 @@ function fillRoomSvg(
 		renderSpecColumn(doc, container, wrapGroups(right, rightWidth, fontSize), SPECS_RIGHT_X, scale);
 	}
 
-	// 5. Total (number only; "AED" is baked into the artboard).
-	setText(doc, "qt-total", formatThousands(total));
+	// 5. Totals block -- replaces the old static single "TOTAL" line with a
+	// dynamic breakdown (per-category subtotals, grand total, estimate range).
+	const totalAnchor = doc.getElementById("qt-total");
+	const totalsContainer = totalAnchor?.parentElement;
+	if (totalsContainer) {
+		(totalsContainer as Element).setAttribute("style", "display: none");
+		const totalsHost = totalsContainer.parentElement ?? totalsContainer;
+		renderTotalsBlock(doc, totalsHost, totals);
+	}
 
 	// 6. Plan drawing → the framed image slot.
 	const plan = doc.querySelector("#qt-plan");
@@ -742,7 +851,7 @@ export async function buildQuotationDoc(input: ExportInput): Promise<jsPDF> {
 
 	// ── Pages 2…N — one per room (landscape) ──
 	for (const s of input.spaces) {
-		const total = priceSpaceLayers(
+		const totals = priceSpaceLayers(
 			s.layers,
 			s.cabinets,
 			s.walls,
@@ -750,7 +859,7 @@ export async function buildQuotationDoc(input: ExportInput): Promise<jsPDF> {
 			pricingCtx,
 		);
 		const groups = buildLayerGroups(s, finishes);
-		const svg = fillRoomSvg(templateText, s, total, groups, fontCss);
+		const svg = fillRoomSvg(templateText, s, totals, groups, fontCss);
 		const jpeg = await svgToJpeg(svg, VIEW_W, VIEW_H);
 		doc.addPage([PAGE_W, PAGE_H], "portrait");
 		doc.addImage(jpeg, "JPEG", 0, 0, PAGE_W, PAGE_H);

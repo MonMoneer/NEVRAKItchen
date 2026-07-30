@@ -852,12 +852,16 @@ export default function ProjectDetail({ id }: { id: number }) {
 			return undefined;
 		}
 
+		// Small clearance so wall strokes and depth/dimension labels never get
+		// clipped, but not so generous that the room shrinks inside its own
+		// capture -- this used to add ~240px/side for a 60cm-depth cabinet,
+		// roughly doubling the image and making the room look tiny in the PDF.
 		const maxDepthPx = drawingState.cabinets.reduce(
 			(max, c) => Math.max(max, cmToPixels(c.depth)),
 			0
 		);
-		const extraMargin = Math.max(maxDepthPx, WALL_THICKNESS) + 40;
-		const padding = 80 + extraMargin;
+		const extraMargin = Math.max(maxDepthPx * 0.15, WALL_THICKNESS) + 8;
+		const padding = 16 + extraMargin;
 		let minX = Math.min(...allPoints.map((p) => p.x)) - padding;
 		let minY = Math.min(...allPoints.map((p) => p.y)) - padding;
 		let maxX = Math.max(...allPoints.map((p) => p.x)) + padding;
