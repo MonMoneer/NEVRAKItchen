@@ -5,6 +5,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -543,6 +544,7 @@ function BrandingForm({
   const [logoUrl, setLogoUrl] = useState(settings.logoUrl || "");
   const [primaryColor, setPrimaryColor] = useState(settings.primaryColor);
   const [footerText, setFooterText] = useState(settings.footerText);
+  const [defaultExportNotes, setDefaultExportNotes] = useState(settings.defaultExportNotes);
 
   return (
     <Card>
@@ -592,10 +594,23 @@ function BrandingForm({
             data-testid="input-footer-text"
           />
         </div>
+        <div className="space-y-1.5">
+          <Label className="text-sm">Default PDF Export Notes</Label>
+          <p className="text-[10px] text-muted-foreground">
+            Shown by default in the "Export PDF" notes dialog — editable per-export, this is just the starting text.
+          </p>
+          <Textarea
+            value={defaultExportNotes}
+            onChange={(e) => setDefaultExportNotes(e.target.value)}
+            rows={5}
+            className="resize-none"
+            data-testid="input-default-export-notes"
+          />
+        </div>
         <Separator />
         <Button
           onClick={() =>
-            onSave({ companyName, logoUrl, primaryColor, footerText })
+            onSave({ companyName, logoUrl, primaryColor, footerText, defaultExportNotes })
           }
           disabled={isPending}
           data-testid="button-save-branding"

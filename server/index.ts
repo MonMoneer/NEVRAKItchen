@@ -39,6 +39,10 @@ async function runMigrations() {
     await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS assigned_to integer REFERENCES users(id)`);
     await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS client_reference text NOT NULL DEFAULT ''`);
     await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS prepared_by text NOT NULL DEFAULT ''`);
+    await pool.query(
+      `ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS default_export_notes text NOT NULL DEFAULT ` +
+      `'All prices provided are estimated and may vary by\napproximately 10–20% based on final measurements\nand material selection. Appliances and accessories\nare not included.'`
+    );
     await pool.query(`
       CREATE TABLE IF NOT EXISTS project_attachments (
         id serial PRIMARY KEY,

@@ -29,6 +29,9 @@ export const adminSettings = pgTable("admin_settings", {
   gridEnabled: boolean("grid_enabled").notNull().default(true),
   midpointEnabled: boolean("midpoint_enabled").notNull().default(true),
   snapRadius: integer("snap_radius").notNull().default(12),
+  defaultExportNotes: text("default_export_notes").notNull().default(
+    "All prices provided are estimated and may vary by\napproximately 10–20% based on final measurements\nand material selection. Appliances and accessories\nare not included."
+  ),
 });
 
 // ─── Projects (extended from saved_projects) ────────────────────────────────

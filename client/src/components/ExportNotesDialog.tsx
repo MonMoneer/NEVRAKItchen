@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
 	Dialog,
 	DialogContent,
@@ -9,7 +10,9 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import type { AdminSettings } from '@shared/schema';
 
+// Fallback for when admin settings haven't been saved yet (fresh install).
 export const DEFAULT_EXPORT_NOTES = `All prices provided are estimated and may vary by
 approximately 10–20% based on final measurements
 and material selection. Appliances and accessories
@@ -26,10 +29,15 @@ export function ExportNotesDialog({
 	onCancel,
 	onConfirm,
 }: ExportNotesDialogProps) {
-	const [notes, setNotes] = useState(DEFAULT_EXPORT_NOTES);
+	const { data: settings } = useQuery<AdminSettings>({
+		queryKey: ['/api/admin/settings'],
+	});
+	const defaultNotes = settings?.defaultExportNotes || DEFAULT_EXPORT_NOTES;
+	const [notes, setNotes] = useState(defaultNotes);
 
 	useEffect(() => {
-		if (open) setNotes(DEFAULT_EXPORT_NOTES);
+		if (open) setNotes(defaultNotes);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open]);
 
 	return (
