@@ -541,9 +541,9 @@ const TOTALS_RANGE_GAP = 20;
 const TOTALS_RANGE_SIZE = 10;
 
 // The estimate range communicates uncertainty before final measurement/design:
-// low end is 20% under the computed total, high end is 20% over it.
-const ESTIMATE_RANGE_LOW_FACTOR = 0.8;
-const ESTIMATE_RANGE_HIGH_FACTOR = 1.2;
+// low end is 15% under the computed total, high end is 15% over it.
+const ESTIMATE_RANGE_LOW_FACTOR = 0.85;
+const ESTIMATE_RANGE_HIGH_FACTOR = 1.15;
 
 function renderTotalsLine(
 	doc: Document,
