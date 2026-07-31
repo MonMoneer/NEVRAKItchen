@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   DropdownMenu,
@@ -20,8 +21,19 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Search, LogOut, Settings, ChevronDown, Plus, FolderOpen, CalendarClock } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Search, LogOut, Settings, ChevronDown, Plus, FolderOpen, CalendarClock, Trash2 } from "lucide-react";
 import { CLIENT_REFERENCE_PREFIX, PREPARED_BY_OPTIONS } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
 
 const STAGES = [
   { id: "estimated_price", label: "Estimated Price", color: "bg-blue-100 text-blue-700" },
@@ -218,12 +230,16 @@ function NewProjectDialog({
 export default function Projects() {
   const [, navigate] = useLocation();
   const { user, logout } = useAuthStore();
-  const { projects, setProjects, upsertProject } = useProjectStore();
+  const { projects, setProjects, upsertProject, removeProject } = useProjectStore();
+  const { toast } = useToast();
 
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     setIsLoading(true);
@@ -232,6 +248,42 @@ export default function Projects() {
       .then((data) => setProjects(Array.isArray(data) ? data : []))
       .finally(() => setIsLoading(false));
   }, [setProjects]);
+
+  const toggleSelected = (id: number, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const handleDeleteSelected = async () => {
+    setIsDeleting(true);
+    const ids = Array.from(selectedIds);
+    try {
+      const results = await Promise.all(
+        ids.map((id) =>
+          fetch(`/api/projects/${id}`, { method: "DELETE" }).then((r) => ({ id, ok: r.ok }))
+        )
+      );
+      const succeeded = results.filter((r) => r.ok).map((r) => r.id);
+      const failed = results.filter((r) => !r.ok);
+      succeeded.forEach((id) => removeProject(id));
+      setSelectedIds(new Set());
+      setConfirmDeleteOpen(false);
+      if (failed.length > 0) {
+        toast({
+          title: `Deleted ${succeeded.length}, failed to delete ${failed.length}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: `Deleted ${succeeded.length} project${succeeded.length === 1 ? "" : "s"}` });
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const visibleProjects = user?.role === "technician"
     ? projects.filter((p) => p.assignedTo === user.id)
@@ -333,6 +385,25 @@ export default function Projects() {
           );
         })}
         <div className="flex-1" />
+        {selectedIds.size > 0 && (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Clear selection
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => setConfirmDeleteOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              Delete ({selectedIds.size})
+            </Button>
+          </>
+        )}
         <Button size="sm" onClick={() => setNewOpen(true)}>
           <Plus className="h-4 w-4 mr-1" />
           New Project
@@ -358,6 +429,12 @@ export default function Projects() {
                 className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
                 onClick={() => navigate(`/projects/${project.id}`)}
               >
+                <Checkbox
+                  checked={selectedIds.has(project.id)}
+                  onCheckedChange={(checked) => toggleSelected(project.id, checked === true)}
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label={`Select ${project.name}`}
+                />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm truncate">{project.name}</p>
                   {project.clientName && (
@@ -396,6 +473,32 @@ export default function Projects() {
           navigate(`/projects/${project.id}`);
         }}
       />
+
+      {/* Bulk delete confirmation */}
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedIds.size} project{selectedIds.size === 1 ? "" : "s"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the selected project{selectedIds.size === 1 ? "" : "s"}, including all of its
+              spaces, drawings, and pricing data. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDeleteSelected();
+              }}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
