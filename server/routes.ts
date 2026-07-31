@@ -17,6 +17,7 @@ import {
   insertTallHeightSchema,
   insertPricingSettingsSchema,
   timelineDataSchema,
+  PREPARED_BY_OPTIONS,
 } from "@shared/schema";
 import type { User } from "@shared/schema";
 import { nanoid } from "nanoid";
@@ -114,6 +115,9 @@ export async function registerRoutes(
   app.post("/api/projects", async (req, res) => {
     const parsed = insertSavedProjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    if (!PREPARED_BY_OPTIONS.includes(parsed.data.preparedBy as any)) {
+      return res.status(400).json({ error: "preparedBy is required and must be a valid salesperson" });
+    }
 
     const project = await storage.createSavedProject(parsed.data);
 

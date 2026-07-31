@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Search, LogOut, Settings, ChevronDown, Plus, FolderOpen, CalendarClock } from "lucide-react";
+import { CLIENT_REFERENCE_PREFIX, PREPARED_BY_OPTIONS } from "@shared/schema";
 
 const STAGES = [
   { id: "estimated_price", label: "Estimated Price", color: "bg-blue-100 text-blue-700" },
@@ -33,17 +34,6 @@ function stageLabel(stage: string) {
 function stageColor(stage: string) {
   return STAGES.find((s) => s.id === stage)?.color ?? "bg-gray-100 text-gray-600";
 }
-
-export const CLIENT_REFERENCE_PREFIX = "NV-";
-
-export const PREPARED_BY_OPTIONS = [
-  "Fami Hasiri",
-  "Fatima Al Koussa",
-  "Yahia Al Koussa",
-  "Roaa Sawas",
-  "Saher Obaidat",
-  "NIVRA",
-];
 
 // ─── New Project Dialog ───────────────────────────────────────────────────────
 
@@ -80,6 +70,12 @@ function NewProjectDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (!preparedBy) {
+      setError("Please select who this project is prepared by.");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -187,7 +183,7 @@ function NewProjectDialog({
               </div>
             </div>
             <div className="space-y-1">
-              <Label>Prepared by</Label>
+              <Label>Prepared by *</Label>
               <Select value={preparedBy} onValueChange={setPreparedBy}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select…" />
@@ -373,6 +369,11 @@ export default function Projects() {
                 )}
                 {project.clientPhone && (
                   <span className="text-xs text-muted-foreground hidden sm:block">{project.clientPhone}</span>
+                )}
+                {project.preparedBy && (
+                  <span className="text-xs text-muted-foreground hidden lg:block">
+                    Prepared by <span className="font-medium">{project.preparedBy}</span>
+                  </span>
                 )}
                 <Badge variant="secondary" className={`text-xs ${stageColor(project.stage)}`}>
                   {stageLabel(project.stage)}

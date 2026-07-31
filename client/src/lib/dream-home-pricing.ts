@@ -49,7 +49,12 @@ export function toAED(cny: number, s: PricingSettings): number {
   const shipping = Number(s.shippingMult);
   const margin = Number(s.marginDiv);
   if (margin === 0) return 0;
-  return (cny * fx * packing * shipping) / margin;
+  // Packing is a real pass-through cost, not something the margin should mark
+  // up: compute it as a surcharge on the pre-margin (but post-shipping) price,
+  // then add it back in after margin is applied to everything else.
+  const priceWithoutMargin = cny * fx * shipping;
+  const packingSurcharge = priceWithoutMargin * (packing - 1);
+  return priceWithoutMargin / margin + packingSurcharge;
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -140,7 +145,7 @@ function shelfCnyForTall(
 // ─── Settings breakdown suffix (common to all calculations) ─────────────────
 
 function settingsSuffix(s: PricingSettings): string {
-  return `× ${Number(s.fxRate)} (FX) × ${Number(s.packingMult)} (packing) × ${Number(s.shippingMult)} (shipping) / ${Number(s.marginDiv)} (margin)`;
+  return `× ${Number(s.fxRate)} (FX) × ${Number(s.shippingMult)} (shipping) / ${Number(s.marginDiv)} (margin) + packing surcharge (${Number(s.packingMult)}, no margin)`;
 }
 
 // ─── Main calculator ────────────────────────────────────────────────────────

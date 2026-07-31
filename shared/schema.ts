@@ -18,6 +18,19 @@ import { pgTable, text, serial, numeric, integer, jsonb, timestamp, boolean } fr
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// ─── Project reference / salesperson constants (shared client + server) ────
+
+export const CLIENT_REFERENCE_PREFIX = "NV-";
+
+export const PREPARED_BY_OPTIONS = [
+  "Fami Hasiri",
+  "Fatima Al Koussa",
+  "Yahia Al Koussa",
+  "Roaa Sawas",
+  "Saher Obaidat",
+  "NIVRA",
+] as const;
+
 // ─── Existing tables (unchanged) ────────────────────────────────────────────
 
 export const adminSettings = pgTable("admin_settings", {

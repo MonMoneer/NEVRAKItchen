@@ -74,7 +74,7 @@ import {
 	CalendarClock,
 	Pencil,
 } from 'lucide-react';
-import { CLIENT_REFERENCE_PREFIX, PREPARED_BY_OPTIONS } from '@/pages/projects';
+import { CLIENT_REFERENCE_PREFIX, PREPARED_BY_OPTIONS } from '@shared/schema';
 
 // ─── Space type config ────────────────────────────────────────────────────────
 
