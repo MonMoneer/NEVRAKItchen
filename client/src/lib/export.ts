@@ -206,7 +206,7 @@ interface PricingCtx {
 	finishes: DreamHomeFinish[];
 }
 
-interface SpaceTotals {
+export interface SpaceTotals {
 	kitchenTotal: number;
 	countertopTotal: number;
 	grandTotal: number;
@@ -264,6 +264,19 @@ function priceSpaceLayers(
 		}
 	}
 	return { kitchenTotal, countertopTotal, grandTotal: kitchenTotal + countertopTotal };
+}
+
+/** Sum the grand total across every space in a project (used by the Schedule
+ * Builder JSON export, which needs one project-wide figure, not a per-room
+ * breakdown). */
+export async function computeProjectGrandTotal(
+	spacesData: { layers: Layer[]; cabinets: Cabinet[]; walls: Wall[]; islands: Island[] }[],
+): Promise<number> {
+	const ctx = await fetchSettings();
+	return spacesData.reduce(
+		(sum, s) => sum + priceSpaceLayers(s.layers, s.cabinets, s.walls, s.islands, ctx).grandTotal,
+		0,
+	);
 }
 
 // ── Per-layer spec extraction ────────────────────────────────────────────────────

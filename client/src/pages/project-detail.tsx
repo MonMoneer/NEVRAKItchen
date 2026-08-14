@@ -24,6 +24,8 @@ import {
 	type Wall,
 	type Cabinet,
 	type Opening,
+	type Layer,
+	type Island,
 	splitCabinetAroundTall,
 	findOverlappingCabinets,
 	checkClearanceViolation,
@@ -31,7 +33,7 @@ import {
 	cmToPixels,
 	WALL_THICKNESS,
 } from '@/lib/kitchen-engine';
-import { exportToPDF, type SpaceExportData } from '@/lib/export';
+import { exportToPDF, computeProjectGrandTotal, type SpaceExportData } from '@/lib/export';
 import { ExportNotesDialog } from '@/components/ExportNotesDialog';
 import { TimelineDialog } from '@/components/TimelineDialog';
 import { useToast } from '@/hooks/use-toast';
@@ -1000,6 +1002,88 @@ export default function ProjectDetail({ id }: { id: number }) {
 		]
 	);
 
+	// ── Export to Schedule Builder ───────────────────────────────────────────────
+	//
+	// The Schedule Builder's own "Import quotation" feature only understands
+	// Odoo-exported quotation PDFs (it text-scrapes literal labels like
+	// "Customer Name :"). This app's own PDF is a flattened image with no text
+	// layer, so that importer can never read it. Instead, produce a small JSON
+	// file matching the Schedule Builder's own import shape (window.SCHEDULE
+	// .defaults() + overrides) -- it already has a generic "Import" button that
+	// merges exactly this shape, no PDF parsing involved.
+
+	const handleExportScheduleData = useCallback(async () => {
+		if (!currentProject) {
+			toast({ title: 'Export failed', variant: 'destructive' });
+			return;
+		}
+		setIsExporting(true);
+
+		const waitTwoFrames = () =>
+			new Promise<void>((resolve) =>
+				requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+			);
+		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+		const originalActiveId = activeSpaceId;
+		const collected: { layers: Layer[]; cabinets: Cabinet[]; walls: Wall[]; islands: Island[] }[] = [];
+
+		try {
+			if (saveTimeout.current) {
+				clearTimeout(saveTimeout.current);
+				saveTimeout.current = null;
+				if (activeSpaceId) {
+					saveCanvasNow(activeSpaceId, canvasSourceField);
+				}
+			}
+
+			for (const sp of spaces) {
+				setActiveSpaceId(sp.id);
+				await waitTwoFrames();
+				await sleep(60);
+				const { drawingState, layers, islands } = useCanvasStore.getState();
+				collected.push({
+					walls: drawingState.walls,
+					cabinets: drawingState.cabinets,
+					layers,
+					islands,
+				});
+			}
+
+			const totalValue = await computeProjectGrandTotal(collected);
+
+			const scheduleData = {
+				internalName: currentProject.name,
+				projectTitle: currentProject.name ? `${currentProject.name} Project` : '',
+				clientName: currentProject.clientName || '',
+				phone: currentProject.clientPhone || '',
+				address: currentProject.address || '',
+				preparedBy: currentProject.preparedBy || 'NIVRA Kitchens',
+				ref: currentProject.clientReference || '',
+				totalValue: Math.round(totalValue),
+			};
+
+			const blob = new Blob([JSON.stringify(scheduleData, null, 2)], { type: 'application/json' });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			const safeName = (currentProject.name || 'project').trim().replace(/\s+/g, '-');
+			a.download = `${safeName}-schedule-import.json`;
+			a.click();
+			URL.revokeObjectURL(url);
+
+			toast({ title: 'Schedule data exported — import it in Schedule Builder via "Import"' });
+		} catch (err) {
+			console.error('[export-schedule] failed:', err);
+			toast({ title: 'Export failed', variant: 'destructive' });
+		} finally {
+			if (originalActiveId && originalActiveId !== activeSpaceId) {
+				setActiveSpaceId(originalActiveId);
+			}
+			setIsExporting(false);
+		}
+	}, [activeSpaceId, canvasSourceField, currentProject, saveCanvasNow, setActiveSpaceId, spaces, toast]);
+
 	// ── Stage transitions ───────────────────────────────────────────────────────
 
 	const handleStageSwitch = useCallback(
@@ -1422,6 +1506,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 						onRedo={handleRedo}
 						onClear={handleClear}
 						onExport={handleExport}
+						onExportSchedule={handleExportScheduleData}
 						onSave={() => scheduleCanvasSave()}
 						onOpen={() => {}}
 						onAdmin={() => navigate('/admin')}
