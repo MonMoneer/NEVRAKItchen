@@ -15,7 +15,8 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Save, Plus } from "lucide-react";
+import { ArrowLeft, Save, Plus, Trash2, KeyRound } from "lucide-react";
+import { USER_PERMISSIONS } from "@shared/schema";
 import type {
   AdminSettings,
   ElementDefinition,
@@ -23,11 +24,15 @@ import type {
   DreamHomePrice,
   TallHeight,
   PricingSettings,
+  User,
+  UserPermissionKey,
 } from "@shared/schema";
+import { useAuthStore } from "@/stores/useAuthStore";
 
 export default function Admin() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const canSeeCosts = useAuthStore((st) => !!st.user?.canSeeCosts);
 
   const { data: settings, isLoading: settingsLoading } = useQuery<AdminSettings>({
     queryKey: ["/api/admin/settings"],
@@ -92,22 +97,27 @@ export default function Admin() {
             <Skeleton className="h-40 w-full" />
           </div>
         ) : (
-          <Tabs defaultValue="pricing">
+          <Tabs defaultValue={canSeeCosts ? "pricing" : "elements"}>
             <TabsList className="mb-6">
-              <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
+              {canSeeCosts && (
+                <TabsTrigger value="pricing" data-testid="tab-pricing">Pricing</TabsTrigger>
+              )}
               <TabsTrigger value="elements" data-testid="tab-elements">Elements</TabsTrigger>
               <TabsTrigger value="branding" data-testid="tab-branding">Branding</TabsTrigger>
               <TabsTrigger value="snap" data-testid="tab-snap">Snap Settings</TabsTrigger>
+              <TabsTrigger value="users" data-testid="tab-users">Users</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="pricing">
-              <div className="space-y-6">
-                <PricingSettingsCard />
-                <DreamHomeMatrixCard />
-                <TallHeightsCard />
-                <FinishesCard />
-              </div>
-            </TabsContent>
+            {canSeeCosts && (
+              <TabsContent value="pricing">
+                <div className="space-y-6">
+                  <PricingSettingsCard />
+                  <DreamHomeMatrixCard />
+                  <TallHeightsCard />
+                  <FinishesCard />
+                </div>
+              </TabsContent>
+            )}
 
             <TabsContent value="elements">
               <Card>
@@ -152,6 +162,10 @@ export default function Admin() {
                 onSave={(data) => settingsMutation.mutate(data)}
                 isPending={settingsMutation.isPending}
               />
+            </TabsContent>
+
+            <TabsContent value="users">
+              <UsersCard />
             </TabsContent>
           </Tabs>
         )}
@@ -388,6 +402,324 @@ function TallHeightsCard() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+type SafeUser = Omit<User, "passwordHash">;
+
+const ROLES = ["sales", "technician", "admin"] as const;
+
+function UsersCard() {
+  const { toast } = useToast();
+  const me = useAuthStore((st) => st.user);
+  const { data: users = [], isLoading } = useQuery<SafeUser[]>({ queryKey: ["/api/users"] });
+  const [adding, setAdding] = useState(false);
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    // The "Prepared by" dropdown is built from this list.
+    queryClient.invalidateQueries({ queryKey: ["/api/salespeople"] });
+  };
+  const fail = (err: any) =>
+    toast({ title: "Could not save", description: String(err?.message ?? err), variant: "destructive" });
+
+  const update = useMutation({
+    mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
+      apiRequest("PUT", `/api/users/${id}`, data),
+    onSuccess: () => { refresh(); toast({ title: "Saved" }); },
+    onError: fail,
+  });
+
+  const create = useMutation({
+    mutationFn: (data: Record<string, unknown>) => apiRequest("POST", "/api/users", data),
+    onSuccess: () => { refresh(); setAdding(false); toast({ title: "User added" }); },
+    onError: fail,
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/users/${id}`),
+    onSuccess: async (res: any) => {
+      refresh();
+      const body = await res?.json?.().catch(() => null);
+      toast({
+        title: body?.deactivated ? "User deactivated" : "User deleted",
+        description: body?.deactivated
+          ? "They have projects on file, so the account was disabled instead of removed. Their quotations keep their name."
+          : undefined,
+      });
+    },
+    onError: fail,
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Users &amp; access</CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          Add or remove salespeople, reset passwords, and choose what each person can reach.
+          &ldquo;See factory cost&rdquo; is enforced on the server &mdash; without it the browser
+          is only ever sent AED prices, never the CNY rate or the margin.
+          <br />
+          Anyone given a <strong>display name</strong> appears in the &ldquo;Prepared by&rdquo;
+          dropdown on projects; leave it blank to keep an account out of that list.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : (
+          <>
+            {users.map((u) => (
+              <UserRow
+                key={u.id}
+                user={u}
+                isMe={u.id === me?.id}
+                onSave={(data) => update.mutate({ id: u.id, ...data })}
+                onDelete={() => remove.mutate(u.id)}
+                isPending={update.isPending || remove.isPending}
+              />
+            ))}
+            <Separator />
+            {adding ? (
+              <NewUserRow
+                onAdd={(data) => create.mutate(data)}
+                onCancel={() => setAdding(false)}
+                isPending={create.isPending}
+              />
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setAdding(true)} data-testid="button-add-user">
+                <Plus className="h-4 w-4 mr-1" /> Add user
+              </Button>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function UserRow({
+  user,
+  isMe,
+  onSave,
+  onDelete,
+  isPending,
+}: {
+  user: SafeUser;
+  isMe: boolean;
+  onSave: (data: Record<string, unknown>) => void;
+  onDelete: () => void;
+  isPending: boolean;
+}) {
+  const [displayName, setDisplayName] = useState(user.displayName);
+  const [role, setRole] = useState(user.role);
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
+  const dirty =
+    displayName !== user.displayName || role !== user.role || password.length > 0;
+
+  return (
+    <div
+      className={`rounded-md border p-3 space-y-3 ${user.isActive ? "" : "opacity-60 bg-muted/40"}`}
+      data-testid={`user-row-${user.id}`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-sm">{user.username}</span>
+        {isMe && <Badge variant="secondary" className="text-[10px]">you</Badge>}
+        {!user.isActive && <Badge variant="outline" className="text-[10px]">deactivated</Badge>}
+
+        <Input
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Display name (shown as Prepared by)"
+          className="h-8 flex-1 min-w-[180px]"
+        />
+
+        <Select value={role} onValueChange={setRole}>
+          <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {ROLES.map((r) => (
+              <SelectItem key={r} value={r}>{r}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowPassword((v) => !v)}
+          title="Set a new password"
+        >
+          <KeyRound className="h-4 w-4" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-destructive"
+          disabled={isMe || isPending}
+          title={isMe ? "You cannot delete your own account" : "Delete user"}
+          onClick={() => {
+            if (confirm(`Delete ${user.username}? If they have projects on file the account is deactivated instead.`)) {
+              onDelete();
+            }
+          }}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {showPassword && (
+        <Input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="New password (min 6 characters)"
+          className="h-8"
+          autoComplete="new-password"
+        />
+      )}
+
+      <div className="flex flex-wrap gap-x-6 gap-y-2">
+        {USER_PERMISSIONS.map((perm) => {
+          // Locking yourself out of the admin panel would leave nobody able to
+          // undo it, so those two switches are frozen on your own row.
+          const selfLock = isMe && perm.key === "canAccessAdmin";
+          return (
+            <label
+              key={perm.key}
+              className="flex items-center gap-2 text-xs"
+              title={selfLock ? "You cannot remove your own admin access." : perm.hint}
+            >
+              <Switch
+                checked={!!user[perm.key as UserPermissionKey]}
+                disabled={isPending || selfLock}
+                onCheckedChange={(v) => onSave({ [perm.key]: v })}
+              />
+              {perm.label}
+            </label>
+          );
+        })}
+        <label
+          className="flex items-center gap-2 text-xs"
+          title={
+            isMe
+              ? "You cannot deactivate your own account."
+              : "Deactivated users keep their history but cannot log in."
+          }
+        >
+          <Switch
+            checked={user.isActive}
+            disabled={isPending || isMe}
+            onCheckedChange={(v) => onSave({ isActive: v })}
+          />
+          Active
+        </label>
+      </div>
+
+      {dirty && (
+        <Button
+          size="sm"
+          disabled={isPending || (password.length > 0 && password.length < 6)}
+          onClick={() => {
+            onSave({ displayName, role, ...(password ? { password } : {}) });
+            setPassword("");
+            setShowPassword(false);
+          }}
+        >
+          <Save className="h-4 w-4 mr-1" /> Save
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function NewUserRow({
+  onAdd,
+  onCancel,
+  isPending,
+}: {
+  onAdd: (data: Record<string, unknown>) => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<string>("sales");
+  const [perms, setPerms] = useState<Record<string, boolean>>({});
+
+  const valid = username.trim().length > 0 && password.length >= 6;
+
+  return (
+    <div className="rounded-md border p-3 space-y-3" data-testid="new-user-row">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          placeholder="Username"
+          className="h-8 w-40"
+          autoComplete="off"
+        />
+        <Input
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Display name"
+          className="h-8 flex-1 min-w-[160px]"
+        />
+        <Input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password (min 6)"
+          className="h-8 w-44"
+          autoComplete="new-password"
+        />
+        <Select value={role} onValueChange={setRole}>
+          <SelectTrigger className="h-8 w-32"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {ROLES.map((r) => (
+              <SelectItem key={r} value={r}>{r}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex flex-wrap gap-x-6 gap-y-2">
+        {USER_PERMISSIONS.map((perm) => (
+          <label key={perm.key} className="flex items-center gap-2 text-xs" title={perm.hint}>
+            <Switch
+              checked={!!perms[perm.key]}
+              onCheckedChange={(v) => setPerms((prev) => ({ ...prev, [perm.key]: v }))}
+            />
+            {perm.label}
+          </label>
+        ))}
+      </div>
+
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          disabled={!valid || isPending}
+          onClick={() =>
+            onAdd({
+              username: username.trim(),
+              displayName: displayName.trim(),
+              password,
+              role,
+              ...USER_PERMISSIONS.reduce(
+                (acc, perm) => ({ ...acc, [perm.key]: !!perms[perm.key] }),
+                {} as Record<string, boolean>,
+              ),
+            })
+          }
+        >
+          Add
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+      </div>
+    </div>
   );
 }
 

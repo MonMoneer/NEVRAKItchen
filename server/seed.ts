@@ -50,10 +50,19 @@ const defaultElements = [
   { name: "Hood",         category: "appliance",  icon: "🌬️", defaultWidth: 90, defaultDepth: 50 },
 ];
 
+// The seeded admin gets every flag, otherwise a fresh database has nobody who
+// can reach the admin panel to hand out access in the first place.
+const ADMIN_ACCESS = {
+  canSeeCosts: true,
+  canAccessAdmin: true,
+  canAccessScheduleBuilder: true,
+  canDeleteProjects: true,
+};
+
 const defaultUsers = [
-  { username: "admin",       password: "admin123",  role: "admin"       },
-  { username: "sales",       password: "sales123",  role: "sales"       },
-  { username: "technician",  password: "tech123",   role: "technician"  },
+  { username: "admin",       password: "admin123",  role: "admin",      displayName: "NIVRA",  ...ADMIN_ACCESS },
+  { username: "sales",       password: "sales123",  role: "sales",      displayName: "" },
+  { username: "technician",  password: "tech123",   role: "technician", displayName: "" },
 ];
 
 async function seed() {
@@ -68,10 +77,10 @@ async function seed() {
   console.log(`✓ Seeded ${defaultElements.length} element definitions`);
 
   console.log("Seeding default users…");
-  for (const u of defaultUsers) {
+  for (const { password, ...u } of defaultUsers) {
     await db
       .insert(users)
-      .values({ username: u.username, passwordHash: hashPassword(u.password), role: u.role })
+      .values({ ...u, passwordHash: hashPassword(password) })
       .onConflictDoNothing();
   }
   console.log(`✓ Seeded ${defaultUsers.length} users`);

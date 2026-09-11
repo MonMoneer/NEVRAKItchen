@@ -18,8 +18,9 @@ import {
   insertPricingSettingsSchema,
   timelineDataSchema,
   PREPARED_BY_OPTIONS,
+  USER_PERMISSIONS,
 } from "@shared/schema";
-import type { User } from "@shared/schema";
+import type { User, UserPermissionKey, PricingSettings, DreamHomePrice, TallHeight } from "@shared/schema";
 import { nanoid } from "nanoid";
 import { renderTimeline, renderTimelineNotFound } from "./timeline-template";
 
@@ -30,12 +31,63 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   res.status(401).json({ error: "Unauthorized" });
 }
 
-function requireRole(...roles: string[]) {
+/**
+ * Access is per user, not per role: an admin is just a user who happens to
+ * have every flag set, so the check is always on the flag itself.
+ */
+function requirePermission(key: UserPermissionKey) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!req.isAuthenticated()) return res.status(401).json({ error: "Unauthorized" });
     const user = req.user as User;
-    if (!roles.includes(user.role)) return res.status(403).json({ error: "Forbidden" });
+    if (!user[key]) return res.status(403).json({ error: "Forbidden" });
     next();
+  };
+}
+
+/** The signed-in user, or undefined when the request is anonymous. */
+function currentUser(req: Request): User | undefined {
+  return req.isAuthenticated() ? (req.user as User) : undefined;
+}
+
+// ─── Cost hiding ──────────────────────────────────────────────────────────────
+// A user without canSeeCosts must never receive the factory CNY rate or the
+// margin -- not merely hidden in the UI, but absent from the payload. Because
+// toAED is linear in the CNY figure (aed = cny * fx * shipping *
+// (1/margin + packing - 1)) we can fold that whole constant into the rates
+// themselves and hand the browser multipliers of 1. The client's arithmetic is
+// untouched and still lands on exactly the same AED.
+
+function aedFactor(s: PricingSettings): number {
+  const fx = Number(s.fxRate);
+  const packing = Number(s.packingMult);
+  const shipping = Number(s.shippingMult);
+  const margin = Number(s.marginDiv);
+  if (!margin) return 0;
+  return fx * shipping * (1 / margin + packing - 1);
+}
+
+/** Scale a numeric column (Drizzle hands these back as strings). */
+function scaleNumeric(value: string | number, k: number): string {
+  // 4 dp, not 2: these go over the wire only, and rounding a rate to the fils
+  // would drift by a few fils once multiplied out over a long run.
+  return (Number(value) * k).toFixed(4);
+}
+
+function hideCostsInSettings(s: PricingSettings): PricingSettings & { costsHidden: true } {
+  const k = aedFactor(s);
+  return {
+    ...s,
+    // Neutralised so toAED() becomes the identity function.
+    fxRate: "1",
+    packingMult: "1",
+    shippingMult: "1",
+    marginDiv: "1",
+    // Pre-converted to AED by the same factor.
+    decorativeCnyPerM2: scaleNumeric(s.decorativeCnyPerM2, k),
+    shelfSsRateCnyPerM2: scaleNumeric(s.shelfSsRateCnyPerM2, k),
+    shelfGlassRateCnyPerPc: scaleNumeric(s.shelfGlassRateCnyPerPc, k),
+    // drawerFlatAed is already AED and never passes through toAED().
+    costsHidden: true,
   };
 }
 
@@ -82,7 +134,7 @@ export async function registerRoutes(
     res.json(settings || {});
   });
 
-  app.put("/api/admin/settings", async (req, res) => {
+  app.put("/api/admin/settings", requirePermission("canAccessAdmin"), async (req, res) => {
     const parsed = insertAdminSettingsSchema.partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     const updated = await storage.updateAdminSettings(parsed.data);
@@ -112,10 +164,40 @@ export async function registerRoutes(
     res.status(400).json({ error: "phone or name query parameter is required" });
   });
 
+  /**
+   * The names offered in the "Prepared by" dropdown: the display name of every
+   * active account. A blank display name means "not a salesperson", which is
+   * what keeps service logins like `technician` out of the list.
+   *
+   * Until someone has been given a display name the old hardcoded roster
+   * stands in, so the dropdown is never empty. Set display names on real
+   * accounts and the roster is replaced by them -- that is how a salesperson
+   * is added or removed from here without a code change.
+   */
+  async function salespeopleNames(): Promise<string[]> {
+    const rows = await storage.listUsers();
+    const fromUsers = Array.from(
+      new Set(
+        rows
+          .filter((u) => u.isActive)
+          .map((u) => u.displayName.trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+    return fromUsers.length > 0 ? fromUsers : [...PREPARED_BY_OPTIONS];
+  }
+
+  app.get("/api/salespeople", requireAuth, async (_req, res) => {
+    res.json(await salespeopleNames());
+  });
+
   app.post("/api/projects", async (req, res) => {
     const parsed = insertSavedProjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    if (!PREPARED_BY_OPTIONS.includes(parsed.data.preparedBy as any)) {
+    // Accept the old roster too, so a project created from a stale tab (or an
+    // integration) with a legacy name still saves.
+    const validNames = [...(await salespeopleNames()), ...PREPARED_BY_OPTIONS];
+    if (!parsed.data.preparedBy || !validNames.includes(parsed.data.preparedBy)) {
       return res.status(400).json({ error: "preparedBy is required and must be a valid salesperson" });
     }
 
@@ -154,8 +236,8 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  app.delete("/api/projects/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
+  app.delete("/api/projects/:id", requirePermission("canDeleteProjects"), async (req, res) => {
+    const id = parseInt(req.params.id as string);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
     const deleted = await storage.deleteSavedProject(id);
     if (!deleted) return res.status(404).json({ error: "Project not found" });
@@ -196,10 +278,11 @@ export async function registerRoutes(
       .send(timeline ? renderTimeline(timeline.data) : renderTimelineNotFound());
   });
 
-  // Admin-only internal tool. Top-level route so it wins over the SPA fallback
+  // Internal tool, gated on canAccessScheduleBuilder. Top-level route so it
+  // wins over the SPA fallback
   // (registerRoutes runs before serveStatic/vite).
   app.get("/schedule-builder", (req, res) => {
-    if (!req.isAuthenticated() || (req.user as User).role !== "admin") {
+    if (!req.isAuthenticated() || !(req.user as User).canAccessScheduleBuilder) {
       return res.redirect("/login");
     }
     // esbuild's CJS production bundle provides a real __dirname; tsx's dev-time
@@ -214,7 +297,7 @@ export async function registerRoutes(
   // Schedule Builder data — one shared list of projects for every admin, backed
   // by Postgres instead of each device's own localStorage.
   app.get("/api/schedule-builder/projects", async (req, res) => {
-    if (!req.isAuthenticated() || (req.user as User).role !== "admin") {
+    if (!req.isAuthenticated() || !(req.user as User).canAccessScheduleBuilder) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const projects = await storage.getScheduleBuilderProjects();
@@ -222,7 +305,7 @@ export async function registerRoutes(
   });
 
   app.put("/api/schedule-builder/projects", async (req, res) => {
-    if (!req.isAuthenticated() || (req.user as User).role !== "admin") {
+    if (!req.isAuthenticated() || !(req.user as User).canAccessScheduleBuilder) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     if (!Array.isArray(req.body?.projects)) {
@@ -401,14 +484,17 @@ export async function registerRoutes(
 
   // ── Users (admin only) ────────────────────────────────────────────────────
 
-  app.get("/api/users", requireRole("admin"), async (_req, res) => {
+  const PERMISSION_KEYS = USER_PERMISSIONS.map((p) => p.key);
+
+  app.get("/api/users", requirePermission("canAccessAdmin"), async (_req, res) => {
     const userList = await storage.listUsers();
     res.json(userList);
   });
 
-  app.post("/api/users", requireRole("admin"), async (req, res) => {
+  app.post("/api/users", requirePermission("canAccessAdmin"), async (req, res) => {
     const { password, ...rest } = req.body;
     if (!password) return res.status(400).json({ error: "password is required" });
+    if (String(password).length < 6) return res.status(400).json({ error: "Password must be at least 6 characters" });
 
     const parsed = insertUserSchema.omit({ passwordHash: true }).safeParse(rest);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
@@ -422,14 +508,89 @@ export async function registerRoutes(
     res.status(201).json(safeUser);
   });
 
+  app.put("/api/users/:id", requirePermission("canAccessAdmin"), async (req, res) => {
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+
+    const target = await storage.getUserById(id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+
+    const { password, username, displayName, role, isActive } = req.body ?? {};
+    const updates: Record<string, unknown> = {};
+
+    if (username !== undefined) {
+      const name = String(username).trim();
+      if (!name) return res.status(400).json({ error: "Username cannot be empty" });
+      const clash = await storage.getUserByUsername(name);
+      if (clash && clash.id !== id) return res.status(409).json({ error: "Username already taken" });
+      updates.username = name;
+    }
+    if (displayName !== undefined) updates.displayName = String(displayName).trim();
+    if (role !== undefined) {
+      if (!["admin", "sales", "technician"].includes(String(role))) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+      updates.role = String(role);
+    }
+    if (password !== undefined && password !== "") {
+      if (String(password).length < 6) return res.status(400).json({ error: "Password must be at least 6 characters" });
+      updates.passwordHash = hashPassword(String(password));
+    }
+    for (const key of PERMISSION_KEYS) {
+      if (req.body?.[key] !== undefined) updates[key] = !!req.body[key];
+    }
+    if (isActive !== undefined) updates.isActive = !!isActive;
+
+    // Guardrails: never let an admin lock themselves -- or everyone -- out.
+    const me = currentUser(req)!;
+    const losesAdmin = updates.canAccessAdmin === false || updates.isActive === false;
+    if (losesAdmin && target.id === me.id) {
+      return res.status(400).json({ error: "You cannot remove your own admin access." });
+    }
+    if (losesAdmin && target.canAccessAdmin && target.isActive) {
+      const admins = await storage.countAdminUsers();
+      if (admins <= 1) return res.status(400).json({ error: "At least one account must keep admin access." });
+    }
+
+    const updated = await storage.updateUser(id, updates as any);
+    if (!updated) return res.status(404).json({ error: "User not found" });
+    res.json(updated);
+  });
+
+  app.delete("/api/users/:id", requirePermission("canAccessAdmin"), async (req, res) => {
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+
+    const target = await storage.getUserById(id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+
+    const me = currentUser(req)!;
+    if (target.id === me.id) return res.status(400).json({ error: "You cannot delete your own account." });
+    if (target.canAccessAdmin && target.isActive) {
+      const admins = await storage.countAdminUsers();
+      if (admins <= 1) return res.status(400).json({ error: "At least one account must keep admin access." });
+    }
+
+    // Projects and timelines point at their author. Deleting the row would
+    // take that history with it, so such accounts are deactivated instead:
+    // they can no longer log in, but every quotation keeps its author.
+    if (await storage.isUserReferenced(id)) {
+      const deactivated = await storage.updateUser(id, { isActive: false } as any);
+      return res.json({ deleted: false, deactivated: true, user: deactivated });
+    }
+
+    await storage.deleteUser(id);
+    res.json({ deleted: true, deactivated: false });
+  });
+
   // ── Dream Home Pricing ────────────────────────────────────────────────────
 
   app.get("/api/dream-home/finishes", async (_req, res) => {
     res.json(await storage.listDreamHomeFinishes());
   });
 
-  app.put("/api/dream-home/finishes/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
+  app.put("/api/dream-home/finishes/:id", requirePermission("canAccessAdmin"), async (req, res) => {
+    const id = parseInt(req.params.id as string);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
     const parsed = insertDreamHomeFinishSchema.partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
@@ -438,31 +599,44 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  app.get("/api/dream-home/prices", async (_req, res) => {
-    res.json(await storage.listDreamHomePrices());
+  app.get("/api/dream-home/prices", async (req, res) => {
+    const rows = await storage.listDreamHomePrices();
+    const user = currentUser(req);
+    if (user?.canSeeCosts) return res.json(rows);
+    const settings = await storage.getPricingSettings();
+    const k = settings ? aedFactor(settings) : 0;
+    res.json(rows.map((r: DreamHomePrice) => ({ ...r, priceCnyPerM: scaleNumeric(r.priceCnyPerM, k) })));
   });
 
-  app.put("/api/dream-home/prices", async (req, res) => {
+  app.put("/api/dream-home/prices", requirePermission("canAccessAdmin"), requirePermission("canSeeCosts"), async (req, res) => {
     const parsed = insertDreamHomePriceSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     res.json(await storage.upsertDreamHomePrice(parsed.data));
   });
 
-  app.get("/api/dream-home/tall-heights", async (_req, res) => {
-    res.json(await storage.listTallHeights());
+  app.get("/api/dream-home/tall-heights", async (req, res) => {
+    const rows = await storage.listTallHeights();
+    const user = currentUser(req);
+    if (user?.canSeeCosts) return res.json(rows);
+    const settings = await storage.getPricingSettings();
+    const k = settings ? aedFactor(settings) : 0;
+    res.json(rows.map((r: TallHeight) => ({ ...r, priceCnyPerM: scaleNumeric(r.priceCnyPerM, k) })));
   });
 
-  app.put("/api/dream-home/tall-heights", async (req, res) => {
+  app.put("/api/dream-home/tall-heights", requirePermission("canAccessAdmin"), requirePermission("canSeeCosts"), async (req, res) => {
     const parsed = insertTallHeightSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     res.json(await storage.upsertTallHeight(parsed.data));
   });
 
-  app.get("/api/pricing-settings", async (_req, res) => {
-    res.json(await storage.getPricingSettings());
+  app.get("/api/pricing-settings", async (req, res) => {
+    const settings = await storage.getPricingSettings();
+    const user = currentUser(req);
+    if (!settings || user?.canSeeCosts) return res.json(settings);
+    res.json(hideCostsInSettings(settings));
   });
 
-  app.put("/api/pricing-settings", async (req, res) => {
+  app.put("/api/pricing-settings", requirePermission("canAccessAdmin"), requirePermission("canSeeCosts"), async (req, res) => {
     const parsed = insertPricingSettingsSchema.partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     res.json(await storage.updatePricingSettings(parsed.data));

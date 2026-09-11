@@ -4,6 +4,12 @@ export interface AuthUser {
   id: number;
   username: string;
   role: "admin" | "sales" | "technician";
+  displayName: string;
+  canSeeCosts: boolean;
+  canAccessAdmin: boolean;
+  canAccessScheduleBuilder: boolean;
+  canDeleteProjects: boolean;
+  isActive: boolean;
   createdAt: string;
 }
 
@@ -28,3 +34,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ user: null });
   },
 }));
+
+/** Read one permission flag. Defaults closed while the session is loading. */
+export function usePermission(key: keyof Pick<
+  AuthUser,
+  "canSeeCosts" | "canAccessAdmin" | "canAccessScheduleBuilder" | "canDeleteProjects"
+>): boolean {
+  return useAuthStore((s) => !!s.user?.[key]);
+}

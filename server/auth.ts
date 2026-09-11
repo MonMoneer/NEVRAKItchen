@@ -32,6 +32,9 @@ passport.use(
       if (!verifyPassword(password, user.passwordHash)) {
         return done(null, false, { message: "Invalid username or password." });
       }
+      if (!user.isActive) {
+        return done(null, false, { message: "This account has been deactivated." });
+      }
       return done(null, user);
     } catch (err) {
       return done(err);
@@ -46,7 +49,8 @@ passport.serializeUser((user: Express.User, done) => {
 passport.deserializeUser(async (id: number, done) => {
   try {
     const user = await storage.getUserById(id);
-    done(null, user || false);
+    // A deactivated account loses its live session on the next request.
+    done(null, user && user.isActive ? user : false);
   } catch (err) {
     done(err);
   }

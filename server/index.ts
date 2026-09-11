@@ -39,6 +39,20 @@ async function runMigrations() {
     await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS assigned_to integer REFERENCES users(id)`);
     await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS client_reference text NOT NULL DEFAULT ''`);
     await pool.query(`ALTER TABLE saved_projects ADD COLUMN IF NOT EXISTS prepared_by text NOT NULL DEFAULT ''`);
+    // Per-user access. Defaults are deliberately closed; existing admins are
+    // reopened below so nobody is locked out of their own admin panel.
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name text NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS can_see_costs boolean NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS can_access_admin boolean NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS can_access_schedule_builder boolean NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS can_delete_projects boolean NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true`);
+    await pool.query(
+      `UPDATE users SET can_see_costs = true, can_access_admin = true,
+         can_access_schedule_builder = true, can_delete_projects = true
+       WHERE role = 'admin'
+         AND can_see_costs = false AND can_access_admin = false`,
+    );
     await pool.query(
       `ALTER TABLE admin_settings ADD COLUMN IF NOT EXISTS default_export_notes text NOT NULL DEFAULT ` +
       `'All prices provided are estimated and may vary by\napproximately 10–20% based on final measurements\nand material selection. Appliances and accessories\nare not included.'`

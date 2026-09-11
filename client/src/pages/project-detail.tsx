@@ -77,7 +77,8 @@ import {
 	CalendarClock,
 	Pencil,
 } from 'lucide-react';
-import { CLIENT_REFERENCE_PREFIX, PREPARED_BY_OPTIONS } from '@shared/schema';
+import { CLIENT_REFERENCE_PREFIX } from '@shared/schema';
+import { useSalespeople } from '@/hooks/use-salespeople';
 
 // ─── Space type config ────────────────────────────────────────────────────────
 
@@ -181,6 +182,7 @@ function EditProjectDialog({
 		(project.clientReference || '').replace(new RegExp(`^${CLIENT_REFERENCE_PREFIX}`, 'i'), '')
 	);
 	const [preparedBy, setPreparedBy] = useState(project.preparedBy);
+	const salespeople = useSalespeople();
 	const [isSaving, setIsSaving] = useState(false);
 	const [error, setError] = useState('');
 
@@ -289,7 +291,7 @@ function EditProjectDialog({
 									<SelectValue placeholder="Select…" />
 								</SelectTrigger>
 								<SelectContent>
-									{PREPARED_BY_OPTIONS.map((n) => (
+									{salespeople.map((n) => (
 										<SelectItem key={n} value={n}>{n}</SelectItem>
 									))}
 								</SelectContent>

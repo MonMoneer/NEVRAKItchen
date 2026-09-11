@@ -35,6 +35,29 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** Like AuthGuard, but also requires a permission flag. */
+function PermissionGuard({
+  permission,
+  children,
+}: {
+  permission: "canAccessAdmin" | "canAccessScheduleBuilder" | "canDeleteProjects";
+  children: React.ReactNode;
+}) {
+  const { user, isLoading } = useAuthStore();
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="text-sm text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+  if (!user) return <Redirect to="/login" />;
+  if (!user[permission]) return <Redirect to="/projects" />;
+
+  return <>{children}</>;
+}
+
 function Router() {
   const { setUser, setLoading } = useAuthStore();
 
@@ -75,11 +98,11 @@ function Router() {
       </Route>
 
       <Route path="/admin">
-        <AuthGuard>
+        <PermissionGuard permission="canAccessAdmin">
           <Suspense fallback={null}>
             <Admin />
           </Suspense>
-        </AuthGuard>
+        </PermissionGuard>
       </Route>
 
       {/* Legacy designer route — keep for direct canvas access */}

@@ -143,8 +143,48 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("sales"), // admin | sales | technician
+  /** Shown on quotations as "Prepared by"; falls back to username when blank. */
+  displayName: text("display_name").notNull().default(""),
+  /**
+   * Access is per user, not per role — one salesperson can be trusted with
+   * factory cost and another not, without inventing a new role for it.
+   * `canSeeCosts` is enforced on the server: a user without it is never sent
+   * CNY rates or the margin at all, only the AED they resolve to.
+   */
+  canSeeCosts: boolean("can_see_costs").notNull().default(false),
+  canAccessAdmin: boolean("can_access_admin").notNull().default(false),
+  canAccessScheduleBuilder: boolean("can_access_schedule_builder").notNull().default(false),
+  canDeleteProjects: boolean("can_delete_projects").notNull().default(false),
+  /** Deactivated users keep their history but cannot log in or be assigned. */
+  isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+/** The per-user access flags, in the order the admin panel shows them. */
+export const USER_PERMISSIONS = [
+  {
+    key: "canSeeCosts",
+    label: "See factory cost",
+    hint: "CNY rates, FX, margin. Without this the browser only ever receives AED.",
+  },
+  {
+    key: "canAccessAdmin",
+    label: "Admin panel",
+    hint: "Pricing rates, users, branding.",
+  },
+  {
+    key: "canAccessScheduleBuilder",
+    label: "Schedule Builder",
+    hint: "Client delivery schedules.",
+  },
+  {
+    key: "canDeleteProjects",
+    label: "Delete projects",
+    hint: "Bulk delete from the projects list.",
+  },
+] as const;
+
+export type UserPermissionKey = (typeof USER_PERMISSIONS)[number]["key"];
 
 // ─── Dream Home Pricing System ──────────────────────────────────────────────
 

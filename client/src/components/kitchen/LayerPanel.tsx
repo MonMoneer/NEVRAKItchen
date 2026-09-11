@@ -23,6 +23,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { useToast } from "@/hooks/use-toast";
+import { usePermission } from "@/stores/useAuthStore";
 import { useCanvasStore } from "@/stores/useCanvasStore";
 import type {
   DreamHomeFinish,
@@ -359,6 +360,7 @@ function LayerCard({
       })
     : { subtotalAED: 0, breakdown: "Loading...", error: undefined as string | undefined };
 
+  const canSeeCosts = usePermission("canSeeCosts");
   const subtotalLabel = result.error ? "—" : `${result.subtotalAED.toFixed(0)} AED`;
   const qtyOrLength =
     layer.type === "island" && boundIsland
@@ -777,14 +779,18 @@ function LayerCard({
       </div>
       {result.error ? (
         <p className="text-[9px] text-red-500 mt-0.5">{result.error}</p>
-      ) : (
+      ) : canSeeCosts ? (
+        // The breakdown spells out the factory CNY rate and the margin, so it
+        // is only rendered for users cleared to see cost. Everyone else sees
+        // the AED subtotal above and nothing more -- and their browser was
+        // never sent the CNY figures in the first place.
         <p
           className="text-[9px] text-muted-foreground mt-0.5 break-words"
           title={result.breakdown}
         >
           {result.breakdown}
         </p>
-      )}
+      ) : null}
     </div>
   );
 }

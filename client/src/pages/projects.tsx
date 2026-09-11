@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuthStore } from "@/stores/useAuthStore";
+import { useSalespeople } from "@/hooks/use-salespeople";
 import { useProjectStore, type Project } from "@/stores/useProjectStore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +33,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Search, LogOut, Settings, ChevronDown, Plus, FolderOpen, CalendarClock, Trash2 } from "lucide-react";
-import { CLIENT_REFERENCE_PREFIX, PREPARED_BY_OPTIONS } from "@shared/schema";
+import { CLIENT_REFERENCE_PREFIX } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
 const STAGES = [
@@ -65,6 +66,7 @@ function NewProjectDialog({
   const [address, setAddress] = useState("");
   const [clientReferenceSuffix, setClientReferenceSuffix] = useState("");
   const [preparedBy, setPreparedBy] = useState("");
+  const salespeople = useSalespeople();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -201,7 +203,7 @@ function NewProjectDialog({
                   <SelectValue placeholder="Select…" />
                 </SelectTrigger>
                 <SelectContent>
-                  {PREPARED_BY_OPTIONS.map((n) => (
+                  {salespeople.map((n) => (
                     <SelectItem key={n} value={n}>{n}</SelectItem>
                   ))}
                 </SelectContent>
@@ -237,6 +239,7 @@ export default function Projects() {
   const [stageFilter, setStageFilter] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const canDelete = !!user?.canDeleteProjects;
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -327,14 +330,14 @@ export default function Projects() {
             />
           </div>
 
-          {user?.role === "admin" && (
+          {user?.canAccessAdmin && (
             <Button variant="ghost" size="sm" onClick={() => navigate("/admin")}>
               <Settings className="h-4 w-4 mr-1" />
               Admin
             </Button>
           )}
 
-          {user?.role === "admin" && (
+          {user?.canAccessScheduleBuilder && (
             <Button
               variant="ghost"
               size="sm"
@@ -385,7 +388,7 @@ export default function Projects() {
           );
         })}
         <div className="flex-1" />
-        {selectedIds.size > 0 && (
+        {canDelete && selectedIds.size > 0 && (
           <>
             <Button
               size="sm"
@@ -429,12 +432,14 @@ export default function Projects() {
                 className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
                 onClick={() => navigate(`/projects/${project.id}`)}
               >
+                {canDelete && (
                 <Checkbox
                   checked={selectedIds.has(project.id)}
                   onCheckedChange={(checked) => toggleSelected(project.id, checked === true)}
                   onClick={(e) => e.stopPropagation()}
                   aria-label={`Select ${project.name}`}
                 />
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm truncate">{project.name}</p>
                   {project.clientName && (

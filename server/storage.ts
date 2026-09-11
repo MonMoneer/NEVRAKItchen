@@ -79,6 +79,10 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   listUsers(): Promise<Omit<User, "passwordHash">[]>;
+  updateUser(id: number, updates: Partial<InsertUser>): Promise<Omit<User, "passwordHash"> | undefined>;
+  deleteUser(id: number): Promise<boolean>;
+  countAdminUsers(): Promise<number>;
+  isUserReferenced(id: number): Promise<boolean>;
 
   // Attachments
   getAttachments(projectId: number): Promise<ProjectAttachment[]>;
@@ -310,6 +314,48 @@ export class DatabaseStorage implements IStorage {
   async listUsers(): Promise<Omit<User, "passwordHash">[]> {
     const rows = await db.select().from(users).orderBy(users.createdAt);
     return rows.map(({ passwordHash: _ph, ...rest }) => rest);
+  }
+
+  async updateUser(id: number, updates: Partial<InsertUser>): Promise<Omit<User, "passwordHash"> | undefined> {
+    if (Object.keys(updates).length === 0) {
+      const existing = await this.getUserById(id);
+      if (!existing) return undefined;
+      const { passwordHash: _ph, ...rest } = existing;
+      return rest;
+    }
+    const [updated] = await db.update(users).set(updates).where(eq(users.id, id)).returning();
+    if (!updated) return undefined;
+    const { passwordHash: _ph, ...rest } = updated;
+    return rest;
+  }
+
+  async deleteUser(id: number): Promise<boolean> {
+    const result = await db.delete(users).where(eq(users.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /** How many *active* accounts can still reach the admin panel. */
+  async countAdminUsers(): Promise<number> {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(users)
+      .where(and(eq(users.canAccessAdmin, true), eq(users.isActive, true)));
+    return row?.n ?? 0;
+  }
+
+  /** True when another row points at this user, so the account must be
+   *  deactivated rather than deleted (deleting would orphan that history). */
+  async isUserReferenced(id: number): Promise<boolean> {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(savedProjects)
+      .where(eq(savedProjects.assignedTo, id));
+    if ((row?.n ?? 0) > 0) return true;
+    const [row2] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(projectTimelines)
+      .where(eq(projectTimelines.createdByUserId, id));
+    return (row2?.n ?? 0) > 0;
   }
 
   // ── Attachments ────────────────────────────────────────────────────────────
