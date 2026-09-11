@@ -1850,27 +1850,74 @@ export function getCabinetLocalPolygon(cabinet: Cabinet, pairs: CornerCabinetPai
   return [p1, p2, p3, p4];
 }
 
-export function computeEffectiveLengths(
+/** One corner where a run was shortened so the corner is only paid for once. */
+export interface CornerJunction {
+  /** The cabinet that was shortened. */
+  cabinetId: string;
+  endpoint: "start" | "end";
+  /** The cabinet it was shortened against — the one that keeps the corner. */
+  cutterId: string;
+  deductionPx: number;
+}
+
+export interface EffectiveLengthResult {
+  /** cabinetId → length in px after corner deductions. */
+  lengths: Map<string, number>;
+  /** cabinetId → length in px as drawn, before any deduction. */
+  rawLengths: Map<string, number>;
+  /** The deductions actually applied (one per shortened endpoint). */
+  junctions: CornerJunction[];
+}
+
+export interface EffectiveLengthContext {
+  /**
+   * Every cabinet in the space. Corner pairs are searched across this list, so
+   * a corner still gets deducted when the two runs meeting there sit in
+   * DIFFERENT layers. Without it only same-layer corners are found and every
+   * cross-layer corner is charged twice — once in each run.
+   */
+  allCabinets?: Cabinet[];
+  /**
+   * Effective depth (cm) of a cabinet, normally its layer's depth. Needed
+   * because the two runs at a cross-layer corner can have different depths, so
+   * one `overrideDepthCm` cannot speak for both sides.
+   */
+  depthCmFor?: (cabinet: Cabinet) => number | null | undefined;
+}
+
+export function computeEffectiveLengthsDetailed(
   cabinets: Cabinet[],
   walls: Wall[],
   overrideDepthCm?: number,
-): Map<string, number> {
-  const effectiveLengths = new Map<string, number>();
+  ctx?: EffectiveLengthContext,
+): EffectiveLengthResult {
+  const rawLengths = new Map<string, number>();
+  const lengths = new Map<string, number>();
+  const junctions: CornerJunction[] = [];
 
   for (const cab of cabinets) {
-    effectiveLengths.set(cab.id, distanceBetween(cab.start, cab.end));
+    const raw = distanceBetween(cab.start, cab.end);
+    rawLengths.set(cab.id, raw);
+    lengths.set(cab.id, raw);
   }
 
   if (!cabinets || cabinets.length === 0) {
-    return effectiveLengths;
+    return { lengths, rawLengths, junctions };
   }
 
-  const deductions = new Map<string, { start: number; end: number }>();
+  // Only the runs being measured get shortened; the other side of a
+  // cross-layer corner is handled by that layer's own call.
+  const measured = new Set(cabinets.map((c) => c.id));
+
+  const deductions = new Map<
+    string,
+    { start: number; end: number; startBy: string; endBy: string }
+  >();
   for (const cab of cabinets) {
-    deductions.set(cab.id, { start: 0, end: 0 });
+    deductions.set(cab.id, { start: 0, end: 0, startBy: "", endBy: "" });
   }
 
-  const pairs = findCornerCabinetPairs(cabinets, walls);
+  const pairs = findCornerCabinetPairs(ctx?.allCabinets ?? cabinets, walls);
 
   for (const pair of pairs) {
     const len1 = distanceBetween(pair.cabinet1.start, pair.cabinet1.end);
@@ -1879,27 +1926,85 @@ export function computeEffectiveLengths(
     const deductFrom = len1 <= len2 ? pair.cabinet1 : pair.cabinet2;
     const cutter = len1 <= len2 ? pair.cabinet2 : pair.cabinet1;
     const deductEndpoint = len1 <= len2 ? pair.cab1Endpoint : pair.cab2Endpoint;
+    if (!measured.has(deductFrom.id)) continue;
+
     // Deduct the CUTTER's rendered depth (incl. the visual overhang bonus)
     // so the shortened length matches what the user sees. Using the raw
     // stored depth would under-deduct by CABINET_RENDER_DEPTH_BONUS (2 cm)
     // per junction and leave a visible overlap.
-    const depthPx = cmToPixels(overrideDepthCm ?? getRenderDepthCm(cutter));
+    const cutterDepthCm =
+      ctx?.depthCmFor?.(cutter) ?? overrideDepthCm ?? getRenderDepthCm(cutter);
+    const depthPx = cmToPixels(cutterDepthCm);
 
     const d = deductions.get(deductFrom.id)!;
     if (deductEndpoint === "start") {
-      d.start = Math.max(d.start, depthPx);
-    } else {
-      d.end = Math.max(d.end, depthPx);
+      if (depthPx > d.start) {
+        d.start = depthPx;
+        d.startBy = cutter.id;
+      }
+    } else if (depthPx > d.end) {
+      d.end = depthPx;
+      d.endBy = cutter.id;
     }
   }
 
   for (const cab of cabinets) {
-    const rawLen = effectiveLengths.get(cab.id) ?? 0;
+    const rawLen = rawLengths.get(cab.id) ?? 0;
     const d = deductions.get(cab.id)!;
-    effectiveLengths.set(cab.id, Math.max(0, rawLen - d.start - d.end));
+    lengths.set(cab.id, Math.max(0, rawLen - d.start - d.end));
+    if (d.start > 0) {
+      junctions.push({
+        cabinetId: cab.id,
+        endpoint: "start",
+        cutterId: d.startBy,
+        deductionPx: d.start,
+      });
+    }
+    if (d.end > 0) {
+      junctions.push({
+        cabinetId: cab.id,
+        endpoint: "end",
+        cutterId: d.endBy,
+        deductionPx: d.end,
+      });
+    }
   }
 
-  return effectiveLengths;
+  return { lengths, rawLengths, junctions };
+}
+
+export function computeEffectiveLengths(
+  cabinets: Cabinet[],
+  walls: Wall[],
+  overrideDepthCm?: number,
+  ctx?: EffectiveLengthContext,
+): Map<string, number> {
+  return computeEffectiveLengthsDetailed(cabinets, walls, overrideDepthCm, ctx)
+    .lengths;
+}
+
+/**
+ * Resolves a cabinet's governing depth (its layer's, which the user can edit
+ * after drawing) for corner deductions that span layers.
+ */
+export function makeLayerDepthResolver(
+  layers: Array<Pick<Layer, "id" | "depth" | "cabinetIds">>,
+): (cabinet: Cabinet) => number | undefined {
+  const byLayer = new Map<string, number | null>();
+  const byCabinet = new Map<string, number | null>();
+  for (const layer of layers) {
+    byLayer.set(layer.id, layer.depth);
+    for (const id of layer.cabinetIds ?? []) byCabinet.set(id, layer.depth);
+  }
+  return (cabinet) => {
+    const direct = byCabinet.get(cabinet.id);
+    if (direct != null) return direct;
+    if (cabinet.layerId) {
+      const viaLayer = byLayer.get(cabinet.layerId);
+      if (viaLayer != null) return viaLayer;
+    }
+    return undefined;
+  };
 }
 
 export interface CabinetGroup {

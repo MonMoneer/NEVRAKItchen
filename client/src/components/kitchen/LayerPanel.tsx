@@ -31,7 +31,7 @@ import type {
   PricingSettings,
 } from "@shared/schema";
 import type { Layer, LayerType, Cabinet, Wall, Island } from "@/lib/kitchen-engine";
-import { pixelsToCm, computeEffectiveLengths } from "@/lib/kitchen-engine";
+import { pixelsToCm, computeEffectiveLengths, makeLayerDepthResolver } from "@/lib/kitchen-engine";
 import { calculateLayerPrice, type PricingLayer } from "@/lib/dream-home-pricing";
 
 const LAYER_LABELS: Record<LayerType, string> = {
@@ -174,7 +174,12 @@ export function LayerPanel({ cabinets, walls, onLayersChanged }: LayerPanelProps
     if (!DRAWABLE_TYPES.includes(layer.type)) return 0;
     const cabs = getLayerCabinets(layer);
     if (cabs.length === 0) return 0;
-    const effectiveLengths = computeEffectiveLengths(cabs, walls, layer.depth ?? undefined);
+    // Corner pairs are searched across every cabinet, not just this layer's,
+    // so a corner shared with a differently-named run is still only paid once.
+    const effectiveLengths = computeEffectiveLengths(cabs, walls, layer.depth ?? undefined, {
+      allCabinets: cabinets,
+      depthCmFor: makeLayerDepthResolver(layers),
+    });
     return cabs.reduce((sum, c) => sum + pixelsToCm(effectiveLengths.get(c.id) ?? 0) / 100, 0);
   };
 
@@ -813,7 +818,10 @@ function TotalFooter({ layers, cabinets, walls, islands, prices, tallRows, setti
     if (!DRAWABLE_TYPES.includes(layer.type)) return 0;
     const cabs = cabinets.filter((c) => c.layerId === layer.id || layer.cabinetIds.includes(c.id));
     if (cabs.length === 0) return 0;
-    const eff = computeEffectiveLengths(cabs, walls, layer.depth ?? undefined);
+    const eff = computeEffectiveLengths(cabs, walls, layer.depth ?? undefined, {
+      allCabinets: cabinets,
+      depthCmFor: makeLayerDepthResolver(layers),
+    });
     return cabs.reduce((sum, c) => sum + pixelsToCm(eff.get(c.id) ?? 0) / 100, 0);
   };
 

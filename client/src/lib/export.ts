@@ -1,6 +1,10 @@
 import jsPDF from "jspdf";
 import type { Wall, Cabinet, Opening, Layer, Island } from "./kitchen-engine";
-import { pixelsToCm, computeEffectiveLengths } from "./kitchen-engine";
+import {
+	pixelsToCm,
+	computeEffectiveLengths,
+	makeLayerDepthResolver,
+} from "./kitchen-engine";
 import { calculateLayerPrice, type PricingLayer } from "./dream-home-pricing";
 import type {
 	DreamHomeFinish,
@@ -221,6 +225,9 @@ function priceSpaceLayers(
 ): SpaceTotals {
 	let kitchenTotal = 0;
 	let countertopTotal = 0;
+	// Built once: corner deductions are searched across every cabinet in the
+	// space, so a corner shared by two differently-named runs is charged once.
+	const depthCmFor = makeLayerDepthResolver(layers);
 	for (const layer of layers) {
 		const isIsland = layer.type === "island";
 		const boundIsland = isIsland
@@ -234,6 +241,7 @@ function priceSpaceLayers(
 			layerCabinets,
 			walls,
 			layer.depth ?? undefined,
+			{ allCabinets: cabinets, depthCmFor },
 		);
 		const cabinetsLengthM = layerCabinets.reduce((sum, c) => {
 			const effPx = effLengths.get(c.id) ?? 0;

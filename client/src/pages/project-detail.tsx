@@ -34,6 +34,7 @@ import {
 	WALL_THICKNESS,
 } from '@/lib/kitchen-engine';
 import { exportToPDF, computeProjectGrandTotal, type SpaceExportData } from '@/lib/export';
+import { downloadPricingHandover } from '@/lib/pricing-handover';
 import { ExportNotesDialog } from '@/components/ExportNotesDialog';
 import { TimelineDialog } from '@/components/TimelineDialog';
 import { useToast } from '@/hooks/use-toast';
@@ -1012,6 +1013,54 @@ export default function ProjectDetail({ id }: { id: number }) {
 	// .defaults() + overrides) -- it already has a generic "Import" button that
 	// merges exactly this shape, no PDF parsing involved.
 
+	// ── Export for the pricing tool (detailed factory BOQ) ──────────────────────
+	//
+	// One kitchen per file: the pricing tool's project is a single kitchen, and
+	// a project with a show kitchen and a back kitchen exports one file each.
+	const handleExportPricing = useCallback(async () => {
+		if (!currentProject || !activeSpace) {
+			toast({ title: 'Export failed', variant: 'destructive' });
+			return;
+		}
+		if (activeSpace.type !== 'kitchen') {
+			toast({
+				title: 'Kitchens only',
+				description: `"${activeSpace.name}" is a ${activeSpace.type} space. The pricing tool prices kitchen cabinetry only.`,
+				variant: 'destructive',
+			});
+			return;
+		}
+		setIsExporting(true);
+		try {
+			// Flush any pending save so the payload matches what is stored.
+			if (saveTimeout.current) {
+				clearTimeout(saveTimeout.current);
+				saveTimeout.current = null;
+				if (activeSpaceId) saveCanvasNow(activeSpaceId, canvasSourceField);
+			}
+			const { drawingState, layers, islands, elements } = useCanvasStore.getState();
+			const payload = await downloadPricingHandover({
+				project: currentProject as any,
+				space: activeSpace as any,
+				layers,
+				cabinets: drawingState.cabinets,
+				walls: drawingState.walls,
+				islands,
+				elements,
+			});
+			const runCount = payload.runs.length;
+			toast({
+				title: `Handover exported — ${runCount} run${runCount === 1 ? '' : 's'}`,
+				description: 'Import it in the pricing tool. Lengths are already net of corners.',
+			});
+		} catch (err) {
+			console.error('[export-pricing] failed:', err);
+			toast({ title: 'Export failed', variant: 'destructive' });
+		} finally {
+			setIsExporting(false);
+		}
+	}, [activeSpace, activeSpaceId, canvasSourceField, currentProject, saveCanvasNow, toast]);
+
 	const handleExportScheduleData = useCallback(async () => {
 		if (!currentProject) {
 			toast({ title: 'Export failed', variant: 'destructive' });
@@ -1507,6 +1556,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 						onClear={handleClear}
 						onExport={handleExport}
 						onExportSchedule={handleExportScheduleData}
+						onExportPricing={handleExportPricing}
 						onSave={() => scheduleCanvasSave()}
 						onOpen={() => {}}
 						onAdmin={() => navigate('/admin')}

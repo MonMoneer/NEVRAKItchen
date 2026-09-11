@@ -26,6 +26,7 @@ import {
   PencilRuler,
   ChevronRight,
   CalendarClock,
+  Calculator,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { DrawingState } from "@/lib/kitchen-engine";
@@ -120,6 +121,7 @@ interface ToolbarProps {
   onClear: () => void;
   onExport: () => void;
   onExportSchedule?: () => void;
+  onExportPricing?: () => void;
   onSave: () => void;
   onOpen: () => void;
   onAdmin: () => void;
@@ -149,6 +151,7 @@ export function Toolbar({
   onClear,
   onExport,
   onExportSchedule,
+  onExportPricing,
   onSave,
   onOpen,
   onAdmin,
@@ -571,6 +574,16 @@ export function Toolbar({
           >
             <CalendarClock className="w-4 h-4" />
             <span>Export to Schedule Builder</span>
+          </button>
+        )}
+        {onExportPricing && (
+          <button
+            data-testid="button-export-pricing"
+            onClick={onExportPricing}
+            className="flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium text-sidebar-foreground/80 hover:bg-accent transition-colors"
+          >
+            <Calculator className="w-4 h-4" />
+            <span>Export to Pricing Tool</span>
           </button>
         )}
         <button
