@@ -18,6 +18,13 @@ import {
   makeLayerDepthResolver,
   pixelsToCm,
 } from "./kitchen-engine";
+import {
+  END_PANEL_BASE_AREA_M2,
+  END_PANEL_DECOR_WIDTH_M,
+  END_PANEL_WALL_AREAS_M2,
+  FILLER_AREA_M2,
+  MIN_CHARGEABLE_AREA_M2,
+} from "./dream-home-pricing";
 import type { DreamHomeFinish, SavedProject, Space } from "@shared/schema";
 
 export const HANDOVER_KIND = "nivra.estimator.handover";
@@ -56,6 +63,30 @@ export interface HandoverRun {
   shelf: "glass" | "ss" | "none" | null;
 }
 
+/**
+ * An end panel as this app holds it. Only the decorative variant carries real
+ * dimensions (a fixed 0.6 m width × a typed height); base and wall panels are
+ * picked from a nominal area bucket, so `dimensionsKnown` is false and the
+ * receiving tool must ask for the real size rather than trusting the area.
+ */
+export interface HandoverEndPanel {
+  name: string;
+  variant: "base" | "wall" | "decorative";
+  qty: number;
+  areaPerPieceM2: number;
+  totalAreaM2: number;
+  widthM: number | null;
+  heightM: number | null;
+  dimensionsKnown: boolean;
+}
+
+export interface HandoverFiller {
+  name: string;
+  qty: number;
+  areaPerPieceM2: number;
+  totalAreaM2: number;
+}
+
 export interface HandoverPayload {
   kind: typeof HANDOVER_KIND;
   version: number;
@@ -66,6 +97,12 @@ export interface HandoverPayload {
   units: { length: "m"; dimension: "mm" };
   lengthBasis: "net_of_corner_deductions";
   runs: HandoverRun[];
+  endPanels: HandoverEndPanel[];
+  fillers: HandoverFiller[];
+  /**
+   * How many DRAWERS were drawn — not how many drawer cabinets hold them.
+   * A reminder to price them, never a quantity to seed rows from.
+   */
   drawerCount: number;
   appliancesDetected: Array<{ kind: string; widthMm: number }>;
   totals: { baseLm: number; wallLm: number; tallLm: number; islandLm: number };
@@ -75,8 +112,10 @@ export interface HandoverPayload {
 
 /** Everything the pricing tool needs that this app has no concept of. */
 const NOT_KNOWN = [
+  "drawer_cabinet_count",
   "drawer_widths",
   "drawer_configs",
+  "end_panel_dimensions",
   "zones",
   "appliance_run_assignment",
   "open_cabinets",
@@ -198,6 +237,58 @@ export function buildPricingHandover(input: HandoverInput): HandoverPayload {
     .filter((l) => l.type === "drawer")
     .reduce((sum, l) => sum + (l.qty ?? 0), 0);
 
+  const endPanels: HandoverEndPanel[] = layers
+    .filter((l) => l.type === "end_panel" && l.endPanelVariant)
+    .map((l) => {
+      const qty = l.qty ?? 1;
+      const variant = l.endPanelVariant as HandoverEndPanel["variant"];
+      // Mirrors calcEndPanel() in dream-home-pricing.ts. Base and wall are
+      // nominal area buckets picked from a list; only decorative is measured.
+      if (variant === "decorative") {
+        const heightM = (l.endPanelDecorHeight ?? 0) / 100;
+        const area = Math.max(
+          END_PANEL_DECOR_WIDTH_M * heightM,
+          MIN_CHARGEABLE_AREA_M2,
+        );
+        return {
+          name: l.name?.trim() || "Decorative end panel",
+          variant,
+          qty,
+          areaPerPieceM2: round3(area),
+          totalAreaM2: round3(area * qty),
+          widthM: END_PANEL_DECOR_WIDTH_M,
+          heightM: heightM > 0 ? round3(heightM) : null,
+          dimensionsKnown: heightM > 0,
+        };
+      }
+      const area =
+        variant === "base"
+          ? END_PANEL_BASE_AREA_M2
+          : l.endPanelWallArea ?? END_PANEL_WALL_AREAS_M2[0];
+      return {
+        name: l.name?.trim() || (variant === "base" ? "Base end panel" : "Wall end panel"),
+        variant,
+        qty,
+        areaPerPieceM2: round3(area),
+        totalAreaM2: round3(area * qty),
+        widthM: null,
+        heightM: null,
+        dimensionsKnown: false,
+      };
+    });
+
+  const fillers: HandoverFiller[] = layers
+    .filter((l) => l.type === "filler")
+    .map((l) => {
+      const qty = l.qty ?? 0;
+      return {
+        name: l.name?.trim() || "Filler",
+        qty,
+        areaPerPieceM2: FILLER_AREA_M2,
+        totalAreaM2: round3(FILLER_AREA_M2 * qty),
+      };
+    });
+
   const defById = new Map(input.elementDefs.map((d) => [d.id, d]));
   const appliancesDetected = input.elements
     .map((el) => defById.get(el.definitionId))
@@ -225,6 +316,8 @@ export function buildPricingHandover(input: HandoverInput): HandoverPayload {
     units: { length: "m", dimension: "mm" },
     lengthBasis: "net_of_corner_deductions",
     runs,
+    endPanels,
+    fillers,
     drawerCount,
     appliancesDetected,
     totals: {
