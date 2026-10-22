@@ -165,38 +165,106 @@ export async function registerRoutes(
   });
 
   /**
-   * The names offered in the "Prepared by" dropdown: the display name of every
-   * active account. A blank display name means "not a salesperson", which is
-   * what keeps service logins like `technician` out of the list.
+   * The names offered in the "Prepared by" dropdown, straight from the roster
+   * the admin panel manages. Deliberately unrelated to user accounts -- a
+   * salesperson can be named on an estimate without having a login, and giving
+   * someone a login does not put them on estimates.
    *
-   * Until someone has been given a display name the old hardcoded roster
-   * stands in, so the dropdown is never empty. Set display names on real
-   * accounts and the roster is replaced by them -- that is how a salesperson
-   * is added or removed from here without a code change.
+   * PREPARED_BY_OPTIONS is only a floor, used if the roster is somehow empty,
+   * so the dropdown can never strand someone mid-quotation.
    */
   async function salespeopleNames(): Promise<string[]> {
-    const rows = await storage.listUsers();
-    const fromUsers = Array.from(
-      new Set(
-        rows
-          .filter((u) => u.isActive)
-          .map((u) => u.displayName.trim())
-          .filter(Boolean),
-      ),
-    ).sort((a, b) => a.localeCompare(b));
-    return fromUsers.length > 0 ? fromUsers : [...PREPARED_BY_OPTIONS];
+    const rows = await storage.listPreparedByNames();
+    const active = rows.filter((r) => r.isActive).map((r) => r.name);
+    return active.length > 0 ? active : [...PREPARED_BY_OPTIONS];
   }
 
   app.get("/api/salespeople", requireAuth, async (_req, res) => {
     res.json(await salespeopleNames());
   });
 
+  // ── Prepared-by roster (admin) ────────────────────────────────────────────
+
+  app.get("/api/prepared-by", requirePermission("canAccessAdmin"), async (_req, res) => {
+    const rows = await storage.listPreparedByNames();
+    const withUsage = await Promise.all(
+      rows.map(async (r) => ({ ...r, projectCount: await storage.countProjectsPreparedBy(r.name) })),
+    );
+    res.json(withUsage);
+  });
+
+  app.post("/api/prepared-by", requirePermission("canAccessAdmin"), async (req, res) => {
+    const name = String(req.body?.name ?? "").trim();
+    if (!name) return res.status(400).json({ error: "A name is required" });
+
+    const existing = await storage.listPreparedByNames();
+    if (existing.some((r) => r.name.toLowerCase() === name.toLowerCase())) {
+      return res.status(409).json({ error: "That name is already on the list" });
+    }
+    const sortOrder = existing.reduce((max, r) => Math.max(max, r.sortOrder), -1) + 1;
+    res.status(201).json(await storage.createPreparedByName({ name, sortOrder, isActive: true }));
+  });
+
+  app.put("/api/prepared-by/:id", requirePermission("canAccessAdmin"), async (req, res) => {
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+
+    const rows = await storage.listPreparedByNames();
+    const target = rows.find((r) => r.id === id);
+    if (!target) return res.status(404).json({ error: "Name not found" });
+
+    const updates: Record<string, unknown> = {};
+    if (req.body?.name !== undefined) {
+      const name = String(req.body.name).trim();
+      if (!name) return res.status(400).json({ error: "A name is required" });
+      if (rows.some((r) => r.id !== id && r.name.toLowerCase() === name.toLowerCase())) {
+        return res.status(409).json({ error: "That name is already on the list" });
+      }
+      updates.name = name;
+    }
+    if (req.body?.isActive !== undefined) updates.isActive = !!req.body.isActive;
+    if (req.body?.sortOrder !== undefined) updates.sortOrder = Number(req.body.sortOrder) || 0;
+
+    // A rename carries across to the projects already signed with the old
+    // spelling, so correcting a name fixes old estimates instead of orphaning
+    // them. Report how many moved.
+    let renamed = 0;
+    if (typeof updates.name === "string" && updates.name !== target.name) {
+      renamed = await storage.renameProjectsPreparedBy(target.name, updates.name);
+    }
+
+    const updated = await storage.updatePreparedByName(id, updates as any);
+    if (!updated) return res.status(404).json({ error: "Name not found" });
+    res.json({ ...updated, renamedProjects: renamed });
+  });
+
+  app.delete("/api/prepared-by/:id", requirePermission("canAccessAdmin"), async (req, res) => {
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+
+    const rows = await storage.listPreparedByNames();
+    const target = rows.find((r) => r.id === id);
+    if (!target) return res.status(404).json({ error: "Name not found" });
+
+    // Same rule as user accounts: a name already printed on estimates is
+    // retired, not erased, so those projects keep showing who prepared them.
+    const used = await storage.countProjectsPreparedBy(target.name);
+    if (used > 0) {
+      const retired = await storage.updatePreparedByName(id, { isActive: false });
+      return res.json({ deleted: false, retired: true, projectCount: used, entry: retired });
+    }
+
+    await storage.deletePreparedByName(id);
+    res.json({ deleted: true, retired: false });
+  });
+
   app.post("/api/projects", async (req, res) => {
     const parsed = insertSavedProjectSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
-    // Accept the old roster too, so a project created from a stale tab (or an
-    // integration) with a legacy name still saves.
-    const validNames = [...(await salespeopleNames()), ...PREPARED_BY_OPTIONS];
+    // Retired names count as valid too, so a tab opened before someone was
+    // taken off the list still saves.
+    const roster = await storage.listPreparedByNames();
+    const validNames = roster.length > 0 ? roster.map((r) => r.name) : [...PREPARED_BY_OPTIONS];
     if (!parsed.data.preparedBy || !validNames.includes(parsed.data.preparedBy)) {
       return res.status(400).json({ error: "preparedBy is required and must be a valid salesperson" });
     }

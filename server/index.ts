@@ -7,6 +7,7 @@ import { createServer } from "http";
 import { passport } from "./auth";
 import { pool } from "./db";
 import { seedDreamHomePricing } from "./seed";
+import { PREPARED_BY_OPTIONS } from "@shared/schema";
 
 const _origExit = process.exit.bind(process);
 process.exit = ((code?: number) => {
@@ -68,6 +69,27 @@ async function runMigrations() {
       )
     `);
     await pool.query(`UPDATE saved_projects SET stage = 'delivered' WHERE stage = 'final'`);
+
+    // The "Prepared by" roster, managed from the admin panel. Seeded once from
+    // the names that used to be hardcoded, so the dropdown is unchanged on the
+    // first boot after this ships.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS prepared_by_names (
+        id serial PRIMARY KEY,
+        name text NOT NULL UNIQUE,
+        sort_order integer NOT NULL DEFAULT 0,
+        is_active boolean NOT NULL DEFAULT true
+      )
+    `);
+    const rosterCount = await pool.query(`SELECT count(*)::int AS n FROM prepared_by_names`);
+    if ((rosterCount.rows[0]?.n ?? 0) === 0) {
+      for (const [i, name] of PREPARED_BY_OPTIONS.entries()) {
+        await pool.query(
+          `INSERT INTO prepared_by_names (name, sort_order) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
+          [name, i],
+        );
+      }
+    }
 
     // Drop old pricing tables (replaced by Dream Home schema)
     await pool.query(`DROP TABLE IF EXISTS finish_price_matrix CASCADE`);

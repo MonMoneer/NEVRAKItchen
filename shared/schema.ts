@@ -22,6 +22,12 @@ import { z } from "zod";
 
 export const CLIENT_REFERENCE_PREFIX = "NV-";
 
+/**
+ * The roster the "Prepared by" dropdown starts from. It is seeded into the
+ * prepared_by_names table on first boot and then managed from the admin panel,
+ * so this array is only the starting point (and the floor the app falls back
+ * to if the table is ever emptied) -- not the live list.
+ */
 export const PREPARED_BY_OPTIONS = [
   "Fami Hasiri",
   "Fatima Al Koussa",
@@ -405,3 +411,21 @@ export const scheduleBuilderData = pgTable("schedule_builder_data", {
 });
 
 export type ScheduleBuilderData = typeof scheduleBuilderData.$inferSelect;
+
+// ─── Prepared by (estimate authors) ───────────────────────────────────────────
+//
+// Just a list of names for the "Prepared by" dropdown. Deliberately NOT tied to
+// user accounts: a salesperson can be named on an estimate without needing a
+// login, and giving someone a login does not put them on estimates.
+
+export const preparedByNames = pgTable("prepared_by_names", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  /** Retired names stay on their old projects but leave the dropdown. */
+  isActive: boolean("is_active").notNull().default(true),
+});
+
+export const insertPreparedByNameSchema = createInsertSchema(preparedByNames).omit({ id: true });
+export type InsertPreparedByName = z.infer<typeof insertPreparedByNameSchema>;
+export type PreparedByName = typeof preparedByNames.$inferSelect;

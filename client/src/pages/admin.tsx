@@ -26,6 +26,7 @@ import type {
   PricingSettings,
   User,
   UserPermissionKey,
+  PreparedByName,
 } from "@shared/schema";
 import { useAuthStore } from "@/stores/useAuthStore";
 
@@ -165,7 +166,10 @@ export default function Admin() {
             </TabsContent>
 
             <TabsContent value="users">
-              <UsersCard />
+              <div className="space-y-6">
+                <PreparedByCard />
+                <UsersCard />
+              </div>
             </TabsContent>
           </Tabs>
         )}
@@ -405,6 +409,177 @@ function TallHeightsCard() {
   );
 }
 
+type RosterEntry = PreparedByName & { projectCount: number };
+
+function PreparedByCard() {
+  const { toast } = useToast();
+  const { data: roster = [], isLoading } = useQuery<RosterEntry[]>({ queryKey: ["/api/prepared-by"] });
+  const [newName, setNewName] = useState("");
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/prepared-by"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/salespeople"] });
+  };
+  const fail = (err: any) =>
+    toast({ title: "Could not save", description: String(err?.message ?? err), variant: "destructive" });
+
+  const add = useMutation({
+    mutationFn: (name: string) => apiRequest("POST", "/api/prepared-by", { name }),
+    onSuccess: () => { refresh(); setNewName(""); toast({ title: "Name added" }); },
+    onError: fail,
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, ...data }: { id: number } & Record<string, unknown>) =>
+      apiRequest("PUT", `/api/prepared-by/${id}`, data),
+    onSuccess: async (res: any) => {
+      refresh();
+      const body = await res?.json?.().catch(() => null);
+      toast({
+        title: "Saved",
+        description: body?.renamedProjects
+          ? `Renamed on ${body.renamedProjects} existing project${body.renamedProjects === 1 ? "" : "s"}.`
+          : undefined,
+      });
+    },
+    onError: fail,
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/prepared-by/${id}`),
+    onSuccess: async (res: any) => {
+      refresh();
+      const body = await res?.json?.().catch(() => null);
+      toast({
+        title: body?.retired ? "Name retired" : "Name removed",
+        description: body?.retired
+          ? `It is on ${body.projectCount} existing project${body.projectCount === 1 ? "" : "s"}, so it was taken off the dropdown rather than deleted.`
+          : undefined,
+      });
+    },
+    onError: fail,
+  });
+
+  const busy = add.isPending || update.isPending || remove.isPending;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Prepared by</CardTitle>
+        <p className="text-xs text-muted-foreground mt-1">
+          The names offered in the &ldquo;Prepared by&rdquo; dropdown when a project is created.
+          No login required &mdash; this is only the name printed on the estimate.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {isLoading ? (
+          <Skeleton className="h-24 w-full" />
+        ) : (
+          <>
+            {roster.map((entry) => (
+              <PreparedByRow
+                key={entry.id}
+                entry={entry}
+                isPending={busy}
+                onSave={(data) => update.mutate({ id: entry.id, ...data })}
+                onDelete={() => remove.mutate(entry.id)}
+              />
+            ))}
+            <Separator />
+            <div className="flex items-center gap-2">
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newName.trim()) add.mutate(newName.trim());
+                }}
+                placeholder="Add a name…"
+                className="h-8 max-w-xs"
+                data-testid="input-new-prepared-by"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!newName.trim() || busy}
+                onClick={() => add.mutate(newName.trim())}
+                data-testid="button-add-prepared-by"
+              >
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PreparedByRow({
+  entry,
+  isPending,
+  onSave,
+  onDelete,
+}: {
+  entry: RosterEntry;
+  isPending: boolean;
+  onSave: (data: Record<string, unknown>) => void;
+  onDelete: () => void;
+}) {
+  const [name, setName] = useState(entry.name);
+
+  return (
+    <div
+      className={`flex items-center gap-2 ${entry.isActive ? "" : "opacity-60"}`}
+      data-testid={`prepared-by-row-${entry.id}`}
+    >
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={() => {
+          const trimmed = name.trim();
+          if (trimmed && trimmed !== entry.name) onSave({ name: trimmed });
+          else setName(entry.name);
+        }}
+        className="h-8 max-w-xs"
+        disabled={isPending}
+      />
+      {entry.projectCount > 0 && (
+        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+          on {entry.projectCount} project{entry.projectCount === 1 ? "" : "s"}
+        </span>
+      )}
+      {!entry.isActive && <Badge variant="outline" className="text-[10px]">retired</Badge>}
+      <div className="flex-1" />
+      <label
+        className="flex items-center gap-2 text-xs"
+        title="Off hides the name from the dropdown without touching the projects that already use it."
+      >
+        <Switch
+          checked={entry.isActive}
+          disabled={isPending}
+          onCheckedChange={(v) => onSave({ isActive: v })}
+        />
+        In dropdown
+      </label>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-destructive"
+        disabled={isPending}
+        title={entry.projectCount > 0 ? "Used on existing projects — this will retire the name" : "Remove name"}
+        onClick={() => {
+          const msg = entry.projectCount > 0
+            ? `"${entry.name}" is on ${entry.projectCount} project${entry.projectCount === 1 ? "" : "s"}. It will be taken off the dropdown but kept on those projects. Continue?`
+            : `Remove "${entry.name}" from the Prepared by list?`;
+          if (confirm(msg)) onDelete();
+        }}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
 type SafeUser = Omit<User, "passwordHash">;
 
 const ROLES = ["sales", "technician", "admin"] as const;
@@ -456,12 +631,12 @@ function UsersCard() {
       <CardHeader>
         <CardTitle className="text-base">Users &amp; access</CardTitle>
         <p className="text-xs text-muted-foreground mt-1">
-          Add or remove salespeople, reset passwords, and choose what each person can reach.
+          Who can log in, and what each person can reach once they do.
           &ldquo;See factory cost&rdquo; is enforced on the server &mdash; without it the browser
           is only ever sent AED prices, never the CNY rate or the margin.
           <br />
-          Anyone given a <strong>display name</strong> appears in the &ldquo;Prepared by&rdquo;
-          dropdown on projects; leave it blank to keep an account out of that list.
+          This list is separate from &ldquo;Prepared by&rdquo; above: an account is a login, not
+          a name on an estimate.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -532,7 +707,7 @@ function UserRow({
         <Input
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="Display name (shown as Prepared by)"
+          placeholder="Display name (optional)"
           className="h-8 flex-1 min-w-[180px]"
         />
 

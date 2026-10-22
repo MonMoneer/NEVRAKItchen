@@ -12,12 +12,14 @@ import {
   type TallHeight, type InsertTallHeight,
   type PricingSettings, type InsertPricingSettings,
   type ProjectTimeline, type TimelineData,
+  type PreparedByName, type InsertPreparedByName,
   adminSettings, savedProjects,
   spaces, spacePhotos, elementDefinitions, wallPoints, users,
   projectAttachments,
   dreamHomeFinishes, dreamHomePrices, tallHeights, pricingSettings,
   projectTimelines,
   scheduleBuilderData,
+  preparedByNames,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, ilike, desc, and, sql } from "drizzle-orm";
@@ -83,6 +85,14 @@ export interface IStorage {
   deleteUser(id: number): Promise<boolean>;
   countAdminUsers(): Promise<number>;
   isUserReferenced(id: number): Promise<boolean>;
+
+  // Prepared-by roster
+  listPreparedByNames(): Promise<PreparedByName[]>;
+  createPreparedByName(entry: InsertPreparedByName): Promise<PreparedByName>;
+  updatePreparedByName(id: number, updates: Partial<InsertPreparedByName>): Promise<PreparedByName | undefined>;
+  deletePreparedByName(id: number): Promise<boolean>;
+  countProjectsPreparedBy(name: string): Promise<number>;
+  renameProjectsPreparedBy(from: string, to: string): Promise<number>;
 
   // Attachments
   getAttachments(projectId: number): Promise<ProjectAttachment[]>;
@@ -359,6 +369,46 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ── Attachments ────────────────────────────────────────────────────────────
+
+  // ── Prepared-by roster ─────────────────────────────────────────────────────
+
+  async listPreparedByNames(): Promise<PreparedByName[]> {
+    return db.select().from(preparedByNames).orderBy(preparedByNames.sortOrder, preparedByNames.name);
+  }
+
+  async createPreparedByName(entry: InsertPreparedByName): Promise<PreparedByName> {
+    const [created] = await db.insert(preparedByNames).values(entry).returning();
+    return created;
+  }
+
+  async updatePreparedByName(id: number, updates: Partial<InsertPreparedByName>): Promise<PreparedByName | undefined> {
+    const [updated] = await db.update(preparedByNames).set(updates).where(eq(preparedByNames.id, id)).returning();
+    return updated;
+  }
+
+  async deletePreparedByName(id: number): Promise<boolean> {
+    const result = await db.delete(preparedByNames).where(eq(preparedByNames.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /** How many projects already carry this name, so we know whether removing it
+   *  would orphan the author shown on existing estimates. */
+  async countProjectsPreparedBy(name: string): Promise<number> {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(savedProjects)
+      .where(eq(savedProjects.preparedBy, name));
+    return row?.n ?? 0;
+  }
+
+  /** Carry a renamed author across the projects already signed with it. */
+  async renameProjectsPreparedBy(from: string, to: string): Promise<number> {
+    const result = await db
+      .update(savedProjects)
+      .set({ preparedBy: to })
+      .where(eq(savedProjects.preparedBy, from));
+    return result.rowCount ?? 0;
+  }
 
   async getAttachments(projectId: number): Promise<ProjectAttachment[]> {
     return db.select().from(projectAttachments).where(eq(projectAttachments.projectId, projectId)).orderBy(desc(projectAttachments.createdAt));
