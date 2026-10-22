@@ -249,7 +249,7 @@ export function renderTimeline(data: TimelineData): string {
     ${
       data.summary.payments.length
         ? `<div class="summary">
-      <div class="summary-title">Payment Summary${data.summary.total ? ` &nbsp;·&nbsp; ${esc(data.summary.total)} Total` : ""}</div>
+      <div class="summary-title">Payment Summary</div>
       <div class="summary-grid">
         ${summaryCells}
       </div>
