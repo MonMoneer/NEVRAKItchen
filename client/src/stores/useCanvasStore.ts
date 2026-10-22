@@ -10,6 +10,7 @@ import {
   canUndo as checkCanUndo,
   canRedo as checkCanRedo,
 } from "@/lib/history";
+import type { PlacedAppliance } from "@/lib/appliances";
 
 export interface CanvasElement {
   id: string;
@@ -49,11 +50,13 @@ interface DesignData {
   guidelines: Guideline[];
   layers?: Layer[];
   islands?: Island[];
+  appliances?: PlacedAppliance[];
 }
 
 interface CanvasState {
   drawingState: DrawingState;
   elements: CanvasElement[];
+  appliances: PlacedAppliance[];
   wallPoints: WallPointItem[];
   guidelines: Guideline[];
   layers: Layer[];
@@ -89,6 +92,19 @@ interface CanvasState {
   addElement: (element: CanvasElement) => void;
   updateElement: (id: string, updates: Partial<CanvasElement>) => void;
   deleteElement: (id: string) => void;
+  /** Appliances are visual only (never priced). See lib/appliances.ts. */
+  addAppliance: (appliance: PlacedAppliance) => void;
+  deleteAppliance: (id: string) => void;
+  /** Live update while dragging — NO history entry. */
+  updateApplianceLive: (id: string, updates: Partial<PlacedAppliance>) => void;
+  /** Apply final updates (drop / resize) and push ONE history entry. */
+  commitApplianceMove: (id: string, updates: Partial<PlacedAppliance>) => void;
+  /**
+   * Background bookkeeping (lastCenter, silent re-attach after a host was
+   * split/deleted, wall re-measure). Never pushes history, never touches the
+   * redo stack; callers must not schedule a save for it.
+   */
+  syncAppliancesSilently: (patches: Array<{ id: string; patch: Partial<PlacedAppliance> }>) => void;
   addWallPoint: (point: Omit<WallPointItem, "id">) => void;
   updateWallPoint: (id: number, updates: Partial<Omit<WallPointItem, "id">>) => void;
   deleteWallPoint: (id: number) => void;
@@ -115,7 +131,7 @@ interface CanvasState {
   cancelIslandDraw: () => void;
   setIslandPhase: (next: IslandDrawingState) => void;
   loadFromCanvasData: (data: any) => void;
-  getCanvasData: () => DesignData & { selectedFinishing: string; layers: Layer[]; islands: Island[] };
+  getCanvasData: () => DesignData & { selectedFinishing: string; layers: Layer[]; islands: Island[]; appliances: PlacedAppliance[] };
 }
 
 /**
@@ -133,6 +149,7 @@ function buildSnapshot(state: CanvasState): DesignData {
     guidelines: state.guidelines,
     layers: state.layers,
     islands: state.islands,
+    appliances: state.appliances,
   };
 }
 
@@ -151,13 +168,14 @@ function pushHistoryFromState(
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   drawingState: createInitialDrawingState(),
   elements: [],
+  appliances: [],
   wallPoints: [],
   guidelines: [],
   layers: [],
   activeLayerId: null,
   islands: [],
   islandDrawingState: { phase: "idle" },
-  history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [], islands: [] }),
+  history: createHistory({ walls: [], cabinets: [], openings: [], elements: [], wallPoints: [], guidelines: [], layers: [], islands: [], appliances: [] }),
   selectedFinishing: "1",
   showReferenceOverlay: false,
   wallDrawMode:
@@ -325,6 +343,44 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return { elements: newElements, history: pushHistoryFromState(next) };
     }),
 
+  addAppliance: (appliance) =>
+    set((state) => {
+      const newAppliances = [...state.appliances, appliance];
+      const next: CanvasState = { ...state, appliances: newAppliances };
+      return { appliances: newAppliances, history: pushHistoryFromState(next) };
+    }),
+
+  deleteAppliance: (id) =>
+    set((state) => {
+      const newAppliances = state.appliances.filter((a) => a.id !== id);
+      const next: CanvasState = { ...state, appliances: newAppliances };
+      return { appliances: newAppliances, history: pushHistoryFromState(next) };
+    }),
+
+  updateApplianceLive: (id, updates) =>
+    set((state) => ({
+      appliances: state.appliances.map((a) => (a.id === id ? { ...a, ...updates } : a)),
+    })),
+
+  commitApplianceMove: (id, updates) =>
+    set((state) => {
+      const newAppliances = state.appliances.map((a) => (a.id === id ? { ...a, ...updates } : a));
+      const next: CanvasState = { ...state, appliances: newAppliances };
+      return { appliances: newAppliances, history: pushHistoryFromState(next) };
+    }),
+
+  syncAppliancesSilently: (patches) =>
+    set((state) => {
+      if (patches.length === 0) return {};
+      const byId = new Map(patches.map((p) => [p.id, p.patch]));
+      return {
+        appliances: state.appliances.map((a) => {
+          const patch = byId.get(a.id);
+          return patch ? { ...a, ...patch } : a;
+        }),
+      };
+    }),
+
   addWallPoint: (point) =>
     set((state) => {
       const newWallPoints = [...state.wallPoints, { ...point, id: Date.now() }];
@@ -379,6 +435,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return {
         history: newHistory,
         elements: snap.elements,
+        appliances: snap.appliances ?? [],
         wallPoints: snap.wallPoints ?? [],
         guidelines: snap.guidelines ?? [],
         layers: nextLayers,
@@ -407,6 +464,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       return {
         history: newHistory,
         elements: snap.elements,
+        appliances: snap.appliances ?? [],
         wallPoints: snap.wallPoints ?? [],
         guidelines: snap.guidelines ?? [],
         layers: nextLayers,
@@ -439,6 +497,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const next: CanvasState = {
         ...state,
         elements: [],
+        appliances: [],
         wallPoints: [],
         guidelines: [],
         layers: [],
@@ -448,6 +507,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       };
       return {
         elements: [],
+        appliances: [],
         wallPoints: [],
         guidelines: [],
         layers: [],
@@ -662,12 +722,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const cabinets = data.cabinets ?? [];
     const openings = data.openings ?? [];
     const elements = data.elements ?? [];
+    const appliances: PlacedAppliance[] = Array.isArray(data.appliances) ? data.appliances : [];
     const wallPoints = data.wallPoints ?? [];
     const guidelines = data.guidelines ?? [];
     const layers: Layer[] = Array.isArray(data.layers) ? data.layers.map(normalizeLayer) : [];
     const islands: Island[] = Array.isArray(data.islands) ? data.islands.map(normalizeIsland) : [];
     set((state) => ({
       elements,
+      appliances,
       wallPoints,
       guidelines,
       layers,
@@ -675,7 +737,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       activeLayerId: layers[0]?.id ?? null,
       selectedFinishing: data.selectedFinishing ?? "1",
       islandDrawingState: { phase: "idle" },
-      history: createHistory({ walls, cabinets, openings, elements, wallPoints, guidelines, layers, islands }),
+      history: createHistory({ walls, cabinets, openings, elements, wallPoints, guidelines, layers, islands, appliances }),
       drawingState: {
         ...state.drawingState,
         walls,
@@ -696,6 +758,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       cabinets: state.drawingState.cabinets,
       openings: state.drawingState.openings,
       elements: state.elements,
+      appliances: state.appliances,
       wallPoints: state.wallPoints,
       guidelines: state.guidelines,
       selectedFinishing: state.selectedFinishing,

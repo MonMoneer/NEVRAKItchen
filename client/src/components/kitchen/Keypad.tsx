@@ -272,7 +272,7 @@ export function Keypad() {
 	);
 
 	return (
-		<div className="flex flex-col gap-1 p-2 border-t border-border bg-card">
+		<div className="flex flex-col gap-1 p-2 border-t border-border bg-card" data-keypad>
 			{/* Display strip */}
 			<div className="bg-muted/30 rounded-md px-3 py-1.5 min-h-[44px] flex flex-col items-end justify-center">
 				<div

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
 	Stage,
 	Layer,
@@ -81,6 +81,27 @@ import { useCanvasStore, type WallPointItem } from '@/stores/useCanvasStore';
 import type { CustomTool } from './Toolbar';
 import { haptic } from '@/lib/haptics';
 import { useIsTouch } from '@/hooks/use-touch';
+import { useToast } from '@/hooks/use-toast';
+import {
+	type ApplianceKind,
+	type ApplianceScene,
+	type PlacedAppliance,
+	type PlacementCandidate,
+	type ResolvedAppliance,
+	APPLIANCE_COLOR,
+	APPLIANCE_INVALID_COLOR,
+	applianceLabel,
+	applianceWhereHint,
+	computePlacement,
+	getApplianceDef,
+	islandLabelSide,
+	pointInConvexPolygon,
+	polygonCenter,
+	resolveAppliance,
+	snapOffset,
+	validatePlacement,
+} from '@/lib/appliances';
+import type { ApplianceDragStart } from './AppliancePanel';
 
 // Wall-point placement state
 // Phase 0 (no state): hovering — nearest corner is highlighted via hoveredCorner
@@ -270,6 +291,22 @@ interface DesignerCanvasProps {
 	onAddElement?: (el: CanvasElementItem) => void;
 	onUpdateElement?: (id: string, updates: { x: number; y: number }) => void;
 	onDeleteElement?: (id: string) => void;
+	// Appliances — visual only, never priced. Default [] so the legacy
+	// /designer page shows none.
+	appliances?: PlacedAppliance[];
+	onAddAppliance?: (appliance: PlacedAppliance) => void;
+	onDeleteAppliance?: (id: string) => void;
+	/** Live position while dragging — must NOT push history. */
+	onUpdateApplianceLive?: (id: string, updates: Partial<PlacedAppliance>) => void;
+	/** Final drop / resize — pushes exactly one history entry. */
+	onCommitApplianceMove?: (id: string, updates: Partial<PlacedAppliance>) => void;
+	/** Background bookkeeping (lastCenter, silent re-attach) — no history, no save. */
+	onSyncAppliances?: (patches: Array<{ id: string; patch: Partial<PlacedAppliance> }>) => void;
+	/** Called after every user add / drop / resize / delete so the page can save. */
+	onAppliancesChanged?: () => void;
+	/** A card being dragged out of the appliance pop-up, or null. */
+	applianceDrag?: ApplianceDragStart | null;
+	onApplianceDragEnd?: () => void;
 }
 
 export interface CanvasElementItem {
@@ -913,6 +950,15 @@ export function DesignerCanvas({
 	onAddElement,
 	onUpdateElement,
 	onDeleteElement,
+	appliances = [],
+	onAddAppliance,
+	onDeleteAppliance,
+	onUpdateApplianceLive,
+	onCommitApplianceMove,
+	onSyncAppliances,
+	onAppliancesChanged,
+	applianceDrag = null,
+	onApplianceDragEnd,
 }: DesignerCanvasProps) {
 	const stageRef = useRef<Konva.Stage>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -1035,6 +1081,285 @@ export function DesignerCanvas({
 
 	const [closedChainIds, setClosedChainIds] = useState<Set<string>>(new Set());
 	const lastWallClickRef = useRef<{ time: number; pos: Point } | null>(null);
+
+	// ─── Appliances (visual only — never priced; see lib/appliances.ts) ────
+	// Position is always recomputed from the host (cabinet piece / island /
+	// wall), so moving or resizing a run carries its appliances along.
+	const { toast } = useToast();
+	const appliancesActive = stage !== 'site_measurement';
+	const applianceScene = useMemo<ApplianceScene>(
+		() => ({
+			walls: drawingState.walls,
+			cabinets: drawingState.cabinets,
+			islands,
+			openings: drawingState.openings,
+		}),
+		[drawingState.walls, drawingState.cabinets, islands, drawingState.openings],
+	);
+	const resolvedAppliances = useMemo<ResolvedAppliance[]>(
+		() =>
+			appliancesActive
+				? appliances.map((a) => resolveAppliance(a, applianceScene))
+				: [],
+		[appliancesActive, appliances, applianceScene],
+	);
+	// Draw order: inside → counter → floor (all under wall cabinets), hoods,
+	// then island-hosted items (after the island fill), then orphans.
+	const applianceGroups = useMemo(() => {
+		const placementOf = (r: ResolvedAppliance) =>
+			getApplianceDef(r.appliance.kind).placement;
+		const placed = resolvedAppliances.filter((r) => r.status !== 'orphan');
+		const onIsland = placed.filter((r) => r.frame?.host.type === 'island');
+		const offIsland = placed.filter((r) => r.frame?.host.type !== 'island');
+		const pick = (list: ResolvedAppliance[], p: string) =>
+			list.filter((r) => placementOf(r) === p);
+		return {
+			under: [
+				...pick(offIsland, 'inside'),
+				...pick(offIsland, 'counter'),
+				...pick(offIsland, 'floor'),
+			],
+			hood: pick(offIsland, 'wall'),
+			island: [...pick(onIsland, 'inside'), ...pick(onIsland, 'counter')],
+			orphan: resolvedAppliances.filter((r) => r.status === 'orphan'),
+		};
+	}, [resolvedAppliances]);
+	const [selectedApplianceId, setSelectedApplianceId] = useState<string | null>(null);
+	// Preview while dragging from the pop-up ("palette") or moving a placed one.
+	const [applianceCandidate, setApplianceCandidate] = useState<{
+		source: 'palette' | 'move';
+		cand: PlacementCandidate;
+	} | null>(null);
+	const [applianceMoving, setApplianceMoving] = useState(false);
+	const applianceMoveRef = useRef<{
+		id: string;
+		grab: Point;
+		startPos: Point;
+		orig: Partial<PlacedAppliance>;
+		moved: boolean;
+		last: PlacementCandidate | null;
+	} | null>(null);
+
+	// Background bookkeeping: keep lastCenter current and silently re-attach
+	// appliances whose host was split / deleted. History-free and never saves.
+	useEffect(() => {
+		if (!onSyncAppliances) return;
+		const patches = resolvedAppliances
+			.filter((r) => r.patch)
+			.map((r) => ({ id: r.appliance.id, patch: r.patch as Partial<PlacedAppliance> }));
+		if (patches.length > 0) onSyncAppliances(patches);
+	}, [resolvedAppliances, onSyncAppliances]);
+
+	useEffect(() => {
+		if (selectedApplianceId && !appliances.some((a) => a.id === selectedApplianceId)) {
+			setSelectedApplianceId(null);
+		}
+	}, [appliances, selectedApplianceId]);
+	useEffect(() => {
+		if (drawingState.tool !== 'select') setSelectedApplianceId(null);
+	}, [drawingState.tool]);
+
+	const hitTestAppliance = (pos: Point): ResolvedAppliance | null => {
+		const tol = 3 / scale;
+		const ordered = [
+			...applianceGroups.under,
+			...applianceGroups.hood,
+			...applianceGroups.island,
+			...applianceGroups.orphan,
+		].reverse();
+		for (const r of ordered) {
+			if (pointInConvexPolygon(pos, r.corners, tol)) return r;
+		}
+		return null;
+	};
+	const computeApplianceCandidate = (
+		kind: ApplianceKind,
+		widthCm: number,
+		center: Point,
+		excludeId?: string,
+	) =>
+		computePlacement(
+			kind,
+			widthCm,
+			center,
+			applianceScene,
+			resolvedAppliances.filter((r) => r.appliance.id !== excludeId),
+			24 / scale,
+		);
+	const removeAppliance = (id: string) => {
+		onDeleteAppliance?.(id);
+		onAppliancesChanged?.();
+		setSelectedApplianceId((cur) => (cur === id ? null : cur));
+	};
+	const resizeAppliance = (r: ResolvedAppliance, widthCm: number) => {
+		if (widthCm === r.appliance.widthCm) return;
+		if (!r.frame) {
+			onCommitApplianceMove?.(r.appliance.id, { widthCm });
+			onAppliancesChanged?.();
+			return;
+		}
+		// Keep the appliance centred where it was.
+		const others = resolvedAppliances.filter((o) => o.appliance.id !== r.appliance.id);
+		const center = r.offsetCm + r.appliance.widthCm / 2;
+		const offsetCm = snapOffset(center - widthCm / 2, widthCm, r.frame, [], 0);
+		const cand = validatePlacement(r.appliance.kind, widthCm, r.frame, offsetCm, applianceScene, others);
+		if (!cand.valid) {
+			toast({ title: cand.reason ?? 'That size does not fit here' });
+			return;
+		}
+		onCommitApplianceMove?.(r.appliance.id, { widthCm, offsetCm, lastCenter: cand.center });
+		onAppliancesChanged?.();
+	};
+	// Handlers below are memoised with long dependency lists; they read the
+	// appliance state through this ref instead.
+	const applianceCtx = {
+		appliances,
+		scale,
+		stagePos,
+		tool: drawingState.tool,
+		toast,
+		hitTest: hitTestAppliance,
+		compute: computeApplianceCandidate,
+		remove: removeAppliance,
+		onAddAppliance,
+		onUpdateApplianceLive,
+		onCommitApplianceMove,
+		onAppliancesChanged,
+		onApplianceDragEnd,
+	};
+	const applianceCtxRef = useRef(applianceCtx);
+	applianceCtxRef.current = applianceCtx;
+
+	// Drag from the appliance pop-up: pointer listeners on the whole page
+	// (HTML drag-and-drop does not fire on touch).
+	useEffect(() => {
+		if (!applianceDrag) return;
+		const drag = applianceDrag;
+		const toWorld = (cx: number, cy: number): Point | null => {
+			const el = containerRef.current;
+			if (!el) return null;
+			const rect = el.getBoundingClientRect();
+			if (cx < rect.left || cx > rect.right || cy < rect.top || cy > rect.bottom) return null;
+			const { stagePos: sp, scale: sc } = applianceCtxRef.current;
+			return { x: (cx - rect.left - sp.x) / sc, y: (cy - rect.top - sp.y) / sc };
+		};
+		const update = (cx: number, cy: number) => {
+			const p = toWorld(cx, cy);
+			setApplianceCandidate(
+				p
+					? { source: 'palette', cand: applianceCtxRef.current.compute(drag.kind, drag.widthCm, p) }
+					: null,
+			);
+		};
+		let finished = false;
+		const end = () => {
+			if (finished) return;
+			finished = true;
+			setApplianceCandidate(null);
+			applianceCtxRef.current.onApplianceDragEnd?.();
+		};
+		const onMove = (e: PointerEvent) => {
+			if (e.pointerId === drag.pointerId) update(e.clientX, e.clientY);
+		};
+		const onUp = (e: PointerEvent) => {
+			if (e.pointerId !== drag.pointerId) return;
+			const ctx = applianceCtxRef.current;
+			const p = toWorld(e.clientX, e.clientY);
+			if (p) {
+				const cand = ctx.compute(drag.kind, drag.widthCm, p);
+				if (cand.valid && cand.frame) {
+					const placed: PlacedAppliance = {
+						id: generateId(),
+						kind: drag.kind,
+						widthCm: drag.widthCm,
+						host: cand.frame.host,
+						offsetCm: cand.offsetCm,
+						lastCenter: cand.center,
+						...(cand.frame.host.type === 'wall' ? { hostStart: { ...cand.frame.origin } } : {}),
+					};
+					ctx.onAddAppliance?.(placed);
+					ctx.onAppliancesChanged?.();
+					if (ctx.tool === 'select') setSelectedApplianceId(placed.id);
+					haptic('medium');
+				} else {
+					ctx.toast({
+						title: cand.reason ?? 'Not placed',
+						description: cand.frame ? applianceWhereHint(drag.kind) : undefined,
+					});
+				}
+			}
+			end();
+		};
+		const onCancel = (e: PointerEvent) => {
+			if (e.pointerId === drag.pointerId) end();
+		};
+		const onKey = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') end();
+		};
+		update(drag.clientX, drag.clientY);
+		window.addEventListener('pointermove', onMove);
+		window.addEventListener('pointerup', onUp);
+		window.addEventListener('pointercancel', onCancel);
+		window.addEventListener('keydown', onKey);
+		return () => {
+			window.removeEventListener('pointermove', onMove);
+			window.removeEventListener('pointerup', onUp);
+			window.removeEventListener('pointercancel', onCancel);
+			window.removeEventListener('keydown', onKey);
+		};
+	}, [applianceDrag]);
+
+	// Delete key removes the selected appliance (there is no Delete-key handler
+	// for anything else). Ignored while typing into an input, the Keypad, the
+	// dimension/island overlays, or while a typed value is pending. Esc deselects.
+	useEffect(() => {
+		if (!selectedApplianceId) return;
+		const onKey = (e: KeyboardEvent) => {
+			const t = e.target as HTMLElement | null;
+			if (
+				t instanceof HTMLInputElement ||
+				t instanceof HTMLTextAreaElement ||
+				t?.isContentEditable
+			) {
+				return;
+			}
+			if (e.key === 'Escape') {
+				setSelectedApplianceId(null);
+				return;
+			}
+			if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+			// The Keypad edits typed values by dispatching synthetic Backspace.
+			if (!e.isTrusted) return;
+			const active = document.activeElement as HTMLElement | null;
+			if (
+				active &&
+				active !== document.body &&
+				active.closest('[data-keypad], [data-testid="floating-dimension-input"]')
+			) {
+				return;
+			}
+			if (
+				wallTypedInput !== null ||
+				islandTypedInput !== null ||
+				showDimensionInput ||
+				wpDistanceInput !== '' ||
+				wallPlacement
+			) {
+				return;
+			}
+			e.preventDefault();
+			applianceCtxRef.current.remove(selectedApplianceId);
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	}, [
+		selectedApplianceId,
+		wallTypedInput,
+		islandTypedInput,
+		showDimensionInput,
+		wpDistanceInput,
+		wallPlacement,
+	]);
 
 	useEffect(() => {
 		if (!referenceImage) {
@@ -1422,6 +1747,13 @@ export function DesignerCanvas({
 			const touches = e.evt.touches;
 			if (touches.length === 2) {
 				e.evt.preventDefault();
+				if (applianceMoveRef.current) {
+					const mv = applianceMoveRef.current;
+					applianceMoveRef.current = null;
+					if (mv.moved) applianceCtxRef.current.onUpdateApplianceLive?.(mv.id, mv.orig);
+					setApplianceMoving(false);
+					setApplianceCandidate(null);
+				}
 				const { dist, midClient } = getTouchMidAndDist(
 					touches[0],
 					touches[1],
@@ -1863,6 +2195,15 @@ export function DesignerCanvas({
 			});
 
 			if (tool === 'delete') {
+				// Priority 0: appliances (drawn on top of cabinets).
+				{
+					const appHit = applianceCtxRef.current.hitTest(pos);
+					if (appHit) {
+						haptic('heavy');
+						applianceCtxRef.current.remove(appHit.appliance.id);
+						return;
+					}
+				}
 				// Priority 1: measurements (guidelines). Thin annotations
 				// that are almost impossible to hit if cabinets/walls claim
 				// the click first — so give them top priority here.
@@ -1932,6 +2273,29 @@ export function DesignerCanvas({
 			}
 
 			if (tool === 'select') {
+				{
+					const appHit = applianceCtxRef.current.hitTest(pos);
+					if (appHit) {
+						const a = appHit.appliance;
+						onSelectItem(null);
+						setSelectedApplianceId(a.id);
+						applianceMoveRef.current = {
+							id: a.id,
+							grab: { x: appHit.center.x - pos.x, y: appHit.center.y - pos.y },
+							startPos: { ...pos },
+							orig: {
+								host: a.host,
+								offsetCm: a.offsetCm,
+								hostStart: a.hostStart,
+								lastCenter: a.lastCenter,
+							},
+							moved: false,
+							last: null,
+						};
+						return;
+					}
+					setSelectedApplianceId(null);
+				}
 				// Photoshop pick order: whichever item belongs to the highest
 				// layer (smallest layer index) wins when overlapping.
 				// Check candidates from islands + cabinets, keep the one with
@@ -2344,6 +2708,35 @@ export function DesignerCanvas({
 			}
 			setMousePos(pos);
 			setCursorWorld(pos);
+
+			// Appliance drag (Select tool move) — live, no history.
+			if (applianceMoveRef.current) {
+				const mv = applianceMoveRef.current;
+				const ctx = applianceCtxRef.current;
+				if (!mv.moved && distanceBetween(pos, mv.startPos) < 3 / ctx.scale) return;
+				const app = ctx.appliances.find((a) => a.id === mv.id);
+				if (!app) return;
+				if (!mv.moved) {
+					mv.moved = true;
+					setApplianceMoving(true);
+				}
+				const cand = ctx.compute(
+					app.kind,
+					app.widthCm,
+					{ x: pos.x + mv.grab.x, y: pos.y + mv.grab.y },
+					app.id,
+				);
+				mv.last = cand;
+				if (cand.valid && cand.frame) {
+					ctx.onUpdateApplianceLive?.(app.id, {
+						host: cand.frame.host,
+						offsetCm: cand.offsetCm,
+						hostStart: cand.frame.host.type === 'wall' ? { ...cand.frame.origin } : undefined,
+					});
+				}
+				setApplianceCandidate({ source: 'move', cand });
+				return;
+			}
 
 			// Island drag (Select tool move)
 			if (islandDragState) {
@@ -2781,6 +3174,31 @@ export function DesignerCanvas({
 			// Cancel any pending long-press (if the user lifted before 500ms
 			// it was a tap, not a hold).
 			cancelLongPress();
+
+			if (applianceMoveRef.current) {
+				const mv = applianceMoveRef.current;
+				const ctx = applianceCtxRef.current;
+				applianceMoveRef.current = null;
+				setApplianceMoving(false);
+				setApplianceCandidate(null);
+				if (mv.moved) {
+					const cand = mv.last;
+					if (cand && cand.valid && cand.frame) {
+						ctx.onCommitApplianceMove?.(mv.id, {
+							host: cand.frame.host,
+							offsetCm: cand.offsetCm,
+							lastCenter: cand.center,
+							hostStart: cand.frame.host.type === 'wall' ? { ...cand.frame.origin } : undefined,
+						});
+						ctx.onAppliancesChanged?.();
+					} else {
+						// Invalid drop: put it back where it was (no history entry).
+						ctx.onUpdateApplianceLive?.(mv.id, mv.orig);
+						if (cand?.reason) ctx.toast({ title: cand.reason });
+					}
+				}
+				return;
+			}
 
 			if (
 				e.evt.button === 1 ||
@@ -3828,6 +4246,282 @@ export function DesignerCanvas({
 		return hatchLines;
 	};
 
+	// ─── Appliance drawing (minimal boxes, dark grey, never priced) ─────────
+	// Drawn in a box frame whose x runs along the host and y runs from the
+	// back edge (y = 0) to the front edge (y = h), built from the footprint
+	// corners [back-start, back-end, front-end, front-start].
+	const renderApplianceBox = (
+		key: string,
+		kind: ApplianceKind,
+		widthCm: number,
+		corners: Point[],
+		opts: { color: string; dashed?: boolean; selected?: boolean },
+	) => {
+		const [c0, c1, , c3] = corners;
+		const w = distanceBetween(c0, c1);
+		const h = distanceBetween(c0, c3);
+		if (w < 0.5 || h < 0.5) return null;
+		const ux = (c1.x - c0.x) / w;
+		const uy = (c1.y - c0.y) / w;
+		const vx = (c3.x - c0.x) / h;
+		const vy = (c3.y - c0.y) / h;
+		const flipY = ux * vy - uy * vx >= 0 ? 1 : -1;
+		const deg = (Math.atan2(uy, ux) * 180) / Math.PI;
+		const color = opts.color;
+		const sw = (opts.selected ? 2.8 : 1.6) / scale;
+		const thin = sw * 0.7;
+		const dash = opts.dashed ? [6 / scale, 4 / scale] : undefined;
+		const placement = getApplianceDef(kind).placement;
+		const m = Math.min(w, h);
+		const parts: JSX.Element[] = [];
+		const burners = (rows: number[], n: number, r: number) => {
+			for (const y of rows) {
+				for (let i = 0; i < n; i++) {
+					parts.push(
+						<Circle
+							key={`b-${y}-${i}`}
+							x={((i + 0.5) * w) / n}
+							y={y}
+							radius={r}
+							stroke={color}
+							strokeWidth={thin}
+						/>
+					);
+				}
+			}
+		};
+
+		if (placement === 'inside') {
+			parts.push(<Rect key="fill" width={w} height={h} fill={color} opacity={0.1} />);
+			parts.push(
+				<Group
+					key="hatch"
+					clipFunc={(ctx: any) => {
+						ctx.beginPath();
+						ctx.rect(0, 0, w, h);
+						ctx.closePath();
+					}}
+				>
+					{renderHatchPattern(0, w, 0, h, color)}
+				</Group>
+			);
+			const fy = h - Math.min(h * 0.12, 6);
+			parts.push(
+				<Line key="front" points={[w * 0.25, fy, w * 0.75, fy]} stroke={color} strokeWidth={sw} />
+			);
+			parts.push(
+				<Rect key="outline" width={w} height={h} stroke={color} strokeWidth={sw} dash={dash} />
+			);
+		} else if (placement === 'wall') {
+			// Hood: dashed box with an X.
+			const hoodDash = [6 / scale, 4 / scale];
+			parts.push(
+				<Rect key="outline" width={w} height={h} stroke={color} strokeWidth={sw} dash={hoodDash} />
+			);
+			parts.push(<Line key="x1" points={[0, 0, w, h]} stroke={color} strokeWidth={thin} dash={hoodDash} />);
+			parts.push(<Line key="x2" points={[w, 0, 0, h]} stroke={color} strokeWidth={thin} dash={hoodDash} />);
+		} else {
+			// Counter (sink, hob) and floor (range): white box, grey outline.
+			parts.push(
+				<Rect
+					key="outline"
+					width={w}
+					height={h}
+					cornerRadius={kind === 'sink' ? m * 0.1 : m * 0.03}
+					fill="rgba(255,255,255,0.92)"
+					stroke={color}
+					strokeWidth={sw}
+					dash={dash}
+				/>
+			);
+			if (kind === 'sink') {
+				const pad = m * 0.12;
+				const top = h * 0.3;
+				const bowls = widthCm >= 110 ? 2 : 1;
+				const bw = (w - pad * (bowls + 1)) / bowls;
+				const bh = h - top - pad;
+				for (let i = 0; i < bowls; i++) {
+					const bx = pad + i * (bw + pad);
+					parts.push(
+						<Rect
+							key={`bowl-${i}`}
+							x={bx}
+							y={top}
+							width={bw}
+							height={bh}
+							cornerRadius={m * 0.08}
+							stroke={color}
+							strokeWidth={thin}
+						/>
+					);
+					parts.push(
+						<Circle
+							key={`drain-${i}`}
+							x={bx + bw / 2}
+							y={top + bh / 2}
+							radius={Math.min(bw, bh) * 0.08}
+							stroke={color}
+							strokeWidth={thin}
+						/>
+					);
+				}
+				parts.push(
+					<Circle key="tap" x={w / 2} y={h * 0.15} radius={m * 0.06} stroke={color} strokeWidth={thin} />
+				);
+			} else if (kind === 'hob') {
+				const n = widthCm >= 120 ? 4 : widthCm >= 90 ? 3 : 2;
+				burners([h * 0.3, h * 0.7], n, Math.min(w / n, h / 2) * 0.32);
+			} else if (kind === 'range') {
+				const n = widthCm >= 150 ? 5 : widthCm >= 120 ? 4 : widthCm >= 90 ? 3 : 2;
+				burners([h * 0.27, h * 0.6], n, Math.min(w / n, h / 2) * 0.28);
+				const knobs = n + 1;
+				for (let i = 0; i < knobs; i++) {
+					parts.push(
+						<Circle
+							key={`k-${i}`}
+							x={((i + 0.5) * w) / knobs}
+							y={h * 0.88}
+							radius={m * 0.03}
+							stroke={color}
+							strokeWidth={thin}
+						/>
+					);
+				}
+			}
+		}
+
+		if (opts.selected) {
+			// Dashed ring 30 mm outside. Named so captureCanvasImage can hide it.
+			const ring = cmToPixels(3);
+			parts.push(
+				<Rect
+					key="sel"
+					name="appliance-selection"
+					x={-ring}
+					y={-ring}
+					width={w + ring * 2}
+					height={h + ring * 2}
+					stroke={color}
+					strokeWidth={1.2 / scale}
+					dash={[4 / scale, 3 / scale]}
+				/>
+			);
+		}
+
+		return (
+			<Group
+				key={key}
+				x={c0.x}
+				y={c0.y}
+				rotation={deg}
+				scaleY={flipY}
+				listening={false}
+			>
+				{parts}
+			</Group>
+		);
+	};
+
+	const renderAppliancePass = (list: ResolvedAppliance[]) => {
+		if (!appliancesActive || list.length === 0) return null;
+		return (
+			<Group listening={false}>
+				{list.map((r) =>
+					renderApplianceBox(r.appliance.id, r.appliance.kind, r.appliance.widthCm, r.corners, {
+						color: r.status === 'ok' ? APPLIANCE_COLOR : APPLIANCE_INVALID_COLOR,
+						dashed: r.status !== 'ok',
+						selected: r.appliance.id === selectedApplianceId,
+					})
+				)}
+			</Group>
+		);
+	};
+
+	// Labels: "OVEN 60", monospace bold, white halo, always upright.
+	const renderApplianceLabels = () => {
+		if (!appliancesActive || resolvedAppliances.length === 0) return null;
+		const fs = 11 / scale;
+		const stackIndex = new Map<string, number>();
+		const out: JSX.Element[] = [];
+		for (const r of resolvedAppliances) {
+			const def = getApplianceDef(r.appliance.kind);
+			const text = applianceLabel(r.appliance);
+			const textW = text.length * fs * 0.62;
+			const [c0, c1, c2, c3] = r.corners;
+			let anchor = polygonCenter(r.corners);
+			if (r.status !== 'orphan' && r.frame) {
+				const h = distanceBetween(c0, c3) || 1;
+				if (def.placement === 'inside') {
+					// Just in front of the cabinet's front edge. Islands have no
+					// front: use the long side facing away from the reference wall.
+					let side: 1 | -1 = 1;
+					if (r.frame.host.type === 'island') {
+						const hostId = r.frame.host.id;
+						side = islandLabelSide(
+							r.frame,
+							islands.find((i) => i.id === hostId),
+							drawingState.walls,
+						);
+					}
+					const mid = side === 1 ? getMidpoint(c3, c2) : getMidpoint(c0, c1);
+					const dx = ((c3.x - c0.x) / h) * side;
+					const dy = ((c3.y - c0.y) / h) * side;
+					const ext = (Math.abs(dx) * textW) / 2 + (Math.abs(dy) * fs) / 2 + 4 / scale;
+					anchor = { x: mid.x + dx * ext, y: mid.y + dy * ext };
+					// Stacked tall items: labels 8 px apart.
+					const stackKey = `${r.frame.host.type}:${r.frame.host.id}:${Math.round(r.offsetCm)}:${r.appliance.widthCm}`;
+					const idx = stackIndex.get(stackKey) ?? 0;
+					stackIndex.set(stackKey, idx + 1);
+					if (idx > 0) anchor.y += idx * (fs + 8 / scale) * (dy < -0.5 ? -1 : 1);
+				} else if (def.placement === 'wall') {
+					// Hood: near the wall.
+					const t = Math.min(0.5, (fs * 0.9) / h);
+					const mid = getMidpoint(c0, c1);
+					anchor = { x: mid.x + (c3.x - c0.x) * t, y: mid.y + (c3.y - c0.y) * t };
+				}
+			}
+			const boxW = textW + 20 / scale;
+			out.push(
+				<Text
+					key={`lbl-${r.appliance.id}`}
+					x={anchor.x - boxW / 2}
+					y={anchor.y - fs / 2}
+					width={boxW}
+					align="center"
+					wrap="none"
+					text={text}
+					fontSize={fs}
+					fontFamily="monospace"
+					fontStyle="bold"
+					fill={r.status === 'ok' ? APPLIANCE_COLOR : APPLIANCE_INVALID_COLOR}
+					stroke="#FFFFFF"
+					strokeWidth={3 / scale}
+					fillAfterStrokeEnabled
+					listening={false}
+				/>
+			);
+		}
+		return <Group listening={false}>{out}</Group>;
+	};
+
+	// Dashed preview while dragging: layer colour when valid, red when not.
+	// A move only shows a ghost when the spot is invalid (the appliance itself
+	// follows the pointer while it's valid).
+	const renderApplianceGhost = () => {
+		if (!applianceCandidate || !appliancesActive) return null;
+		const { source, cand } = applianceCandidate;
+		if (source === 'move' && cand.valid) return null;
+		const color = cand.valid ? (cand.frame?.color ?? APPLIANCE_COLOR) : APPLIANCE_INVALID_COLOR;
+		return (
+			<Group listening={false}>
+				{renderApplianceBox('appliance-ghost', cand.kind, cand.widthCm, cand.corners, {
+					color,
+					dashed: true,
+				})}
+			</Group>
+		);
+	};
+
 	const renderWallPoints = () => {
 		return wallPoints.map((wp) => {
 			const fill = wp.type === 'electrical' ? '#F59E0B' : '#3B82F6';
@@ -4536,7 +5230,7 @@ export function DesignerCanvas({
 		});
 	};
 
-	const renderCabinets = () => {
+	const renderCabinets = (pass: 'all' | 'nonWall' | 'wall' = 'all') => {
 		// Hide all base/wall/tall cabinets in site_measurement stage
 		if (stage === 'site_measurement') {
 			return null;
@@ -4578,7 +5272,13 @@ export function DesignerCanvas({
 			return drawingState.cabinets.indexOf(a) - drawingState.cabinets.indexOf(b);
 		});
 
-		return sortedCabinets.map((cabinet) => {
+		const passCabinets =
+			pass === 'all'
+				? sortedCabinets
+				: sortedCabinets.filter(
+						(c) => (c.type === 'wall_cabinet') === (pass === 'wall'),
+					);
+		return passCabinets.map((cabinet) => {
 			const isSelected = drawingState.selectedId === cabinet.id;
 			return renderCabinetBody(cabinet, isSelected, pairs);
 		});
@@ -5734,7 +6434,12 @@ export function DesignerCanvas({
 					{renderInnerFaceCornerMarkers()}
 					{renderWallCornerJoints()}
 					{renderOpenings()}
-					{stage !== 'site_measurement' && renderCabinets()}
+					{stage !== 'site_measurement' && renderCabinets('nonWall')}
+					{/* Appliances inside cabinets, on the counter, on the floor */}
+					{renderAppliancePass(applianceGroups.under)}
+					{stage !== 'site_measurement' && renderCabinets('wall')}
+					{/* Hoods above wall cabinets */}
+					{renderAppliancePass(applianceGroups.hood)}
 					{renderWallPoints()}
 					{renderWallPointRuler()}
 					{renderMeasureTape()}
@@ -5777,6 +6482,11 @@ export function DesignerCanvas({
 							</Group>
 						);
 					})}
+					{/* Island-hosted appliances after the island fill, then orphans, labels, drag preview */}
+					{renderAppliancePass(applianceGroups.island)}
+					{renderAppliancePass(applianceGroups.orphan)}
+					{renderApplianceLabels()}
+					{renderApplianceGhost()}
 					{/* In-progress island drawing overlay (H/V rubber-band, no walls) */}
 					{islandDrawingState.phase !== 'idle' && cursorWorld && (() => {
 						const phase = islandDrawingState;
@@ -6447,6 +7157,61 @@ export function DesignerCanvas({
 				</>
 			)}
 
+			{/* Floating toolbar for the selected appliance: size chips + Remove. */}
+			{(() => {
+				if (!selectedApplianceId || applianceMoving || !appliancesActive) return null;
+				const r = resolvedAppliances.find((x) => x.appliance.id === selectedApplianceId);
+				if (!r) return null;
+				const def = getApplianceDef(r.appliance.kind);
+				const xs = r.corners.map((p) => p.x * scale + stagePos.x);
+				const ys = r.corners.map((p) => p.y * scale + stagePos.y);
+				const left = (Math.min(...xs) + Math.max(...xs)) / 2;
+				const above = Math.min(...ys) - 10;
+				const placeAbove = above > 70;
+				return (
+					<div
+						className={`absolute z-30 -translate-x-1/2 ${placeAbove ? '-translate-y-full' : ''} bg-card border border-border rounded-md shadow-lg px-2 py-1.5 flex flex-col gap-1`}
+						style={{ left, top: placeAbove ? above : Math.max(...ys) + 10 }}
+						onMouseDown={(e) => e.stopPropagation()}
+						onTouchStart={(e) => e.stopPropagation()}
+						data-testid="appliance-toolbar"
+					>
+						<div className="flex items-center gap-1">
+							<span className="text-[10px] font-semibold mr-1 whitespace-nowrap">{def.name}</span>
+							{def.sizes.map((size) => (
+								<button
+									key={size}
+									type="button"
+									onClick={() => resizeAppliance(r, size)}
+									className={`rounded px-1.5 py-0.5 text-[10px] font-mono border touch:min-h-[36px] touch:px-2.5 ${
+										r.appliance.widthCm === size
+											? 'bg-primary text-primary-foreground border-primary'
+											: 'border-border text-muted-foreground hover:bg-accent'
+									}`}
+									data-testid={`appliance-toolbar-size-${size}`}
+								>
+									{size}
+								</button>
+							))}
+							<button
+								type="button"
+								onClick={() => removeAppliance(r.appliance.id)}
+								className="ml-1 rounded px-1.5 py-0.5 text-[10px] border border-red-200 text-red-600 hover:bg-red-50 touch:min-h-[36px] touch:px-2.5"
+								data-testid="appliance-toolbar-remove"
+							>
+								Remove
+							</button>
+						</div>
+						{r.status === 'orphan' && (
+							<p className="text-[10px] text-red-600">Not on a cabinet any more — move or remove</p>
+						)}
+						{r.status === 'overflow' && (
+							<p className="text-[10px] text-red-600">Wider than this run — move, resize or remove</p>
+						)}
+					</div>
+				);
+			})()}
+
 			<div className="absolute bottom-3 left-3 flex items-center gap-2 select-none pointer-events-none touch:text-sm">
 				<div className="bg-card/90 border border-border rounded-md px-2.5 py-1.5 text-[10px] font-mono text-muted-foreground backdrop-blur-sm touch:text-xs touch:px-3 touch:py-2">
 					Zoom: {(scale * 100).toFixed(0)}%
@@ -6505,6 +7270,21 @@ export function DesignerCanvas({
 				{drawingState.isDrawing && !wallPlacement && (
 					<div className="bg-orange-500/10 border border-orange-500/20 rounded-md px-2.5 py-1.5 text-[10px] font-mono text-orange-600 backdrop-blur-sm">
 						Drawing... Click to place or type dimension + Enter
+					</div>
+				)}
+				{applianceCandidate && (
+					<div
+						className={`rounded-md px-2.5 py-1.5 text-[10px] font-mono backdrop-blur-sm touch:text-xs touch:px-3 touch:py-2 ${
+							applianceCandidate.cand.valid
+								? 'bg-slate-500/10 border border-slate-500/20 text-slate-700'
+								: 'bg-red-500/10 border border-red-500/30 text-red-600'
+						}`}
+						data-testid="status-appliance"
+					>
+						{applianceCandidate.cand.valid
+							? applianceCandidate.cand.warning ??
+								`Release to place ${applianceLabel(applianceCandidate.cand)}`
+							: applianceCandidate.cand.reason}
 					</div>
 				)}
 				{dragState && (

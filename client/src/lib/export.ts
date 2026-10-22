@@ -1,5 +1,6 @@
 import jsPDF from "jspdf";
 import type { Wall, Cabinet, Opening, Layer, Island } from "./kitchen-engine";
+import type { PlacedAppliance } from "./appliances";
 import {
 	pixelsToCm,
 	computeEffectiveLengths,
@@ -25,6 +26,8 @@ export interface SpaceExportData {
 	layers: Layer[];
 	islands: Island[];
 	canvasImage: string | undefined;
+	/** Appliances drawn on this space (visual only, never priced). */
+	appliances?: PlacedAppliance[];
 }
 
 export interface ExportInput {

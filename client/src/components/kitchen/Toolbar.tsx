@@ -27,6 +27,7 @@ import {
   ChevronRight,
   CalendarClock,
   Calculator,
+  Refrigerator,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { DrawingState } from "@/lib/kitchen-engine";
@@ -130,6 +131,8 @@ interface ToolbarProps {
   elementDefs?: ElementDef[];
   activeElementDefId?: number | null;
   onElementSelect?: (id: number | null) => void;
+  /** Opens the (visual-only) appliance pop-up. Button is hidden when not provided. */
+  onOpenAppliances?: () => void;
 }
 
 export function Toolbar({
@@ -158,6 +161,7 @@ export function Toolbar({
   currentProject,
   activeElementDefId = null,
   onElementSelect,
+  onOpenAppliances,
 }: ToolbarProps) {
   const isMeasurement = stage === "site_measurement";
 
@@ -448,6 +452,19 @@ export function Toolbar({
           <div className="px-2.5 py-3 text-[10px] text-muted-foreground leading-relaxed">
             Use the <strong>Layers panel</strong> (right sidebar) to add cabinet layers and draw on the canvas.
           </div>
+          {onOpenAppliances && (
+            <div className="px-2 pb-2">
+              <button
+                type="button"
+                data-testid="button-open-appliances"
+                onClick={onOpenAppliances}
+                className="flex items-center gap-2 w-full px-2.5 py-2 rounded-md text-xs font-medium transition-colors text-sidebar-foreground/80 hover:bg-accent border border-border touch:min-h-[44px]"
+              >
+                <Refrigerator className="w-4 h-4 shrink-0" />
+                <span>Appliances</span>
+              </button>
+            </div>
+          )}
         </CollapsibleSection>
       )}
 

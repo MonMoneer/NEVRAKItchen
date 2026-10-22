@@ -142,6 +142,8 @@ export interface HandoverInput {
   finishes: DreamHomeFinish[];
   elementDefs: Array<{ id: number; name: string; category: string; defaultWidth: number }>;
   elements: Array<{ definitionId: number }>;
+  /** Appliances placed on the plan (visual only, never priced). Optional for old callers. */
+  appliances?: Array<{ kind: string; widthCm: number }>;
 }
 
 export function buildPricingHandover(input: HandoverInput): HandoverPayload {
@@ -293,7 +295,10 @@ export function buildPricingHandover(input: HandoverInput): HandoverPayload {
   const appliancesDetected = input.elements
     .map((el) => defById.get(el.definitionId))
     .filter((d): d is NonNullable<typeof d> => !!d && d.category === "appliance")
-    .map((d) => ({ kind: d.name.toLowerCase(), widthMm: d.defaultWidth * 10 }));
+    .map((d) => ({ kind: d.name.toLowerCase(), widthMm: d.defaultWidth * 10 }))
+    // New appliances (lib/appliances.ts), same shape. Kind strings: sink, hob,
+    // oven, dishwasher, tall_oven, microwave, fridge, coffee, hood, range.
+    .concat((input.appliances ?? []).map((a) => ({ kind: a.kind, widthMm: a.widthCm * 10 })));
 
   const sumKind = (k: RunKind) =>
     round3(runs.filter((r) => r.kind === k).reduce((s, r) => s + r.lm, 0));

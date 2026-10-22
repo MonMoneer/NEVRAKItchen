@@ -17,6 +17,8 @@ import {
 } from '@/components/kitchen/Toolbar';
 import { DesignerCanvas } from '@/components/kitchen/DesignerCanvas';
 import { LayerPanel } from '@/components/kitchen/LayerPanel';
+import { AppliancePanel, type ApplianceDragStart } from '@/components/kitchen/AppliancePanel';
+import { islandCorners, resolveAppliance } from '@/lib/appliances';
 // DEPRECATED: SiteMeasurementPanel replaced by SpacesPreviewPanel + WallPointPopup (2026-04-16)
 // import { SiteMeasurementPanel } from '@/components/kitchen/SiteMeasurementPanel';
 import { SpacesPreviewPanel } from '@/components/kitchen/SpacesPreviewPanel';
@@ -518,6 +520,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 	const [exportDialogOpen, setExportDialogOpen] = useState(false);
 	const [timelineOpen, setTimelineOpen] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
+	// Appliance pop-up (docked over the Layers panel) and an in-flight card drag.
+	const [appliancesOpen, setAppliancesOpen] = useState(false);
+	const [applianceDrag, setApplianceDrag] = useState<ApplianceDragStart | null>(null);
 	const konvaStageRef = useRef<Konva.Stage | null>(null);
 	const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -841,9 +846,23 @@ export default function ProjectDetail({ id }: { id: number }) {
 		}
 		// Read live store state — during the multi-space export loop the closure's
 		// `canvasStore` snapshot is stale (it predates the space switch).
-		const { drawingState } = useCanvasStore.getState();
+		const { drawingState, islands, appliances } = useCanvasStore.getState();
 
 		const allPoints: { x: number; y: number }[] = [];
+		islands.forEach((i) => {
+			allPoints.push(...islandCorners(i));
+		});
+		if (stage !== 'site_measurement') {
+			const scene = {
+				walls: drawingState.walls,
+				cabinets: drawingState.cabinets,
+				islands,
+				openings: drawingState.openings,
+			};
+			appliances.forEach((a) => {
+				allPoints.push(...resolveAppliance(a, scene).corners);
+			});
+		}
 		drawingState.walls.forEach((w) => {
 			allPoints.push(w.start, w.end);
 		});
@@ -897,6 +916,8 @@ export default function ProjectDetail({ id }: { id: number }) {
 		if (gridLayer) {
 			gridLayer.visible(false);
 		}
+		const selectionMarks = konvaStage.find('.appliance-selection');
+		selectionMarks.forEach((n) => n.visible(false));
 		konvaStage.batchDraw();
 
 		const scale = konvaStage.scaleX() || 1;
@@ -912,9 +933,10 @@ export default function ProjectDetail({ id }: { id: number }) {
 		if (gridLayer) {
 			gridLayer.visible(wasGridVisible ?? true);
 		}
+		selectionMarks.forEach((n) => n.visible(true));
 		konvaStage.batchDraw();
 		return dataUrl;
-	}, []);
+	}, [stage]);
 
 	// ── Export ─────────────────────────────────────────────────────────────────
 
@@ -962,7 +984,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 
 					// Read live state (not the stale closure snapshot) so each space
 					// is captured with its own geometry, layers and drawing.
-					const { drawingState, layers, islands } = useCanvasStore.getState();
+					const { drawingState, layers, islands, appliances } = useCanvasStore.getState();
 					const canvasImage = captureCanvasImage();
 					collected.push({
 						space: sp as any,
@@ -972,6 +994,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 						layers,
 						islands,
 						canvasImage,
+						appliances,
 					});
 				}
 
@@ -1040,7 +1063,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 				saveTimeout.current = null;
 				if (activeSpaceId) saveCanvasNow(activeSpaceId, canvasSourceField);
 			}
-			const { drawingState, layers, islands, elements } = useCanvasStore.getState();
+			const { drawingState, layers, islands, elements, appliances } = useCanvasStore.getState();
 			const payload = await downloadPricingHandover({
 				project: currentProject as any,
 				space: activeSpace as any,
@@ -1049,6 +1072,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 				walls: drawingState.walls,
 				islands,
 				elements,
+				appliances,
 			});
 			const runCount = payload.runs.length;
 			toast({
@@ -1566,6 +1590,14 @@ export default function ProjectDetail({ id }: { id: number }) {
 						elementDefs={elementDefs}
 						activeElementDefId={activeElementDefId}
 						onElementSelect={setActiveElementDefId}
+						onOpenAppliances={
+							canEditPricing
+								? () => {
+										setRightSidebarCollapsed(false);
+										setAppliancesOpen(true);
+									}
+								: undefined
+						}
 					/>
 					</div>
 				</div>
@@ -1627,6 +1659,15 @@ export default function ProjectDetail({ id }: { id: number }) {
 						canvasStore.deleteElement(id);
 						scheduleCanvasSave();
 					}}
+					appliances={canvasStore.appliances}
+					onAddAppliance={canvasStore.addAppliance}
+					onDeleteAppliance={canvasStore.deleteAppliance}
+					onUpdateApplianceLive={canvasStore.updateApplianceLive}
+					onCommitApplianceMove={canvasStore.commitApplianceMove}
+					onSyncAppliances={canvasStore.syncAppliancesSilently}
+					onAppliancesChanged={scheduleCanvasSave}
+					applianceDrag={applianceDrag}
+					onApplianceDragEnd={() => setApplianceDrag(null)}
 				/>
 
 				{/* Layer panel (hidden for technicians) — collapsible to a rail */}
@@ -1662,6 +1703,18 @@ export default function ProjectDetail({ id }: { id: number }) {
 								onLayersChanged={scheduleCanvasSave}
 							/>
 						</div>
+						{/* Appliance pop-up docked over the Layers panel. Appliances
+						    are visual only — they are not layers and never priced. */}
+						{appliancesOpen && !rightSidebarCollapsed && (
+							<AppliancePanel
+								dragging={applianceDrag !== null}
+								onStartDrag={setApplianceDrag}
+								onClose={() => {
+									setAppliancesOpen(false);
+									setApplianceDrag(null);
+								}}
+							/>
+						)}
 					</div>
 				)}
 
