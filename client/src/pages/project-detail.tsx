@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useLocation } from 'wouter';
 import type Konva from 'konva';
 import { useAuthStore } from '@/stores/useAuthStore';
@@ -19,6 +20,12 @@ import { DesignerCanvas } from '@/components/kitchen/DesignerCanvas';
 import { LayerPanel } from '@/components/kitchen/LayerPanel';
 import { AppliancePanel, type ApplianceDragStart } from '@/components/kitchen/AppliancePanel';
 import { islandCorners, resolveAppliance } from '@/lib/appliances';
+import {
+	SCREEN_TEXT_SCALES,
+	dimensionExtentPoints,
+	pdfTextScales,
+	type PlanTextScales,
+} from '@/lib/plan-dimensions';
 // DEPRECATED: SiteMeasurementPanel replaced by SpacesPreviewPanel + WallPointPopup (2026-04-16)
 // import { SiteMeasurementPanel } from '@/components/kitchen/SiteMeasurementPanel';
 import { SpacesPreviewPanel } from '@/components/kitchen/SpacesPreviewPanel';
@@ -523,6 +530,9 @@ export default function ProjectDetail({ id }: { id: number }) {
 	// Appliance pop-up (docked over the Layers panel) and an in-flight card drag.
 	const [appliancesOpen, setAppliancesOpen] = useState(false);
 	const [applianceDrag, setApplianceDrag] = useState<ApplianceDragStart | null>(null);
+	// Plan text size multipliers. Undefined (on-screen sizes) except while
+	// captureCanvasImage takes the PDF snapshot.
+	const [captureTextScales, setCaptureTextScales] = useState<PlanTextScales | undefined>(undefined);
 	const konvaStageRef = useRef<Konva.Stage | null>(null);
 	const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -875,6 +885,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 		if (allPoints.length === 0) {
 			return undefined;
 		}
+		const scale = konvaStage.scaleX() || 1;
 
 		// Small clearance so wall strokes and depth/dimension labels never get
 		// clipped, but not so generous that the room shrinks inside its own
@@ -886,30 +897,53 @@ export default function ProjectDetail({ id }: { id: number }) {
 		);
 		const extraMargin = Math.max(maxDepthPx * 0.15, WALL_THICKNESS) + 8;
 		const padding = 16 + extraMargin;
-		let minX = Math.min(...allPoints.map((p) => p.x)) - padding;
-		let minY = Math.min(...allPoints.map((p) => p.y)) - padding;
-		let maxX = Math.max(...allPoints.map((p) => p.x)) + padding;
-		let maxY = Math.max(...allPoints.map((p) => p.y)) + padding;
+		const islandRects = islands.map(islandCorners);
 
-		// Grow (never crop) the shorter axis so the capture's aspect ratio
-		// matches the PDF's plan frame (qt-plan, 490.39×275.84 in Space.svg).
-		// Otherwise preserveAspectRatio="meet" letterboxes the room inside the
-		// frame, making it look tiny with empty space around it.
+		// The crop for a given set of text scales: everything drawn, plus the
+		// wall and island dimensions (which sit outside it all and move further
+		// out as their text grows), grown to the PDF frame's aspect ratio.
 		const FRAME_ASPECT = 490.39 / 275.84;
-		const boxW = maxX - minX;
-		const boxH = maxY - minY;
-		const boxAspect = boxW / boxH;
-		if (boxAspect > FRAME_ASPECT) {
-			const targetH = boxW / FRAME_ASPECT;
-			const extra = (targetH - boxH) / 2;
-			minY -= extra;
-			maxY += extra;
-		} else {
-			const targetW = boxH * FRAME_ASPECT;
-			const extra = (targetW - boxW) / 2;
-			minX -= extra;
-			maxX += extra;
+		const cropFor = (scales: PlanTextScales) => {
+			const pts = allPoints.concat(
+				dimensionExtentPoints(drawingState.walls, islandRects, scale, scales)
+			);
+			let minX = Math.min(...pts.map((p) => p.x)) - padding;
+			let minY = Math.min(...pts.map((p) => p.y)) - padding;
+			let maxX = Math.max(...pts.map((p) => p.x)) + padding;
+			let maxY = Math.max(...pts.map((p) => p.y)) + padding;
+			// Grow (never crop) the shorter axis so the capture's aspect ratio
+			// matches the PDF's plan frame (qt-plan, 490.39×275.84 in Space.svg).
+			// Otherwise preserveAspectRatio="meet" letterboxes the room inside the
+			// frame, making it look tiny with empty space around it.
+			const boxW = maxX - minX;
+			const boxH = maxY - minY;
+			if (boxW / boxH > FRAME_ASPECT) {
+				const extra = (boxW / FRAME_ASPECT - boxH) / 2;
+				minY -= extra;
+				maxY += extra;
+			} else {
+				const extra = (boxH * FRAME_ASPECT - boxW) / 2;
+				minX -= extra;
+				maxX += extra;
+			}
+			return { minX, minY, maxX, maxY };
+		};
+
+		// Plan text is sized in screen px, so once the plan is shrunk into the
+		// 490 pt frame it can come out under 6 pt. Work out how far each kind
+		// of text must grow; enlarging the dimension text widens the crop a
+		// little, so settle it over a few rounds.
+		let textScales = SCREEN_TEXT_SCALES;
+		let crop = cropFor(textScales);
+		for (let i = 0; i < 4; i++) {
+			textScales = pdfTextScales(scale, crop.maxX - crop.minX);
+			crop = cropFor(textScales);
 		}
+		const { minX, minY, maxX, maxY } = crop;
+
+		// Redraw at those sizes synchronously -- a normal state update would
+		// not reach the canvas before toDataURL runs.
+		flushSync(() => setCaptureTextScales(textScales));
 
 		const gridLayer = konvaStage.findOne('.grid');
 		const wasGridVisible = gridLayer?.visible();
@@ -920,7 +954,6 @@ export default function ProjectDetail({ id }: { id: number }) {
 		selectionMarks.forEach((n) => n.visible(false));
 		konvaStage.batchDraw();
 
-		const scale = konvaStage.scaleX() || 1;
 		const dataUrl = konvaStage.toDataURL({
 			x: minX * scale + konvaStage.x(),
 			y: minY * scale + konvaStage.y(),
@@ -934,6 +967,8 @@ export default function ProjectDetail({ id }: { id: number }) {
 			gridLayer.visible(wasGridVisible ?? true);
 		}
 		selectionMarks.forEach((n) => n.visible(true));
+		// Back to on-screen sizes.
+		flushSync(() => setCaptureTextScales(undefined));
 		konvaStage.batchDraw();
 		return dataUrl;
 	}, [stage]);
@@ -1668,6 +1703,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 					onAppliancesChanged={scheduleCanvasSave}
 					applianceDrag={applianceDrag}
 					onApplianceDragEnd={() => setApplianceDrag(null)}
+					textScales={captureTextScales}
 				/>
 
 				{/* Layer panel (hidden for technicians) — collapsible to a rail */}

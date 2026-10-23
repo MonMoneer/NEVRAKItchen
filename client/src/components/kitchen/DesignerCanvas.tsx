@@ -102,6 +102,17 @@ import {
 	validatePlacement,
 } from '@/lib/appliances';
 import type { ApplianceDragStart } from './AppliancePanel';
+import {
+	DIM_TICK_PX,
+	PLAN_TEXT_PX,
+	SCREEN_TEXT_SCALES,
+	SHORT_SEGMENT_CM,
+	computeWallDimension,
+	dimensionLayout,
+	formatChainCm,
+	type PlanTextRole,
+	type PlanTextScales,
+} from '@/lib/plan-dimensions';
 
 // Wall-point placement state
 // Phase 0 (no state): hovering — nearest corner is highlighted via hoveredCorner
@@ -307,6 +318,14 @@ interface DesignerCanvasProps {
 	/** A card being dragged out of the appliance pop-up, or null. */
 	applianceDrag?: ApplianceDragStart | null;
 	onApplianceDragEnd?: () => void;
+	/**
+	 * Size multiplier per kind of plan text (run labels, appliance labels,
+	 * chain, overall and island figures), applied to the text and the gaps
+	 * around it. All 1 on screen; captureCanvasImage raises them for the PDF
+	 * snapshot only, so labels stay legible once the plan is shrunk into the
+	 * PDF frame.
+	 */
+	textScales?: PlanTextScales;
 }
 
 export interface CanvasElementItem {
@@ -338,7 +357,6 @@ const HATCH_SPACING = 10;
 // Plan look for cabinets and islands. Deliberately local to the canvas:
 // CABINET_STYLES / CABINET_COLORS also drive the draw previews and the Layers
 // panel dots, which keep their current look.
-const RUN_LABEL_FONT_PX = 9;
 const RUN_LABEL_FALLBACK: Record<CabinetType, string> = {
 	base: 'BASE',
 	wall_cabinet: 'WALL',
@@ -350,6 +368,10 @@ const WALL_CABINET_FILL = 'rgba(34, 197, 94, 0.07)';
 const TALL_CABINET_CROSS = '#A855F7';
 const ISLAND_FILL = '#FEF3C7';
 const ISLAND_STROKE = '#F59E0B';
+// Dimension lines (phase 3).
+const DIM_LINE_COLOR = '#6B7280';
+const DIM_CHAIN_TEXT_COLOR = '#6B7280';
+const DIM_OVERALL_TEXT_COLOR = '#16202B';
 
 /**
  * Reorders two user-drag endpoints so that `aStart → aEnd` points in the same
@@ -975,7 +997,9 @@ export function DesignerCanvas({
 	onAppliancesChanged,
 	applianceDrag = null,
 	onApplianceDragEnd,
+	textScales,
 }: DesignerCanvasProps) {
+	const ts = textScales ?? SCREEN_TEXT_SCALES;
 	const stageRef = useRef<Konva.Stage>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 	// ── New island drawing flow (2026-04-15 redesign) ──────────────────
@@ -4479,8 +4503,8 @@ export function DesignerCanvas({
 	// Labels: "OVEN 60", monospace bold, white halo, always upright.
 	const renderApplianceLabels = () => {
 		if (!appliancesActive || resolvedAppliances.length === 0) return null;
-		const fs = 11 / scale;
-		const pad = 4 / scale;
+		const fs = (PLAN_TEXT_PX.applianceLabel * ts.applianceLabel) / scale;
+		const pad = (4 * ts.applianceLabel) / scale;
 		// Half of an upright text box's extent along the unit direction (nx, ny).
 		const halfAlong = (nx: number, ny: number, w: number) =>
 			(Math.abs(nx) * w) / 2 + (Math.abs(ny) * fs) / 2;
@@ -4511,13 +4535,13 @@ export function DesignerCanvas({
 					const mid = getMidpoint(c3, c2);
 					const dx = (c3.x - c0.x) / h;
 					const dy = (c3.y - c0.y) / h;
-					const ext = (Math.abs(dx) * textW) / 2 + (Math.abs(dy) * fs) / 2 + 4 / scale;
+					const ext = (Math.abs(dx) * textW) / 2 + (Math.abs(dy) * fs) / 2 + pad;
 					anchor = { x: mid.x + dx * ext, y: mid.y + dy * ext };
 					// Stacked tall items: labels 8 px apart.
 					const stackKey = `${r.frame.host.type}:${r.frame.host.id}:${Math.round(r.offsetCm)}:${r.appliance.widthCm}:${r.islandSide ?? 0}`;
 					const idx = stackIndex.get(stackKey) ?? 0;
 					stackIndex.set(stackKey, idx + 1);
-					if (idx > 0) anchor.y += idx * (fs + 8 / scale) * (dy < -0.5 ? -1 : 1);
+					if (idx > 0) anchor.y += idx * (fs + (8 * ts.applianceLabel) / scale) * (dy < -0.5 ? -1 : 1);
 				} else if (def.placement === 'wall') {
 					// Hood: the whole text box against the wall (back edge c0–c1),
 					// inside the hood, at any wall angle -- not just its centre.
@@ -4547,7 +4571,7 @@ export function DesignerCanvas({
 			const rangeLabel = byId.get(rangeId);
 			const hoodLabel = byId.get(hood.appliance.id);
 			if (!rangeLabel || !hoodLabel) return;
-			const gap = 2 / scale;
+			const gap = (2 * ts.applianceLabel) / scale;
 			const boxesOverlap =
 				Math.abs(rangeLabel.anchor.x - hoodLabel.anchor.x) < (rangeLabel.textW + hoodLabel.textW) / 2 + gap &&
 				Math.abs(rangeLabel.anchor.y - hoodLabel.anchor.y) < fs + gap;
@@ -4566,7 +4590,7 @@ export function DesignerCanvas({
 		});
 
 		const out = placed.map(({ r, text, textW, anchor }) => {
-			const boxW = textW + 20 / scale;
+			const boxW = textW + (20 * ts.applianceLabel) / scale;
 			return (
 				<Text
 					key={`lbl-${r.appliance.id}`}
@@ -4581,7 +4605,7 @@ export function DesignerCanvas({
 					fontStyle="bold"
 					fill={r.status === 'ok' ? APPLIANCE_COLOR : APPLIANCE_INVALID_COLOR}
 					stroke="#FFFFFF"
-					strokeWidth={3 / scale}
+					strokeWidth={(3 * ts.applianceLabel) / scale}
 					fillAfterStrokeEnabled
 					listening={false}
 				/>
@@ -5139,7 +5163,7 @@ export function DesignerCanvas({
 		inward: Point,
 		text: string
 	) => {
-		const fontSize = RUN_LABEL_FONT_PX / scale;
+		const fontSize = (PLAN_TEXT_PX.runLabel * ts.runLabel) / scale;
 		const cos = Math.cos(angleRad);
 		const sin = Math.sin(angleRad);
 		const ax = origin.x + anchor.x * cos - anchor.y * sin;
@@ -5184,7 +5208,7 @@ export function DesignerCanvas({
 			x={box.x}
 			y={box.y}
 			text={text}
-			fontSize={RUN_LABEL_FONT_PX / scale}
+			fontSize={(PLAN_TEXT_PX.runLabel * ts.runLabel) / scale}
 			fontFamily="monospace"
 			fill={color}
 			wrap="none"
@@ -5244,7 +5268,7 @@ export function DesignerCanvas({
 		// cover the start. If both ends are covered it stays at the start.
 		const frontY = cabinet.depthFlipped ? minY : maxY;
 		const inwardY = cabinet.depthFlipped ? 1 : -1;
-		const labelPad = 4 / scale;
+		const labelPad = (4 * ts.runLabel) / scale;
 		const layerName = cabinet.layerId
 			? layersFromStore.find((l) => l.id === cabinet.layerId)?.name?.trim()
 			: undefined;
@@ -5403,11 +5427,6 @@ export function DesignerCanvas({
 								strokeWidth={2 / scale}
 							/>
 						</>
-					)}
-					{renderDimensionLabel(
-						wall.start,
-						wall.end,
-						drawingState.unit
 					)}
 				</Group>
 			);
@@ -5716,11 +5735,6 @@ export function DesignerCanvas({
 							/>
 						</>
 					)}
-					{renderDimensionLabel(
-						opening.start,
-						opening.end,
-						drawingState.unit
-					)}
 				</Group>
 			);
 		});
@@ -5794,6 +5808,151 @@ export function DesignerCanvas({
 				rotation={angleDeg}
 				listening={false}
 			/>
+		);
+	};
+
+	// ── Architectural dimensions (phase 3) ─────────────────────────────────
+	// Geometry lives in lib/plan-dimensions.ts so the PDF capture sizes its crop
+	// from the same numbers. Everything here is in screen px divided by `scale`,
+	// times the role's entry in `textScales` (raised only while the PDF snapshot is taken).
+
+	/** Upright text centred on `at`, following `angleRad`, never upside down. */
+	const renderDimText = (
+		key: string,
+		at: Point,
+		angleRad: number,
+		text: string,
+		role: PlanTextRole,
+		bold: boolean,
+		color: string
+	) => {
+		let deg = (angleRad * 180) / Math.PI;
+		if (deg > 90 || deg < -90) deg += 180;
+		const fs = (PLAN_TEXT_PX[role] * ts[role]) / scale;
+		const width = text.length * fs * 0.62;
+		return (
+			<Text
+				key={key}
+				x={at.x}
+				y={at.y}
+				width={width}
+				offsetX={width / 2}
+				offsetY={fs / 2}
+				text={text}
+				fontSize={fs}
+				fontFamily="monospace"
+				fontStyle={bold ? 'bold' : 'normal'}
+				fill={color}
+				align="center"
+				wrap="none"
+				rotation={deg}
+				listening={false}
+			/>
+		);
+	};
+
+	/** A dimension line with a 45° tick at every given position along it. */
+	const renderDimLine = (key: string, from: Point, u: Point, out: Point, ticksPx: number[], lengthPx: number, k: number) => {
+		const strokeWidth = (1 * k) / scale;
+		const half = (DIM_TICK_PX * k) / 2 / scale;
+		const tx = ((u.x + out.x) / Math.SQRT2) * half;
+		const ty = ((u.y + out.y) / Math.SQRT2) * half;
+		return (
+			<Group key={key} listening={false}>
+				<Line
+					points={[from.x, from.y, from.x + u.x * lengthPx, from.y + u.y * lengthPx]}
+					stroke={DIM_LINE_COLOR}
+					strokeWidth={strokeWidth}
+				/>
+				{ticksPx.map((t, i) => {
+					const px = from.x + u.x * t;
+					const py = from.y + u.y * t;
+					return (
+						<Line
+							key={i}
+							points={[px - tx, py - ty, px + tx, py + ty]}
+							stroke={DIM_LINE_COLOR}
+							strokeWidth={strokeWidth}
+						/>
+					);
+				})}
+			</Group>
+		);
+	};
+
+	/**
+	 * Outside each wall: a chain of the segments between every cabinet, wall
+	 * cabinet and opening edge on it, then the overall length further out.
+	 * Replaces the old floating wall and opening labels; the overall figure is
+	 * exactly what those labels showed, and the chain adds up to it.
+	 */
+	const renderWallDimensions = () => {
+		const { walls, cabinets, openings, unit } = drawingState;
+		const layout = dimensionLayout(ts);
+		const groups: JSX.Element[] = [];
+		for (const wall of walls) {
+			const dim = computeWallDimension(wall, walls, cabinets, openings, unit);
+			if (!dim) continue;
+			const angle = angleBetween(wall.start, wall.end);
+			const offsetFrom = (alongPx: number, screenPx: number): Point => ({
+				x: dim.outerStart.x + dim.u.x * alongPx + (dim.out.x * screenPx) / scale,
+				y: dim.outerStart.y + dim.u.y * alongPx + (dim.out.y * screenPx) / scale,
+			});
+			const parts: JSX.Element[] = [];
+			if (dim.chainPx.length > 0) {
+				parts.push(renderDimLine('chain', offsetFrom(0, layout.chainLine), dim.u, dim.out, dim.chainPx, dim.lengthPx, ts.chain));
+				dim.segmentsCm.forEach((cm, i) => {
+					if (cm < SHORT_SEGMENT_CM) return; // keep the tick, drop the number
+					const mid = (dim.chainPx[i] + dim.chainPx[i + 1]) / 2;
+					parts.push(
+						renderDimText(`seg-${i}`, offsetFrom(mid, layout.chainText), angle, formatChainCm(cm, unit), 'chain', false, DIM_CHAIN_TEXT_COLOR)
+					);
+				});
+			}
+			parts.push(renderDimLine('overall', offsetFrom(0, layout.overallLine), dim.u, dim.out, [0, dim.lengthPx], dim.lengthPx, ts.overall));
+			parts.push(
+				renderDimText('overall-text', offsetFrom(dim.lengthPx / 2, layout.overallText), angle, dim.overallText, 'overall', true, DIM_OVERALL_TEXT_COLOR)
+			);
+			groups.push(
+				<Group key={`dim-${wall.id}`} listening={false}>
+					{parts}
+				</Group>
+			);
+		}
+		return <Group listening={false}>{groups}</Group>;
+	};
+
+	/** One overall line under each island (its width on the plan) and one at its side (its height). */
+	const renderIslandDimensions = () => {
+		if (islands.length === 0) return null;
+		const { unit } = drawingState;
+		const layout = dimensionLayout(ts);
+		return (
+			<Group listening={false}>
+				{islands.map((island) => {
+					const isVertical = island.axis === 'v';
+					const w = (isVertical ? island.depthCm : island.lengthCm) * PIXELS_PER_CM;
+					const h = (isVertical ? island.lengthCm : island.depthCm) * PIXELS_PER_CM;
+					const r = island.rotationRad;
+					const cos = Math.cos(r);
+					const sin = Math.sin(r);
+					const toWorld = (x: number, y: number): Point => ({
+						x: island.anchorPoint.x + x * cos - y * sin,
+						y: island.anchorPoint.y + x * sin + y * cos,
+					});
+					const right = { x: cos, y: sin };
+					const down = { x: -sin, y: cos };
+					const off = (screenPx: number) => screenPx / scale;
+					return (
+						<Group key={`dim-${island.id}`} listening={false}>
+							{renderDimLine('w', toWorld(0, h + off(layout.islandLine)), right, down, [0, w], w, ts.island)}
+							{renderDimText('w-text', toWorld(w / 2, h + off(layout.islandText)), r, formatLength(w, unit), 'island', true, DIM_OVERALL_TEXT_COLOR)}
+							{renderDimLine('h', toWorld(w + off(layout.islandLine), 0), down, right, [0, h], h, ts.island)}
+							{renderDimText('h-text', toWorld(w + off(layout.islandText), h / 2), r + Math.PI / 2, formatLength(h, unit), 'island', true, DIM_OVERALL_TEXT_COLOR)}
+						</Group>
+					);
+				})}
+			</Group>
 		);
 	};
 
@@ -6614,6 +6773,7 @@ export function DesignerCanvas({
 							);
 						})()}
 					{renderWalls()}
+					{renderWallDimensions()}
 					{renderInnerFaceGlow()}
 					{renderInnerFaceCornerMarkers()}
 					{renderWallCornerJoints()}
@@ -6647,7 +6807,7 @@ export function DesignerCanvas({
 							? layersFromStore.find((l) => l.id === island.layerId)?.name?.trim()
 							: undefined;
 						const islandLabel = `${islandLayerName || RUN_LABEL_FALLBACK.island} ${island.lengthCm.toFixed(0)} × ${island.depthCm.toFixed(0)}`;
-						const islandLabelPad = 4 / scale;
+						const islandLabelPad = (4 * ts.runLabel) / scale;
 						return (
 							<Group key={island.id} listening={false}>
 								<Rect
@@ -6698,6 +6858,7 @@ export function DesignerCanvas({
 					{renderAppliancePass(applianceGroups.island)}
 					{renderAppliancePass(applianceGroups.orphan)}
 					{renderApplianceLabels()}
+					{renderIslandDimensions()}
 					{renderApplianceGhost()}
 					{/* In-progress island drawing overlay (H/V rubber-band, no walls) */}
 					{islandDrawingState.phase !== 'idle' && cursorWorld && (() => {
