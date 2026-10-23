@@ -158,6 +158,11 @@ export interface HostFrame {
   depthPx: number;
   /** Layer colour for the valid-drop preview. */
   color: string;
+  /**
+   * Islands only: which long side is the front (+1 = the d = depth edge,
+   * −1 = the d = 0 edge). See islandLabelSide.
+   */
+  frontSide?: 1 | -1;
 }
 
 export function cabinetFrame(cab: Cabinet): HostFrame {
@@ -179,7 +184,7 @@ export function cabinetFrame(cab: Cabinet): HostFrame {
   };
 }
 
-export function islandFrame(island: Island): HostFrame {
+export function islandFrame(island: Island, walls: Wall[] = []): HostFrame {
   // Same mapping as the island renderer: anchorPoint is the top-left corner,
   // the rect is rotated by rotationRad about it; "h" = length along local x,
   // "v" = length along local y.
@@ -189,7 +194,7 @@ export function islandFrame(island: Island): HostFrame {
   const vertical = island.axis === "v";
   const u = vertical ? ly : lx;
   const n = vertical ? lx : ly;
-  return {
+  const frame: HostFrame = {
     host: { type: "island", id: island.id },
     hostKind: "island",
     origin: island.anchorPoint,
@@ -201,6 +206,8 @@ export function islandFrame(island: Island): HostFrame {
     depthPx: cmToPixels(island.depthCm),
     color: CABINET_COLORS.island,
   };
+  frame.frontSide = islandLabelSide(frame, island, walls);
+  return frame;
 }
 
 export function wallFrame(wall: Wall, walls: Wall[]): HostFrame {
@@ -232,9 +239,16 @@ export function toFrameLocal(f: HostFrame, p: Point): { a: number; d: number } {
   return { a: dx * f.ux + dy * f.uy, d: dx * f.nx + dy * f.ny };
 }
 
+/** Inside-cabinet appliances on an island are at most this deep, set against the island's front. */
+export const ISLAND_INSIDE_MAX_DEPTH_CM = 55;
+
 /** Depth band (px, from the host's back edge) an appliance occupies on a host. */
 export function applianceDepthBand(kind: ApplianceKind, frame: HostFrame): { d0: number; d1: number } {
   const D = frame.depthPx;
+  if (frame.host.type === "island" && getApplianceDef(kind).placement === "inside") {
+    const d = Math.min(D, cmToPixels(ISLAND_INSIDE_MAX_DEPTH_CM));
+    return frame.frontSide === -1 ? { d0: 0, d1: d } : { d0: D - d, d1: D };
+  }
   switch (kind) {
     case "sink": {
       const d = cmToPixels(46);
@@ -310,7 +324,7 @@ export function frameForHost(host: ApplianceHost, scene: ApplianceScene): HostFr
   }
   if (host.type === "island") {
     const isl = scene.islands.find((i) => i.id === host.id);
-    return isl ? islandFrame(isl) : null;
+    return isl ? islandFrame(isl, scene.walls) : null;
   }
   const wall = scene.walls.find((w) => w.id === host.id);
   return wall ? wallFrame(wall, scene.walls) : null;
@@ -326,7 +340,7 @@ export function candidateFrames(kind: ApplianceKind, scene: ApplianceScene): Hos
     }
   }
   if (def.hosts.includes("island")) {
-    for (const i of scene.islands) out.push(islandFrame(i));
+    for (const i of scene.islands) out.push(islandFrame(i, scene.walls));
   }
   if (def.hosts.includes("wall")) {
     for (const w of scene.walls) {

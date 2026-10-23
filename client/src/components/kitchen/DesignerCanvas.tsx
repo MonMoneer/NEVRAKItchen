@@ -94,7 +94,6 @@ import {
 	applianceWhereHint,
 	computePlacement,
 	getApplianceDef,
-	islandLabelSide,
 	pointInConvexPolygon,
 	polygonCenter,
 	resolveAppliance,
@@ -4454,15 +4453,7 @@ export function DesignerCanvas({
 				if (def.placement === 'inside') {
 					// Just in front of the cabinet's front edge. Islands have no
 					// front: use the long side facing away from the reference wall.
-					let side: 1 | -1 = 1;
-					if (r.frame.host.type === 'island') {
-						const hostId = r.frame.host.id;
-						side = islandLabelSide(
-							r.frame,
-							islands.find((i) => i.id === hostId),
-							drawingState.walls,
-						);
-					}
+					const side: 1 | -1 = r.frame.frontSide ?? 1;
 					const mid = side === 1 ? getMidpoint(c3, c2) : getMidpoint(c0, c1);
 					const dx = ((c3.x - c0.x) / h) * side;
 					const dy = ((c3.y - c0.y) / h) * side;
