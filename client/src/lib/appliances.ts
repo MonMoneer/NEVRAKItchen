@@ -116,6 +116,12 @@ export interface PlacedAppliance {
    * re-measure from `lastCenter` instead of trusting `offsetCm`.
    */
   hostStart?: Point;
+  /**
+   * Island hosts, inside-cabinet items only: which long side the appliance
+   * opens to (+1 = the d = depth edge, −1 = the d = 0 edge). Set from the side
+   * it was dropped nearer; when missing, the island's front side is used.
+   */
+  islandSide?: 1 | -1;
 }
 
 /** Display label, e.g. "OVEN 60". */
@@ -242,12 +248,32 @@ export function toFrameLocal(f: HostFrame, p: Point): { a: number; d: number } {
 /** Inside-cabinet appliances on an island are at most this deep, set against the island's front. */
 export const ISLAND_INSIDE_MAX_DEPTH_CM = 55;
 
+/** True when the appliance picks one long side of an island to open to. */
+export function usesIslandSide(kind: ApplianceKind, frame: HostFrame): boolean {
+  return frame.host.type === "island" && getApplianceDef(kind).placement === "inside";
+}
+
+/** The island long side nearer to a point (+1 = the d = depth edge, −1 = the d = 0 edge). */
+export function islandSideAt(frame: HostFrame, p: Point): 1 | -1 {
+  return toFrameLocal(frame, p).d < frame.depthPx / 2 ? -1 : 1;
+}
+
+function effectiveIslandSide(kind: ApplianceKind, frame: HostFrame, islandSide?: 1 | -1): 1 | -1 | undefined {
+  if (!usesIslandSide(kind, frame)) return undefined;
+  return islandSide ?? frame.frontSide ?? 1;
+}
+
 /** Depth band (px, from the host's back edge) an appliance occupies on a host. */
-export function applianceDepthBand(kind: ApplianceKind, frame: HostFrame): { d0: number; d1: number } {
+export function applianceDepthBand(
+  kind: ApplianceKind,
+  frame: HostFrame,
+  islandSide?: 1 | -1,
+): { d0: number; d1: number } {
   const D = frame.depthPx;
-  if (frame.host.type === "island" && getApplianceDef(kind).placement === "inside") {
+  const side = effectiveIslandSide(kind, frame, islandSide);
+  if (side !== undefined) {
     const d = Math.min(D, cmToPixels(ISLAND_INSIDE_MAX_DEPTH_CM));
-    return frame.frontSide === -1 ? { d0: 0, d1: d } : { d0: D - d, d1: D };
+    return side === -1 ? { d0: 0, d1: d } : { d0: D - d, d1: D };
   }
   switch (kind) {
     case "sink": {
@@ -267,12 +293,23 @@ export function applianceDepthBand(kind: ApplianceKind, frame: HostFrame): { d0:
   }
 }
 
-/** Corners of an appliance footprint on a host: back-start, back-end, front-end, front-start. */
-export function footprintCorners(kind: ApplianceKind, widthCm: number, offsetCm: number, frame: HostFrame): Point[] {
+/**
+ * Corners of an appliance footprint on a host: back-start, back-end,
+ * front-end, front-start — "front" being the side it opens to, so an island
+ * appliance facing the d = 0 side has its corners listed the other way round.
+ */
+export function footprintCorners(
+  kind: ApplianceKind,
+  widthCm: number,
+  offsetCm: number,
+  frame: HostFrame,
+  islandSide?: 1 | -1,
+): Point[] {
   const a0 = cmToPixels(offsetCm);
   const a1 = cmToPixels(offsetCm + widthCm);
-  const { d0, d1 } = applianceDepthBand(kind, frame);
-  return [framePoint(frame, a0, d0), framePoint(frame, a1, d0), framePoint(frame, a1, d1), framePoint(frame, a0, d1)];
+  const { d0, d1 } = applianceDepthBand(kind, frame, islandSide);
+  const [back, front] = effectiveIslandSide(kind, frame, islandSide) === -1 ? [d1, d0] : [d0, d1];
+  return [framePoint(frame, a0, back), framePoint(frame, a1, back), framePoint(frame, a1, front), framePoint(frame, a0, front)];
 }
 
 export function polygonCenter(pts: Point[]): Point {
@@ -468,6 +505,8 @@ export interface ResolvedAppliance {
   corners: Point[];
   center: Point;
   status: ResolvedStatus;
+  /** Island side actually used (inside items on islands only). */
+  islandSide?: 1 | -1;
   /** Silent, history-free patch to store (re-attach, wall re-measure, lastCenter). */
   patch: Partial<PlacedAppliance> | null;
 }
@@ -527,6 +566,7 @@ export function resolveAppliance(app: PlacedAppliance, scene: ApplianceScene): R
       patch.host = found.host;
       patch.offsetCm = offsetCm;
       if (found.host.type === "wall") patch.hostStart = { ...found.origin };
+      if (usesIslandSide(app.kind, found)) patch.islandSide = islandSideAt(found, app.lastCenter);
     }
   }
 
@@ -544,7 +584,8 @@ export function resolveAppliance(app: PlacedAppliance, scene: ApplianceScene): R
   }
 
   const drawnOffset = clampOffset(offsetCm, app.widthCm, frame);
-  const corners = footprintCorners(app.kind, app.widthCm, drawnOffset, frame);
+  const islandSide = effectiveIslandSide(app.kind, frame, patch.islandSide ?? app.islandSide);
+  const corners = footprintCorners(app.kind, app.widthCm, drawnOffset, frame, islandSide);
   const center = polygonCenter(corners);
   if (!samePoint(app.lastCenter, center)) patch.lastCenter = center;
   const overflow = app.widthCm > pixelsToCm(frame.lengthPx) + 0.5;
@@ -555,6 +596,7 @@ export function resolveAppliance(app: PlacedAppliance, scene: ApplianceScene): R
     corners,
     center,
     status: overflow ? "overflow" : "ok",
+    islandSide,
     patch: Object.keys(patch).length ? patch : null,
   };
 }
@@ -571,6 +613,8 @@ export interface PlacementCandidate {
   valid: boolean;
   /** Why it is invalid (red preview / toast). */
   reason?: string;
+  /** Island side the appliance opens to (inside items on islands only). */
+  islandSide?: 1 | -1;
   /** Allowed, but worth telling the user (e.g. hood over a wall cabinet). */
   warning?: string;
 }
@@ -652,7 +696,8 @@ export function computePlacement(
     frame,
     sameHost.map((r) => ({ offsetCm: r.offsetCm, widthCm: r.appliance.widthCm })),
   );
-  return validatePlacement(kind, widthCm, frame, offsetCm, scene, existing);
+  const islandSide = usesIslandSide(kind, frame) ? islandSideAt(frame, centerWorld) : undefined;
+  return validatePlacement(kind, widthCm, frame, offsetCm, scene, existing, islandSide);
 }
 
 function offsetFromCenterRaw(frame: HostFrame, center: Point, widthCm: number): number {
@@ -668,11 +713,16 @@ export function validatePlacement(
   offsetCm: number,
   scene: ApplianceScene,
   existing: ResolvedAppliance[],
+  islandSide?: 1 | -1,
 ): PlacementCandidate {
   const def = getApplianceDef(kind);
-  const corners = footprintCorners(kind, widthCm, offsetCm, frame);
+  const side = effectiveIslandSide(kind, frame, islandSide);
+  const corners = footprintCorners(kind, widthCm, offsetCm, frame, side);
   const center = polygonCenter(corners);
-  const base: PlacementCandidate = { kind, widthCm, frame, offsetCm, corners, center, valid: true };
+  const base: PlacementCandidate = { kind, widthCm, frame, offsetCm, corners, center, valid: true, islandSide: side };
+  // On an island deep enough for two, inside items on opposite sides sit back to back.
+  const backToBackFits =
+    side !== undefined && 2 * Math.min(frame.depthPx, cmToPixels(ISLAND_INSIDE_MAX_DEPTH_CM)) <= frame.depthPx + 0.5;
   const fail = (reason: string): PlacementCandidate => ({ ...base, valid: false, reason });
   const title = `${def.name} ${widthCm} cm`;
 
@@ -695,6 +745,7 @@ export function validatePlacement(
   for (const r of sameHost) {
     const rDef = getApplianceDef(r.appliance.kind);
     if (rDef.placement !== def.placement) continue;
+    if (backToBackFits && r.islandSide !== undefined && r.islandSide !== side) continue;
     const overlap = intervalOverlapCm(a0, a1, r.offsetCm, r.offsetCm + r.appliance.widthCm);
     if (overlap <= 0.5) continue;
     const stackable =

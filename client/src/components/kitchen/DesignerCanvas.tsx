@@ -1201,7 +1201,15 @@ export function DesignerCanvas({
 		const others = resolvedAppliances.filter((o) => o.appliance.id !== r.appliance.id);
 		const center = r.offsetCm + r.appliance.widthCm / 2;
 		const offsetCm = snapOffset(center - widthCm / 2, widthCm, r.frame, [], 0);
-		const cand = validatePlacement(r.appliance.kind, widthCm, r.frame, offsetCm, applianceScene, others);
+		const cand = validatePlacement(
+			r.appliance.kind,
+			widthCm,
+			r.frame,
+			offsetCm,
+			applianceScene,
+			others,
+			r.islandSide,
+		);
 		if (!cand.valid) {
 			toast({ title: cand.reason ?? 'That size does not fit here' });
 			return;
@@ -1275,6 +1283,7 @@ export function DesignerCanvas({
 						offsetCm: cand.offsetCm,
 						lastCenter: cand.center,
 						...(cand.frame.host.type === 'wall' ? { hostStart: { ...cand.frame.origin } } : {}),
+						...(cand.islandSide !== undefined ? { islandSide: cand.islandSide } : {}),
 					};
 					ctx.onAddAppliance?.(placed);
 					ctx.onAppliancesChanged?.();
@@ -2286,6 +2295,7 @@ export function DesignerCanvas({
 								host: a.host,
 								offsetCm: a.offsetCm,
 								hostStart: a.hostStart,
+								islandSide: a.islandSide,
 								lastCenter: a.lastCenter,
 							},
 							moved: false,
@@ -2731,6 +2741,7 @@ export function DesignerCanvas({
 						host: cand.frame.host,
 						offsetCm: cand.offsetCm,
 						hostStart: cand.frame.host.type === 'wall' ? { ...cand.frame.origin } : undefined,
+						islandSide: cand.islandSide,
 					});
 				}
 				setApplianceCandidate({ source: 'move', cand });
@@ -3188,6 +3199,7 @@ export function DesignerCanvas({
 							offsetCm: cand.offsetCm,
 							lastCenter: cand.center,
 							hostStart: cand.frame.host.type === 'wall' ? { ...cand.frame.origin } : undefined,
+							islandSide: cand.islandSide,
 						});
 						ctx.onAppliancesChanged?.();
 					} else {
@@ -4451,16 +4463,16 @@ export function DesignerCanvas({
 			if (r.status !== 'orphan' && r.frame) {
 				const h = distanceBetween(c0, c3) || 1;
 				if (def.placement === 'inside') {
-					// Just in front of the cabinet's front edge. Islands have no
-					// front: use the long side facing away from the reference wall.
-					const side: 1 | -1 = r.frame.frontSide ?? 1;
-					const mid = side === 1 ? getMidpoint(c3, c2) : getMidpoint(c0, c1);
-					const dx = ((c3.x - c0.x) / h) * side;
-					const dy = ((c3.y - c0.y) / h) * side;
+					// Just in front of the front edge (c3–c2). For island hosts the
+					// footprint corners are already ordered so that edge is the
+					// side the appliance opens to.
+					const mid = getMidpoint(c3, c2);
+					const dx = (c3.x - c0.x) / h;
+					const dy = (c3.y - c0.y) / h;
 					const ext = (Math.abs(dx) * textW) / 2 + (Math.abs(dy) * fs) / 2 + 4 / scale;
 					anchor = { x: mid.x + dx * ext, y: mid.y + dy * ext };
 					// Stacked tall items: labels 8 px apart.
-					const stackKey = `${r.frame.host.type}:${r.frame.host.id}:${Math.round(r.offsetCm)}:${r.appliance.widthCm}`;
+					const stackKey = `${r.frame.host.type}:${r.frame.host.id}:${Math.round(r.offsetCm)}:${r.appliance.widthCm}:${r.islandSide ?? 0}`;
 					const idx = stackIndex.get(stackKey) ?? 0;
 					stackIndex.set(stackKey, idx + 1);
 					if (idx > 0) anchor.y += idx * (fs + 8 / scale) * (dy < -0.5 ? -1 : 1);
