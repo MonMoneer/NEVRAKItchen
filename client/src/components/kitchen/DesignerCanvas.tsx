@@ -96,6 +96,7 @@ import {
 	getApplianceDef,
 	pointInConvexPolygon,
 	polygonCenter,
+	polygonsOverlap,
 	resolveAppliance,
 	snapOffset,
 	validatePlacement,
@@ -333,6 +334,22 @@ const SNAP_VISUAL_RADIUS = 8;
 const MIN_DRAW_DISTANCE = 10;
 const HANDLE_RADIUS = 6;
 const HATCH_SPACING = 10;
+
+// Plan look for cabinets and islands. Deliberately local to the canvas:
+// CABINET_STYLES / CABINET_COLORS also drive the draw previews and the Layers
+// panel dots, which keep their current look.
+const RUN_LABEL_FONT_PX = 9;
+const RUN_LABEL_FALLBACK: Record<CabinetType, string> = {
+	base: 'BASE',
+	wall_cabinet: 'WALL',
+	tall: 'TALL',
+	island: 'ISLAND',
+};
+const WALL_CABINET_STROKE = '#22C55E';
+const WALL_CABINET_FILL = 'rgba(34, 197, 94, 0.07)';
+const TALL_CABINET_CROSS = '#A855F7';
+const ISLAND_FILL = '#FEF3C7';
+const ISLAND_STROKE = '#F59E0B';
 
 /**
  * Reorders two user-drag endpoints so that `aStart → aEnd` points in the same
@@ -1123,6 +1140,17 @@ export function DesignerCanvas({
 			orphan: resolvedAppliances.filter((r) => r.status === 'orphan'),
 		};
 	}, [resolvedAppliances]);
+	// Drawn before the wall cabinets, so they never cover a wall cabinet's label.
+	const underApplianceIds = useMemo(
+		() => new Set(applianceGroups.under.map((r) => r.appliance.id)),
+		[applianceGroups],
+	);
+	// The only appliances drawn after the island fill, so the only ones that
+	// can cover an island's label (everything else sits underneath the island).
+	const appliancesAboveIslands = useMemo(
+		() => [...applianceGroups.island, ...applianceGroups.orphan],
+		[applianceGroups],
+	);
 	const [selectedApplianceId, setSelectedApplianceId] = useState<string | null>(null);
 	// Preview while dragging from the pop-up ("palette") or moving a placed one.
 	const [applianceCandidate, setApplianceCandidate] = useState<{
@@ -4452,8 +4480,22 @@ export function DesignerCanvas({
 	const renderApplianceLabels = () => {
 		if (!appliancesActive || resolvedAppliances.length === 0) return null;
 		const fs = 11 / scale;
+		const pad = 4 / scale;
+		// Half of an upright text box's extent along the unit direction (nx, ny).
+		const halfAlong = (nx: number, ny: number, w: number) =>
+			(Math.abs(nx) * w) / 2 + (Math.abs(ny) * fs) / 2;
+		// A hood over a range: both labels would sit in the same spot, so the
+		// hood's stays against the wall and the range's moves to the room side.
+		const placedAppliances = resolvedAppliances.filter((r) => r.status !== 'orphan' && r.frame);
+		const hoodOverRange = new Map<string, ResolvedAppliance>();
+		for (const rg of placedAppliances.filter((r) => r.appliance.kind === 'range')) {
+			const hood = placedAppliances.find(
+				(r) => getApplianceDef(r.appliance.kind).placement === 'wall' && polygonsOverlap(r.corners, rg.corners)
+			);
+			if (hood) hoodOverRange.set(rg.appliance.id, hood);
+		}
 		const stackIndex = new Map<string, number>();
-		const out: JSX.Element[] = [];
+		const placed: { r: ResolvedAppliance; text: string; textW: number; anchor: Point }[] = [];
 		for (const r of resolvedAppliances) {
 			const def = getApplianceDef(r.appliance.kind);
 			const text = applianceLabel(r.appliance);
@@ -4477,14 +4519,55 @@ export function DesignerCanvas({
 					stackIndex.set(stackKey, idx + 1);
 					if (idx > 0) anchor.y += idx * (fs + 8 / scale) * (dy < -0.5 ? -1 : 1);
 				} else if (def.placement === 'wall') {
-					// Hood: near the wall.
-					const t = Math.min(0.5, (fs * 0.9) / h);
+					// Hood: the whole text box against the wall (back edge c0–c1),
+					// inside the hood, at any wall angle -- not just its centre.
+					const nx = (c3.x - c0.x) / h;
+					const ny = (c3.y - c0.y) / h;
 					const mid = getMidpoint(c0, c1);
-					anchor = { x: mid.x + (c3.x - c0.x) * t, y: mid.y + (c3.y - c0.y) * t };
+					const e = Math.min(h / 2, pad + halfAlong(nx, ny, textW));
+					anchor = { x: mid.x + nx * e, y: mid.y + ny * e };
+				} else if (hoodOverRange.has(r.appliance.id)) {
+					// Range under a hood: the whole text box against the room-side
+					// edge (c3–c2), leaving the wall side to the hood's label.
+					const nx = (c3.x - c0.x) / h;
+					const ny = (c3.y - c0.y) / h;
+					const mid = getMidpoint(c3, c2);
+					const e = Math.min(h / 2, pad + halfAlong(nx, ny, textW));
+					anchor = { x: mid.x - nx * e, y: mid.y - ny * e };
 				}
 			}
+			placed.push({ r, text, textW, anchor });
+		}
+
+		// If the range is too shallow on screen for the two labels to sit side by
+		// side across it (a vertical wall at low zoom), slide them apart along the
+		// wall until they clear.
+		const byId = new Map(placed.map((p) => [p.r.appliance.id, p]));
+		hoodOverRange.forEach((hood, rangeId) => {
+			const rangeLabel = byId.get(rangeId);
+			const hoodLabel = byId.get(hood.appliance.id);
+			if (!rangeLabel || !hoodLabel) return;
+			const gap = 2 / scale;
+			const boxesOverlap =
+				Math.abs(rangeLabel.anchor.x - hoodLabel.anchor.x) < (rangeLabel.textW + hoodLabel.textW) / 2 + gap &&
+				Math.abs(rangeLabel.anchor.y - hoodLabel.anchor.y) < fs + gap;
+			if (!boxesOverlap) return;
+			const [h0, h1] = hood.corners;
+			const len = distanceBetween(h0, h1) || 1;
+			const ux = (h1.x - h0.x) / len;
+			const uy = (h1.y - h0.y) / len;
+			const needed = halfAlong(ux, uy, rangeLabel.textW) + halfAlong(ux, uy, hoodLabel.textW) + gap;
+			const sep = (rangeLabel.anchor.x - hoodLabel.anchor.x) * ux + (rangeLabel.anchor.y - hoodLabel.anchor.y) * uy;
+			const shift = (needed - Math.abs(sep)) / 2;
+			if (shift <= 0) return;
+			const dir = sep >= 0 ? 1 : -1;
+			rangeLabel.anchor = { x: rangeLabel.anchor.x + ux * shift * dir, y: rangeLabel.anchor.y + uy * shift * dir };
+			hoodLabel.anchor = { x: hoodLabel.anchor.x - ux * shift * dir, y: hoodLabel.anchor.y - uy * shift * dir };
+		});
+
+		const out = placed.map(({ r, text, textW, anchor }) => {
 			const boxW = textW + 20 / scale;
-			out.push(
+			return (
 				<Text
 					key={`lbl-${r.appliance.id}`}
 					x={anchor.x - boxW / 2}
@@ -4503,7 +4586,7 @@ export function DesignerCanvas({
 					listening={false}
 				/>
 			);
-		}
+		});
 		return <Group listening={false}>{out}</Group>;
 	};
 
@@ -5042,6 +5125,73 @@ export function DesignerCanvas({
 		return elements;
 	};
 
+	// Where an upright monospace label lands when tucked into one corner of a
+	// rotated box. `anchor` is that corner (inset by the padding) in the box's
+	// local frame; `along` and `inward` are the local directions the text should
+	// grow towards, i.e. into the box. The text is never rotated, so it reads
+	// the same at every cabinet angle, and the result is an axis-aligned world
+	// box. Monospace lets the width be estimated without measuring.
+	const uprightCornerLabelBox = (
+		origin: Point,
+		angleRad: number,
+		anchor: Point,
+		along: Point,
+		inward: Point,
+		text: string
+	) => {
+		const fontSize = RUN_LABEL_FONT_PX / scale;
+		const cos = Math.cos(angleRad);
+		const sin = Math.sin(angleRad);
+		const ax = origin.x + anchor.x * cos - anchor.y * sin;
+		const ay = origin.y + anchor.x * sin + anchor.y * cos;
+		const dx = along.x + inward.x;
+		const dy = along.y + inward.y;
+		const growX = dx * cos - dy * sin;
+		const growY = dx * sin + dy * cos;
+		const width = text.length * fontSize * 0.6;
+		return {
+			x: growX < 0 ? ax - width : ax,
+			y: growY < 0 ? ay - fontSize : ay,
+			width,
+			height: fontSize,
+		};
+	};
+
+	const labelBoxCorners = (box: { x: number; y: number; width: number; height: number }): Point[] => [
+		{ x: box.x, y: box.y },
+		{ x: box.x + box.width, y: box.y },
+		{ x: box.x + box.width, y: box.y + box.height },
+		{ x: box.x, y: box.y + box.height },
+	];
+
+	// True when any of `drawnAbove` (appliances rendered after the label) overlaps it.
+	const labelCovered = (
+		box: { x: number; y: number; width: number; height: number },
+		drawnAbove: ResolvedAppliance[]
+	) => {
+		const boxCorners = labelBoxCorners(box);
+		return drawnAbove.some((r) => polygonsOverlap(boxCorners, r.corners));
+	};
+
+	const renderUprightLabel = (
+		key: string,
+		box: { x: number; y: number },
+		text: string,
+		color: string
+	) => (
+		<Text
+			key={key}
+			x={box.x}
+			y={box.y}
+			text={text}
+			fontSize={RUN_LABEL_FONT_PX / scale}
+			fontFamily="monospace"
+			fill={color}
+			wrap="none"
+			listening={false}
+		/>
+	);
+
 	const renderCabinetBody = (
 		cabinet: Cabinet,
 		isSelected: boolean,
@@ -5080,57 +5230,88 @@ export function DesignerCanvas({
 		const minY = yOffset;
 		const maxY = yOffset + depthPx;
 
+		// Wall cabinets hang above the counter, so they are drawn as a dashed
+		// outline over a barely-there tint: whatever sits under them (the base
+		// run, its appliances) stays readable. Fill alpha lives in the colour
+		// rather than `opacity`, so the outline itself stays at full strength.
+		const isWallCabinet = cabinet.type === 'wall_cabinet';
+		const bodyStroke = isSelected ? '#f97316' : isWallCabinet ? WALL_CABINET_STROKE : style.stroke;
+		const bodyStrokeWidth = isSelected ? 2.5 / scale : isWallCabinet ? 1.4 / scale : 1.5 / scale;
+
+		// The front edge is the long side away from the wall: +depth normally,
+		// -depth for legacy flipped cabinets. The label sits just inside it, at
+		// the piece's start -- or at its end if an appliance drawn on top would
+		// cover the start. If both ends are covered it stays at the start.
+		const frontY = cabinet.depthFlipped ? minY : maxY;
+		const inwardY = cabinet.depthFlipped ? 1 : -1;
+		const labelPad = 4 / scale;
+		const layerName = cabinet.layerId
+			? layersFromStore.find((l) => l.id === cabinet.layerId)?.name?.trim()
+			: undefined;
+		const runLabel = layerName || RUN_LABEL_FALLBACK[cabinet.type];
+		const labelAtStart = uprightCornerLabelBox(
+			cabinet.start,
+			angle,
+			{ x: minX + labelPad, y: frontY + inwardY * labelPad },
+			{ x: 1, y: 0 },
+			{ x: 0, y: inwardY },
+			runLabel
+		);
+		// Only appliances drawn after this piece can hide its label. Wall
+		// cabinets are drawn above the inside/counter/floor pass, so those
+		// cannot cover a wall cabinet's label; hoods, island items and orphans can.
+		const drawnAbove = isWallCabinet
+			? resolvedAppliances.filter((r) => !underApplianceIds.has(r.appliance.id))
+			: resolvedAppliances;
+		const coversLabel = (box: typeof labelAtStart) => labelCovered(box, drawnAbove);
+		let runLabelBox = labelAtStart;
+		if (coversLabel(labelAtStart)) {
+			const labelAtEnd = uprightCornerLabelBox(
+				cabinet.start,
+				angle,
+				{ x: maxX - labelPad, y: frontY + inwardY * labelPad },
+				{ x: -1, y: 0 },
+				{ x: 0, y: inwardY },
+				runLabel
+			);
+			if (!coversLabel(labelAtEnd)) runLabelBox = labelAtEnd;
+		}
+
 		return (
 			<Group key={cabinet.id}>
 				<Group x={cabinet.start.x} y={cabinet.start.y} rotation={deg}>
 					<Line
 						points={points}
-						fill={style.fill}
-						opacity={isSelected ? 0.85 : style.fillOpacity}
-						stroke={isSelected ? '#f97316' : style.stroke}
-						strokeWidth={isSelected ? 2.5 / scale : 1.5 / scale}
+						fill={isWallCabinet ? WALL_CABINET_FILL : style.fill}
+						opacity={isWallCabinet ? 1 : isSelected ? 0.85 : style.fillOpacity}
+						stroke={bodyStroke}
+						strokeWidth={bodyStrokeWidth}
+						dash={isWallCabinet ? [10 / scale, 6 / scale] : undefined}
 						closed={true}
 						lineJoin="miter"
 					/>
-					<Group
-						clipFunc={(ctx: any) => {
-							ctx.beginPath();
-							ctx.rect(minX, minY, maxX - minX, maxY - minY);
-							ctx.closePath();
-						}}
-					>
-						{renderHatchPattern(
-							minX,
-							maxX,
-							minY,
-							maxY,
-							style.stroke
-						)}
-					</Group>
-					{/* Counter-rotate label so text always reads left-to-right */}
-					{(() => {
-						const normDeg = ((deg % 360) + 360) % 360;
-						const flip = normDeg > 90 && normDeg < 270;
-						const visLen = maxX - minX;
-						return (
-							<Text
-								x={flip ? maxX : minX}
-								y={flip ? yOffset + depthPx : yOffset}
-								width={visLen}
-								height={depthPx}
-								text={style.label}
-								fontSize={Math.min(11, depthPx * 0.35)}
-								fill={style.textColor}
-								fontStyle="bold"
-								fontFamily="sans-serif"
-								align="center"
-								verticalAlign="middle"
-								rotation={flip ? 180 : 0}
+					{cabinet.type === 'tall' && (
+						// Tall run: a thin X corner to corner, the plan convention for
+						// full-height units.
+						<>
+							<Line
+								points={[minX, minY, maxX, maxY]}
+								stroke={TALL_CABINET_CROSS}
+								opacity={0.45}
+								strokeWidth={1 / scale}
 								listening={false}
 							/>
-						);
-					})()}
+							<Line
+								points={[minX, maxY, maxX, minY]}
+								stroke={TALL_CABINET_CROSS}
+								opacity={0.45}
+								strokeWidth={1 / scale}
+								listening={false}
+							/>
+						</>
+					)}
 				</Group>
+				{renderUprightLabel(`${cabinet.id}-run-label`, runLabelBox, runLabel, style.textColor)}
 				{isSelected && drawingState.tool === 'select' && (
 					<>
 						<Circle
@@ -6462,6 +6643,11 @@ export function DesignerCanvas({
 						const isSelected =
 							drawingState.selectedId === island.id ||
 							activeLayerIdFromStore === island.layerId;
+						const islandLayerName = island.layerId
+							? layersFromStore.find((l) => l.id === island.layerId)?.name?.trim()
+							: undefined;
+						const islandLabel = `${islandLayerName || RUN_LABEL_FALLBACK.island} ${island.lengthCm.toFixed(0)} × ${island.depthCm.toFixed(0)}`;
+						const islandLabelPad = 4 / scale;
 						return (
 							<Group key={island.id} listening={false}>
 								<Rect
@@ -6470,18 +6656,41 @@ export function DesignerCanvas({
 									width={rectWidth}
 									height={rectHeight}
 									rotation={rotationDeg}
-									fill="#F59E0B"
-									opacity={isSelected ? 0.55 : 0.4}
-									stroke={isSelected ? '#B45309' : '#F59E0B'}
-									strokeWidth={isSelected ? 3 : 2}
+									fill={ISLAND_FILL}
+									stroke={isSelected ? '#B45309' : ISLAND_STROKE}
+									strokeWidth={isSelected ? 3 : 1.4 / scale}
 								/>
-								<Text
-									x={island.anchorPoint.x + 4}
-									y={island.anchorPoint.y + 4}
-									text={`Island\n${island.lengthCm.toFixed(0)} × ${island.depthCm.toFixed(0)} cm`}
-									fontSize={10}
-									fill="#78350F"
-								/>
+								{/* Bottom-left corner, inside the island, upright -- or the
+								    bottom-right corner if an appliance drawn on top covers
+								    bottom-left. If both are covered it stays bottom-left. */}
+								{(() => {
+									const atLeft = uprightCornerLabelBox(
+										island.anchorPoint,
+										island.rotationRad,
+										{ x: islandLabelPad, y: rectHeight - islandLabelPad },
+										{ x: 1, y: 0 },
+										{ x: 0, y: -1 },
+										islandLabel
+									);
+									let labelBox = atLeft;
+									if (labelCovered(atLeft, appliancesAboveIslands)) {
+										const atRight = uprightCornerLabelBox(
+											island.anchorPoint,
+											island.rotationRad,
+											{ x: rectWidth - islandLabelPad, y: rectHeight - islandLabelPad },
+											{ x: -1, y: 0 },
+											{ x: 0, y: -1 },
+											islandLabel
+										);
+										if (!labelCovered(atRight, appliancesAboveIslands)) labelBox = atRight;
+									}
+									return renderUprightLabel(
+										`${island.id}-label`,
+										labelBox,
+										islandLabel,
+										CABINET_STYLES.island.textColor
+									);
+								})()}
 							</Group>
 						);
 					})}
