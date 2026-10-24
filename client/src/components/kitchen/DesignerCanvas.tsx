@@ -102,6 +102,7 @@ import {
 	validatePlacement,
 } from '@/lib/appliances';
 import type { ApplianceDragStart } from './AppliancePanel';
+import { wallsStackedUnder } from '@/lib/wall-stack';
 import {
 	DIM_TICK_PX,
 	PLAN_TEXT_PX,
@@ -282,6 +283,11 @@ interface DesignerCanvasProps {
 	onUpdateCabinet: (id: string, updates: Partial<Cabinet>) => void;
 	onMoveComplete: () => void;
 	onDeleteItem: (id: string) => void;
+	/**
+	 * Delete several items as one undo step. Used by the Delete tool when walls
+	 * are stacked under the click; without it each wall is deleted separately.
+	 */
+	onDeleteItems?: (ids: string[]) => void;
 	onSelectItem: (id: string | null) => void;
 	onStageRef?: (stage: Konva.Stage | null) => void;
 	referenceImage?: string | null;
@@ -971,6 +977,7 @@ export function DesignerCanvas({
 	onUpdateCabinet,
 	onMoveComplete,
 	onDeleteItem,
+	onDeleteItems,
 	onSelectItem,
 	onStageRef,
 	referenceImage,
@@ -2327,7 +2334,22 @@ export function DesignerCanvas({
 				);
 				if (hit) {
 					haptic('heavy');
-					onDeleteItem(hit.id);
+					if (hit.type === 'wall') {
+						// Walls drawn on top of each other look like one wall, so
+						// clicking would seem to do nothing. Take every wall stacked
+						// under the click in one go (one undo step).
+						const stacked = wallsStackedUnder(pos, hit.id, walls);
+						if (stacked.length > 1) {
+							const ids = stacked.map((w) => w.id);
+							if (onDeleteItems) onDeleteItems(ids);
+							else ids.forEach((id) => onDeleteItem(id));
+							toast({ title: `Removed ${ids.length} walls stacked here` });
+						} else {
+							onDeleteItem(hit.id);
+						}
+					} else {
+						onDeleteItem(hit.id);
+					}
 				}
 				return;
 			}
@@ -2712,6 +2734,8 @@ export function DesignerCanvas({
 			getPointerPos,
 			onDrawingStateChange,
 			onDeleteItem,
+			onDeleteItems,
+			toast,
 			onSelectItem,
 			constrainToAxis,
 			createElementAtPoints,

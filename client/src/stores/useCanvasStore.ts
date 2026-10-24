@@ -88,6 +88,8 @@ interface CanvasState {
   updateWall: (id: string, updates: Partial<Wall>) => void;
   updateCabinet: (id: string, updates: Partial<Cabinet>) => void;
   deleteItem: (id: string) => void;
+  /** Delete several items as ONE history step (one Undo brings them all back). */
+  deleteItems: (ids: string[]) => void;
   selectItem: (id: string | null) => void;
   addElement: (element: CanvasElement) => void;
   updateElement: (id: string, updates: Partial<CanvasElement>) => void;
@@ -302,6 +304,34 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         selectedId: state.drawingState.selectedId === id ? null : state.drawingState.selectedId,
       };
       const newGuidelines = state.guidelines.filter((g) => g.id !== id);
+      const next: CanvasState = {
+        ...state,
+        drawingState: newDrawingState,
+        guidelines: newGuidelines,
+      };
+      return {
+        drawingState: newDrawingState,
+        guidelines: newGuidelines,
+        history: pushHistoryFromState(next),
+      };
+    });
+  },
+
+  deleteItems: (ids) => {
+    if (ids.length === 0) return;
+    const gone = new Set(ids);
+    set((state) => {
+      const newDrawingState = {
+        ...state.drawingState,
+        walls: reorientWalls(state.drawingState.walls.filter((w) => !gone.has(w.id))),
+        cabinets: state.drawingState.cabinets.filter((c) => !gone.has(c.id)),
+        openings: state.drawingState.openings.filter((o) => !gone.has(o.id)),
+        selectedId:
+          state.drawingState.selectedId && gone.has(state.drawingState.selectedId)
+            ? null
+            : state.drawingState.selectedId,
+      };
+      const newGuidelines = state.guidelines.filter((g) => !gone.has(g.id));
       const next: CanvasState = {
         ...state,
         drawingState: newDrawingState,

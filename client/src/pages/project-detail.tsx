@@ -831,6 +831,16 @@ export default function ProjectDetail({ id }: { id: number }) {
 		[canvasStore, scheduleCanvasSave]
 	);
 
+	// Several items at once (e.g. walls stacked on top of each other) as a
+	// single undo step.
+	const handleDeleteItems = useCallback(
+		(ids: string[]) => {
+			canvasStore.deleteItems(ids);
+			scheduleCanvasSave();
+		},
+		[canvasStore, scheduleCanvasSave]
+	);
+
 	const handleUndo = useCallback(() => {
 		canvasStore.undo();
 		scheduleCanvasSave();
@@ -1650,6 +1660,7 @@ export default function ProjectDetail({ id }: { id: number }) {
 					onUpdateCabinet={handleUpdateCabinet}
 					onMoveComplete={handleMoveComplete}
 					onDeleteItem={handleDeleteItem}
+					onDeleteItems={handleDeleteItems}
 					onSelectItem={(id) => canvasStore.selectItem(id)}
 					onStageRef={(s) => {
 						konvaStageRef.current = s;
