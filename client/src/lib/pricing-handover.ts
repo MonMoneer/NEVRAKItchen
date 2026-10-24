@@ -298,7 +298,13 @@ export function buildPricingHandover(input: HandoverInput): HandoverPayload {
     .map((d) => ({ kind: d.name.toLowerCase(), widthMm: d.defaultWidth * 10 }))
     // New appliances (lib/appliances.ts), same shape. Kind strings: sink, hob,
     // oven, dishwasher, tall_oven, microwave, fridge, coffee, hood, range.
-    .concat((input.appliances ?? []).map((a) => ({ kind: a.kind, widthMm: a.widthCm * 10 })));
+    .concat(
+      (input.appliances ?? []).map((a) => ({
+        // A free-standing fridge is still a fridge to the Pricing Tool.
+        kind: a.kind === "fridge_floor" ? "fridge" : a.kind,
+        widthMm: a.widthCm * 10,
+      })),
+    );
 
   const sumKind = (k: RunKind) =>
     round3(runs.filter((r) => r.kind === k).reduce((s, r) => s + r.lm, 0));

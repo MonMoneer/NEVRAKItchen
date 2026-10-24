@@ -34,6 +34,11 @@ export type ApplianceKind =
   | "tall_oven"
   | "microwave"
   | "fridge"
+  // A fridge standing on the floor along a wall, not built into a tall run.
+  // Its own kind, so the in-cabinet fridge, its placement rules and the
+  // Pricing Tool's "fridge" entry are untouched (the handover reports it as
+  // "fridge").
+  | "fridge_floor"
   | "coffee"
   | "hood"
   | "range";
@@ -50,7 +55,7 @@ export interface ApplianceDef {
   name: string;
   /** Upper-case plan label, e.g. "OVEN" → "OVEN 60". */
   label: string;
-  group: "On the counter" | "Inside a cabinet" | "On the wall" | "On the floor";
+  group: "On the counter" | "Inside a cabinet" | "On the wall" | "Free-standing";
   placement: AppliancePlacement;
   sizes: number[];
   hosts: ApplianceHostKind[];
@@ -70,14 +75,15 @@ export const APPLIANCE_CATALOGUE: ApplianceDef[] = [
   { kind: "fridge", name: "Fridge / freezer", label: "FRIDGE", group: "Inside a cabinet", placement: "inside", sizes: [60, 75, 90], hosts: ["tall"], stackHeightCm: 178 },
   { kind: "coffee", name: "Coffee machine", label: "COFFEE", group: "Inside a cabinet", placement: "inside", sizes: [60], hosts: ["tall"], stackHeightCm: 45 },
   { kind: "hood", name: "Hood", label: "HOOD", group: "On the wall", placement: "wall", sizes: [60, 90, 120, 150], hosts: ["wall"] },
-  { kind: "range", name: "Cooking range", label: "RANGE", group: "On the floor", placement: "floor", sizes: [60, 90, 120, 150], hosts: ["wall"] },
+  { kind: "range", name: "Cooking range", label: "RANGE", group: "Free-standing", placement: "floor", sizes: [60, 90, 120, 150], hosts: ["wall"] },
+  { kind: "fridge_floor", name: "Fridge / freezer", label: "FRIDGE", group: "Free-standing", placement: "floor", sizes: [60, 75, 90], hosts: ["wall"] },
 ];
 
 export const APPLIANCE_GROUPS: ApplianceDef["group"][] = [
   "On the counter",
   "Inside a cabinet",
   "On the wall",
-  "On the floor",
+  "Free-standing",
 ];
 
 const DEF_BY_KIND = new Map(APPLIANCE_CATALOGUE.map((d) => [d.kind, d]));
@@ -139,6 +145,7 @@ export function applianceWhereHint(kind: ApplianceKind): string {
   const def = getApplianceDef(kind);
   if (kind === "hood") return "A hood goes along a wall.";
   if (kind === "range") return "A cooking range goes on free floor along a wall.";
+  if (kind === "fridge_floor") return "A free-standing fridge goes on free floor along a wall.";
   if (def.hosts.includes("tall")) return `${def.name} goes inside a tall run.`;
   if (def.placement === "counter") return `${def.name} goes on a base run or an island.`;
   return `${def.name} goes inside a base run or an island.`;
@@ -288,6 +295,9 @@ export function applianceDepthBand(
       return { d0: 0, d1: cmToPixels(50) };
     case "range":
       return { d0: 0, d1: cmToPixels(60) };
+    case "fridge_floor":
+      // Body plus door clearance of a typical free-standing fridge.
+      return { d0: 0, d1: cmToPixels(65) };
     default:
       return { d0: 0, d1: D };
   }
@@ -780,15 +790,17 @@ export function validatePlacement(
     }
   }
 
-  if (kind === "range" && frame.host.type === "wall") {
+  // Anything free-standing (range, fridge) needs clear floor and may not block
+  // a door. The messages name the appliance, so the range's wording is unchanged.
+  if (def.placement === "floor" && frame.host.type === "wall") {
     for (const cab of scene.cabinets) {
       if (polygonsOverlap(corners, cabinetRectStored(cab))) {
-        return fail("Cooking range needs free floor space");
+        return fail(`${def.name} needs free floor space`);
       }
     }
     for (const isl of scene.islands) {
       if (polygonsOverlap(corners, islandRect(isl))) {
-        return fail("Cooking range needs free floor space");
+        return fail(`${def.name} needs free floor space`);
       }
     }
     for (const op of scene.openings) {
@@ -802,13 +814,13 @@ export function validatePlacement(
         const o0 = pixelsToCm(Math.min(s.a, e.a));
         const o1 = pixelsToCm(Math.max(s.a, e.a));
         if (intervalOverlapCm(a0, a1, o0, o1) > 0.5) {
-          return fail("Cooking range can't block a door");
+          return fail(`${def.name} can't block a door`);
         }
       }
       // Clearance zone in front of the door (uses the existing zone).
       const zone = computeClearanceZone(op, scene.walls);
       if (zone && polygonsOverlap(corners, zone.corners)) {
-        return fail("Cooking range can't go in front of a door");
+        return fail(`${def.name} can't go in front of a door`);
       }
     }
   }

@@ -4474,6 +4474,15 @@ export function DesignerCanvas({
 						/>
 					);
 				}
+			} else if (kind === 'fridge_floor') {
+				// Free-standing fridge: the door panel across the front, with a
+				// handle line on it.
+				parts.push(
+					<Line key="door" points={[0, h * 0.8, w, h * 0.8]} stroke={color} strokeWidth={thin} />
+				);
+				parts.push(
+					<Line key="handle" points={[w * 0.25, h * 0.9, w * 0.75, h * 0.9]} stroke={color} strokeWidth={sw} />
+				);
 			}
 		}
 
